@@ -18,26 +18,10 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include <memory>
 #include <cstdio>
 #include <cstdlib>
-#include <memory>
 using namespace llvm;
-
-#if 0
-/// Read a variable-bit-rate encoded unsigned integer
-static inline unsigned readInteger(const char*&At, const char*End) {
-  unsigned Shift = 0;
-  unsigned Result = 0;
-
-  do {
-    if (At == End)
-      return Result;
-    Result |= (unsigned)((*At++) & 0x7F) << Shift;
-    Shift += 7;
-  } while (At[-1] & 0x80);
-  return Result;
-}
-#endif
 
 // This member parses an ArchiveMemberHeader that is presumed to be pointed to
 // by At. The At pointer is updated to the byte just after the header, which
@@ -276,20 +260,16 @@ Archive::getAllModules(std::vector<Module*>& Modules,
     if (I->isBitcode()) {
       std::string FullMemberName = archPath.str() +
         "(" + I->getPath().str() + ")";
-      MemoryBuffer *Buffer =
+
+      std::unique_ptr<MemoryBuffer> Buffer(
         MemoryBuffer::getMemBufferCopy(StringRef(I->getData(), I->getSize()),
-                                       FullMemberName.c_str());
+                                       FullMemberName.c_str()));
 
-      ErrorOr<Module*> M = parseBitcodeFile(Buffer, Context);
-      delete Buffer;
-      if (!M) {
-        if (ErrMessage) {
-          *ErrMessage = M.getError().message();
-        }
+      ErrorOr<Module *> Result = parseBitcodeFile(Buffer.get(), Context);
+      if (!Result)
         return true;
-      }
 
-      Modules.push_back(M.get());
+      Modules.push_back(Result.get());
     }
   }
   return false;
@@ -357,7 +337,7 @@ Archive::loadSymbolTable(std::string* ErrorMsg) {
 Archive* Archive::OpenAndLoadSymbols(StringRef File,
                                      LLVMContext& C,
                                      std::string* ErrorMessage) {
-  std::unique_ptr<Archive> result ( new Archive(File, C) );
+  std::unique_ptr<Archive> result(new Archive(File, C));
   if (result->mapToMemory(ErrorMessage))
     return NULL;
   if (!result->loadSymbolTable(ErrorMessage))
@@ -403,17 +383,15 @@ Archive::findModuleDefiningSymbol(const std::string& symbol,
     MemoryBuffer::getMemBufferCopy(StringRef(mbr->getData(), mbr->getSize()),
                                    FullMemberName.c_str());
 
-  ErrorOr<Module*> m = getLazyBitcodeModule(Buffer, Context);
-  if (!m) {
-    if (ErrMsg) {
-      *ErrMsg = m.getError().message();
-    }
-    return 0;
+  ErrorOr<Module *> Result = getLazyBitcodeModule(Buffer, Context);
+  if (!Result) {
+    if (ErrMsg) *ErrMsg = Result.getError().message();
+    return nullptr;
   }
 
-  modules.insert(std::make_pair(fileOffset, std::make_pair(m.get(), mbr)));
+  modules.insert(std::make_pair(fileOffset, std::make_pair(Result.get(), mbr)));
 
-  return m.get();
+  return Result.get();
 }
 
 // Look up multiple symbols in the symbol table and return a set of
@@ -536,14 +514,13 @@ bool Archive::isBitcodeArchive() {
     std::string FullMemberName =
       archPath.str() + "(" + I->getPath().str() + ")";
 
-    MemoryBuffer *Buffer =
+    std::unique_ptr<MemoryBuffer> Buffer(
       MemoryBuffer::getMemBufferCopy(StringRef(I->getData(), I->getSize()),
-                                     FullMemberName.c_str());
-    ErrorOr<Module*> M = parseBitcodeFile(Buffer, Context);
-    delete Buffer;
-    if (!M)
+                                     FullMemberName.c_str()));
+    ErrorOr<Module *> Result = parseBitcodeFile(Buffer.get(), Context);
+    if (!Result)
       return false;  // Couldn't parse bitcode, not a bitcode archive.
-    delete M.get();
+    delete Result.get();
     return true;
   }
 

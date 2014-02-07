@@ -215,19 +215,17 @@ bool llvm::GetBitcodeSymbols(StringRef fName,
     return true;
   }
 
-  ErrorOr<Module*> M = parseBitcodeFile(Buffer.get(), Context);
-  if (!M) {
-    if (ErrMsg) {
-      *ErrMsg = M.getError().message();
-    }
+  ErrorOr<Module *> Result = parseBitcodeFile(Buffer.get(), Context);
+  if (!Result) {
+    if (ErrMsg) *ErrMsg = Result.getError().message();
     return true;
   }
 
   // Get the symbols
-  getSymbols(M.get(), symbols);
+  getSymbols(Result.get(), symbols);
 
   // Done with the module.
-  delete M.get();
+  delete Result.get();
   return true;
 }
 
@@ -241,18 +239,16 @@ llvm::GetBitcodeSymbols(const char *BufPtr, unsigned Length,
   std::unique_ptr<MemoryBuffer> Buffer(
     MemoryBuffer::getMemBufferCopy(StringRef(BufPtr, Length),ModuleID.c_str()));
 
-  llvm::ErrorOr<Module*> M = parseBitcodeFile(Buffer.get(), Context);
-  if (!M) {
-    if (ErrMsg) {
-      *ErrMsg = M.getError().message();
-    }
-    return 0;
+  ErrorOr<Module *> Result = parseBitcodeFile(Buffer.get(), Context);
+  if (!Result) {
+    if (ErrMsg) *ErrMsg = Result.getError().message();
+    return nullptr;
   }
 
   // Get the symbols
-  getSymbols(M.get(), symbols);
+  getSymbols(Result.get(), symbols);
 
   // Done with the module. Note that it's the caller's responsibility to delete
   // the Module.
-  return M.get();
+  return Result.get();
 }

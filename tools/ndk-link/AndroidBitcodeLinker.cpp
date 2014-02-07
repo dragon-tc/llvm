@@ -89,23 +89,25 @@ std::string* AndroidBitcodeLinker::GenerateBitcode() {
 
 Module *
 AndroidBitcodeLinker::LoadAndroidBitcode(AndroidBitcodeItem &Item) {
+  std::string ParseErrorMessage;
   const StringRef &FN = Item.getFile();
 
   std::unique_ptr<MemoryBuffer> Buffer;
   if (error_code ec = MemoryBuffer::getFileOrSTDIN(FN.data(), Buffer)) {
     Error = "Error reading file '" + FN.str() + "'" + ": " + ec.message();
-    return NULL;
+    return nullptr;
   }
 
   MemoryBuffer *buffer = Buffer.get();
   BitcodeWrapper *wrapper = new BitcodeWrapper(buffer->getBufferStart(), buffer->getBufferSize());
   Item.setWrapper(wrapper);
   assert(Item.getWrapper() != 0);
-  ErrorOr<Module*> Result = parseBitcodeFile(buffer, Config.getContext());
+  ErrorOr<Module *> Result = parseBitcodeFile(buffer, Config.getContext());
   if (!Result) {
     Error = "Bitcode file '" + FN.str() + "' could not be loaded."
               + Result.getError().message();
     errs() << Error << '\n';
+    return nullptr;
   }
 
   return Result.get();
@@ -205,7 +207,8 @@ AndroidBitcodeLinker::LinkInAndroidBitcode(AndroidBitcodeItem &Item) {
 
       Triple triple(M.get()->getTargetTriple());
 
-      if (triple.getArch() != Triple::le32 || triple.getOS() != Triple::NDK) {
+      if ((triple.getArch() != Triple::le32 && triple.getArch() != Triple::le64) ||
+          triple.getOS() != Triple::NDK) {
         Item.setNative(true);
         return error("Cannot link '" + File.str() + "', triple:" +  M.get()->getTargetTriple());
       }

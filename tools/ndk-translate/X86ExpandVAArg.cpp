@@ -1,5 +1,5 @@
 /*
- * Copyright 2013, The Android Open Source Project
+ * Copyright 2012, The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,10 +26,10 @@
 #include <llvm/IR/Type.h>
 #include <llvm/Pass.h>
 
-class MipsExpandVAArg : public ExpandVAArgPass {
+class X86ExpandVAArg : public ExpandVAArgPass {
 public:
   virtual const char *getPassName() const {
-    return "Mips LLVM va_arg Instruction Expansion Pass";
+    return "X86 LLVM va_arg Instruction Expansion Pass";
   }
 
 private:
@@ -41,43 +41,29 @@ private:
     llvm::IRBuilder<> builder(pInst);
     const llvm::DataLayoutPass *dlp =
       getAnalysisIfAvailable<llvm::DataLayoutPass>();
-    const llvm::DataLayout &dl = dlp->getDataLayout();
+    const llvm::DataLayout *dl = &dlp->getDataLayout();
 
     llvm::Type *bp = llvm::Type::getInt8PtrTy(*mContext);
     llvm::Type *bpp = bp->getPointerTo(0);
     llvm::Value *va_list_addr_bpp = builder.CreateBitCast(va_list_addr,
                                                           bpp, "ap");
     llvm::Value *addr = builder.CreateLoad(va_list_addr_bpp, "ap.cur");
-    int64_t type_align = dl.getABITypeAlignment(ty);
-    llvm::Value *addr_typed;
-    llvm::IntegerType *int_ty = llvm::Type::getInt32Ty(*mContext);
 
-    if (type_align > 4) {
-      llvm::Value *addr_as_int = builder.CreatePtrToInt(addr, int_ty);
-      llvm::Value *inc = llvm::ConstantInt::get(int_ty, type_align - 1);
-      llvm::Value *mask = llvm::ConstantInt::get(int_ty, -type_align);
-      llvm::Value *add_v = builder.CreateAdd(addr_as_int, inc);
-      llvm::Value *and_v = builder.CreateAnd(add_v, mask);
-      addr_typed = builder.CreateIntToPtr(and_v, pty);
-    }
-    else {
-      addr_typed = builder.CreateBitCast(addr, pty);
-    }
+    llvm::Value *addr_typed = builder.CreateBitCast(addr, pty);
 
-    llvm::Value *aligned_addr = builder.CreateBitCast(addr_typed, bp);
-    type_align = std::max((unsigned)type_align, (unsigned) 4);
-    uint64_t offset =
-      llvm::RoundUpToAlignment(dl.getTypeSizeInBits(ty) / 8, type_align);
-    llvm::Value *next_addr =
-      builder.CreateGEP(aligned_addr, llvm::ConstantInt::get(int_ty, offset),
-                        "ap.next");
+    // X86-32 stack type alignment is always 4.
+    uint64_t offset = llvm::RoundUpToAlignment(dl->getTypeSizeInBits(ty)/8, 4);
+    llvm::Value *next_addr = builder.CreateGEP(addr,
+      llvm::ConstantInt::get(llvm::Type::getInt32Ty(*mContext), offset),
+      "ap.next");
     builder.CreateStore(next_addr, va_list_addr_bpp);
 
     return addr_typed;
   }
 
-};
+}; // end X86ExpandVAArg
 
-ExpandVAArgPass* createMipsExpandVAArgPass() {
-  return new MipsExpandVAArg();
+ExpandVAArgPass* createX86ExpandVAArgPass() {
+  return new X86ExpandVAArg();
 }
+

@@ -26,56 +26,58 @@
 #include <llvm/IR/Type.h>
 #include <llvm/Pass.h>
 
-class ARMExpandVAArg : public ExpandVAArgPass {
+class MipsExpandVAArg : public ExpandVAArgPass {
 public:
   virtual const char *getPassName() const {
-    return "ARM LLVM va_arg Instruction Expansion Pass";
+    return "Mips LLVM va_arg Instruction Expansion Pass";
   }
 
 private:
   // Derivative work from clang/lib/CodeGen/TargetInfo.cpp.
-  llvm::Value *expandVAArg(llvm::Instruction *pInst) {
+  virtual llvm::Value *expandVAArg(llvm::Instruction *pInst) {
     llvm::Type *pty = pInst->getType();
     llvm::Type *ty = pty->getContainedType(0);
     llvm::Value *va_list_addr = pInst->getOperand(0);
     llvm::IRBuilder<> builder(pInst);
     const llvm::DataLayoutPass *dlp =
       getAnalysisIfAvailable<llvm::DataLayoutPass>();
-    const llvm::DataLayout &dl = dlp->getDataLayout();
+    const llvm::DataLayout *dl = &dlp->getDataLayout();
 
     llvm::Type *bp = llvm::Type::getInt8PtrTy(*mContext);
     llvm::Type *bpp = bp->getPointerTo(0);
-
-    llvm::Value *va_list_addr_bpp =
-        builder.CreateBitCast(va_list_addr, bpp, "ap");
+    llvm::Value *va_list_addr_bpp = builder.CreateBitCast(va_list_addr,
+                                                          bpp, "ap");
     llvm::Value *addr = builder.CreateLoad(va_list_addr_bpp, "ap.cur");
-    // Handle address alignment for type alignment > 32 bits.
-    uint64_t ty_align = dl.getABITypeAlignment(ty);
+    int64_t type_align = dl->getABITypeAlignment(ty);
+    llvm::Value *addr_typed;
+    llvm::IntegerType *int_ty = llvm::Type::getInt32Ty(*mContext);
 
-    if (ty_align > 4) {
-      assert((ty_align & (ty_align - 1)) == 0 &&
-        "Alignment is not power of 2!");
-      llvm::Value *addr_as_int =
-        builder.CreatePtrToInt(addr, llvm::Type::getInt32Ty(*mContext));
-      addr_as_int = builder.CreateAdd(addr_as_int,
-        builder.getInt32(ty_align-1));
-      addr_as_int = builder.CreateAnd(addr_as_int,
-        builder.getInt32(~(ty_align-1)));
-      addr = builder.CreateIntToPtr(addr_as_int, bp);
+    if (type_align > 4) {
+      llvm::Value *addr_as_int = builder.CreatePtrToInt(addr, int_ty);
+      llvm::Value *inc = llvm::ConstantInt::get(int_ty, type_align - 1);
+      llvm::Value *mask = llvm::ConstantInt::get(int_ty, -type_align);
+      llvm::Value *add_v = builder.CreateAdd(addr_as_int, inc);
+      llvm::Value *and_v = builder.CreateAnd(add_v, mask);
+      addr_typed = builder.CreateIntToPtr(and_v, pty);
     }
-    llvm::Value *addr_typed = builder.CreateBitCast(addr, pty);
+    else {
+      addr_typed = builder.CreateBitCast(addr, pty);
+    }
 
-    uint64_t offset = llvm::RoundUpToAlignment(dl.getTypeSizeInBits(ty)/8, 4);
-    llvm::Value *next_addr = builder.CreateGEP(addr,
-      llvm::ConstantInt::get(llvm::Type::getInt32Ty(*mContext), offset),
-      "ap.next");
+    llvm::Value *aligned_addr = builder.CreateBitCast(addr_typed, bp);
+    type_align = std::max((unsigned)type_align, (unsigned) 4);
+    uint64_t offset =
+      llvm::RoundUpToAlignment(dl->getTypeSizeInBits(ty) / 8, type_align);
+    llvm::Value *next_addr =
+      builder.CreateGEP(aligned_addr, llvm::ConstantInt::get(int_ty, offset),
+                        "ap.next");
     builder.CreateStore(next_addr, va_list_addr_bpp);
+
     return addr_typed;
   }
 
 };
 
-ExpandVAArgPass* createARMExpandVAArgPass() {
-  return new ARMExpandVAArg();
+ExpandVAArgPass* createMipsExpandVAArgPass() {
+  return new MipsExpandVAArg();
 }
-

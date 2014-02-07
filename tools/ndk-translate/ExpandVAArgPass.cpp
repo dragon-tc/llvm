@@ -20,6 +20,8 @@
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Instructions.h>
 
+#include <iterator>
+
 char ExpandVAArgPass::ID = 0;
 
 bool ExpandVAArgPass::runOnFunction(llvm::Function &pFunc) {
@@ -32,9 +34,10 @@ bool ExpandVAArgPass::runOnFunction(llvm::Function &pFunc) {
           inst_end = llvm::inst_end(pFunc), next_inst = std::next(inst);
        inst != inst_end; inst = next_inst++) {
     if (inst->getOpcode() == llvm::Instruction::VAArg) {
-      llvm::Value *v = expandVAArg(&*inst);
-      inst->replaceAllUsesWith(v);
-      inst->eraseFromParent();
+      llvm::VAArgInst* va_inst = llvm::cast<llvm::VAArgInst>(&*inst);
+      llvm::Value *v = expandVAArg(va_inst);
+      va_inst->replaceAllUsesWith(v);
+      va_inst->eraseFromParent();
       changed = true;
       continue;
     }
