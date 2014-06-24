@@ -19,10 +19,10 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Signals.h"
-#include "llvm/Support/system_error.h"
 #include <fstream>
 #include <iomanip>
 #include <ostream>
+#include <system_error>
 using namespace llvm;
 
 // Create an empty archive.
@@ -107,7 +107,7 @@ bool Archive::addFileBefore(StringRef filePath, iterator where,
   mbr->data = 0;
   mbr->path = filePath;
   sys::fs::file_status Status;
-  error_code EC = sys::fs::status(filePath, Status);
+  std::error_code EC = sys::fs::status(filePath, Status);
   if (EC) {
     delete mbr;
     return true;
@@ -153,7 +153,7 @@ Archive::writeMember(
   MemoryBuffer *mFile = 0;
   if (!data) {
     std::unique_ptr<MemoryBuffer> File;
-    if (error_code ec = MemoryBuffer::getFile(member.getPath(), File)) {
+    if (std::error_code ec = MemoryBuffer::getFile(member.getPath(), File)) {
       if (ErrMsg)
         *ErrMsg = ec.message();
       return true;
@@ -206,7 +206,7 @@ bool Archive::writeToDisk(std::string *ErrMsg) {
   // Create a temporary file to store the archive in
   int TmpArchiveFD;
   SmallString<128> TmpArchive;
-  error_code EC = sys::fs::createUniqueFile(
+  std::error_code EC = sys::fs::createUniqueFile(
       archPath + ".temp-archive-%%%%%%%.a", TmpArchiveFD, TmpArchive);
   if (EC)
     return true;

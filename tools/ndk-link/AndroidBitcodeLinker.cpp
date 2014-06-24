@@ -30,7 +30,6 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Support/system_error.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Scalar.h"
@@ -38,6 +37,7 @@
 
 #include <memory>
 #include <set>
+#include <system_error>
 #include <vector>
 
 using namespace llvm;
@@ -93,7 +93,7 @@ AndroidBitcodeLinker::LoadAndroidBitcode(AndroidBitcodeItem &Item) {
   const StringRef &FN = Item.getFile();
 
   std::unique_ptr<MemoryBuffer> Buffer;
-  if (error_code ec = MemoryBuffer::getFileOrSTDIN(FN.data(), Buffer)) {
+  if (std::error_code ec = MemoryBuffer::getFileOrSTDIN(FN.data(), Buffer)) {
     Error = "Error reading file '" + FN.str() + "'" + ": " + ec.message();
     return nullptr;
   }
@@ -294,7 +294,7 @@ const StringRef &Filename = Item.getFile();
     // Get the module we must link in.
     Module* aModule = *I;
     if (aModule != NULL) {
-      if (error_code ec = aModule->materializeAll())
+      if (std::error_code ec = aModule->materializeAll())
         return error("Could not load a module: " + ec.message());
 
       verbose("  Linking in module: " + aModule->getModuleIdentifier());
@@ -425,7 +425,7 @@ const StringRef &Filename = Item.getFile();
 
       Module* aModule = *I;
       if (aModule != NULL) {
-        if (error_code ec = aModule->materializeAll())
+        if (std::error_code ec = aModule->materializeAll())
           return error("Could not load a module: " + ec.message());
 
         verbose("  Linking in module: " + aModule->getModuleIdentifier());

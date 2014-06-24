@@ -19,9 +19,9 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Process.h"
-#include "llvm/Support/system_error.h"
 #include <cstring>
 #include <memory>
+#include <system_error>
 using namespace llvm;
 
 // getMemberSize - compute the actual physical size of the file member as seen
@@ -102,32 +102,24 @@ bool ArchiveMember::replaceWith(StringRef newFile, std::string* ErrMsg) {
   else
     flags &= ~HasLongFilenameFlag;
 
-  // Get the signature and status info
-  const char* signature = (const char*) data;
-  SmallString<4> magic;
-  if (!signature) {
-    sys::fs::get_magic(path, magic.capacity(), magic);
-    signature = magic.c_str();
+  // Get the status info
+  sys::fs::file_status Status;
+  std::error_code EC = sys::fs::status(path, Status);
+  if (EC)
+    return true;
 
-    sys::fs::file_status Status;
-    error_code EC = sys::fs::status(path, Status);
-    if (EC)
-      return true;
-
-    User = Status.getUser();
-    Group = Status.getGroup();
-    Mode = Status.permissions();
-    ModTime = Status.getLastModificationTime();
-
-    // FIXME: On posix this is a second stat.
-    EC = sys::fs::file_size(path, Size);
-    if (EC)
-      return true;
-  }
+  User = Status.getUser();
+  Group = Status.getGroup();
+  Mode = Status.permissions();
+  ModTime = Status.getLastModificationTime();
+  Size = Status.getSize();
 
   // Determine what kind of file it is.
-  if (sys::fs::identify_magic(StringRef(signature, 4)) ==
-      sys::fs::file_magic::bitcode)
+  sys::fs::file_magic Magic;
+  if (sys::fs::identify_magic(path, Magic))
+    return true;
+
+  if (Magic == sys::fs::file_magic::bitcode)
     flags |= BitcodeFlag;
   else
     flags &= ~BitcodeFlag;
@@ -145,7 +137,7 @@ Archive::Archive(StringRef filename, LLVMContext &C)
 bool
 Archive::mapToMemory(std::string* ErrMsg) {
   std::unique_ptr<MemoryBuffer> File;
-  if (error_code ec = MemoryBuffer::getFile(archPath.str(), File)) {
+  if (std::error_code ec = MemoryBuffer::getFile(archPath.str(), File)) {
     if (ErrMsg)
       *ErrMsg = ec.message();
     return true;
@@ -209,7 +201,7 @@ bool llvm::GetBitcodeSymbols(StringRef fName,
                              std::vector<std::string>& symbols,
                              std::string* ErrMsg) {
   std::unique_ptr<MemoryBuffer> Buffer;
-  if (error_code ec = MemoryBuffer::getFileOrSTDIN(fName.str(), Buffer)) {
+  if (std::error_code ec = MemoryBuffer::getFileOrSTDIN(fName.str(), Buffer)) {
     if (ErrMsg) *ErrMsg = "Could not open file '" + fName.str() + "'" + ": "
                         + ec.message();
     return true;
