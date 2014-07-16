@@ -136,13 +136,14 @@ Archive::Archive(StringRef filename, LLVMContext &C)
 
 bool
 Archive::mapToMemory(std::string* ErrMsg) {
-  std::unique_ptr<MemoryBuffer> File;
-  if (std::error_code ec = MemoryBuffer::getFile(archPath.str(), File)) {
+  ErrorOr<std::unique_ptr<MemoryBuffer> > File =
+    MemoryBuffer::getFile(archPath.str());
+  if (!File) {
     if (ErrMsg)
-      *ErrMsg = ec.message();
+      *ErrMsg = File.getError().message();
     return true;
   }
-  mapfile = File.release();
+  mapfile = File.get().release();
   base = mapfile->getBufferStart();
   return false;
 }
@@ -200,14 +201,15 @@ bool llvm::GetBitcodeSymbols(StringRef fName,
                              LLVMContext& Context,
                              std::vector<std::string>& symbols,
                              std::string* ErrMsg) {
-  std::unique_ptr<MemoryBuffer> Buffer;
-  if (std::error_code ec = MemoryBuffer::getFileOrSTDIN(fName.str(), Buffer)) {
+  ErrorOr<std::unique_ptr<MemoryBuffer> > Buffer =
+    MemoryBuffer::getFileOrSTDIN(fName.str());
+  if (!Buffer) {
     if (ErrMsg) *ErrMsg = "Could not open file '" + fName.str() + "'" + ": "
-                        + ec.message();
+                        + Buffer.getError().message();
     return true;
   }
 
-  ErrorOr<Module *> Result = parseBitcodeFile(Buffer.get(), Context);
+  ErrorOr<Module *> Result = parseBitcodeFile(Buffer.get().get(), Context);
   if (!Result) {
     if (ErrMsg) *ErrMsg = Result.getError().message();
     return true;

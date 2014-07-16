@@ -89,23 +89,24 @@ std::string* AndroidBitcodeLinker::GenerateBitcode() {
 
 Module *
 AndroidBitcodeLinker::LoadAndroidBitcode(AndroidBitcodeItem &Item) {
-  std::string ParseErrorMessage;
-  const StringRef &FN = Item.getFile();
-
-  std::unique_ptr<MemoryBuffer> Buffer;
-  if (std::error_code ec = MemoryBuffer::getFileOrSTDIN(FN.data(), Buffer)) {
-    Error = "Error reading file '" + FN.str() + "'" + ": " + ec.message();
+  const StringRef &FileName = Item.getFile();
+  ErrorOr<std::unique_ptr<MemoryBuffer>> Buffer =
+    MemoryBuffer::getFileOrSTDIN(FileName);
+  if (!Buffer) {
+    Error = "Error reading file '" + FileName.str() + "'" + ": " +
+            Buffer.getError().message();
     return nullptr;
   }
 
-  MemoryBuffer *buffer = Buffer.get();
-  BitcodeWrapper *wrapper = new BitcodeWrapper(buffer->getBufferStart(), buffer->getBufferSize());
-  Item.setWrapper(wrapper);
+  MemoryBuffer *BufferPtr = Buffer.get().get();
+  BitcodeWrapper *Wrapper = new BitcodeWrapper(BufferPtr->getBufferStart(),
+                                               BufferPtr->getBufferSize());
+  Item.setWrapper(Wrapper);
   assert(Item.getWrapper() != 0);
-  ErrorOr<Module *> Result = parseBitcodeFile(buffer, Config.getContext());
+  ErrorOr<Module *> Result = parseBitcodeFile(BufferPtr, Config.getContext());
   if (!Result) {
-    Error = "Bitcode file '" + FN.str() + "' could not be loaded."
-              + Result.getError().message();
+    Error = "Bitcode file '" + FileName.str() + "' could not be loaded." +
+            Result.getError().message();
     errs() << Error << '\n';
     return nullptr;
   }

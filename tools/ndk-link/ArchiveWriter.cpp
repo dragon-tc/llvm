@@ -152,13 +152,14 @@ Archive::writeMember(
   const char *data = (const char*)member.getData();
   MemoryBuffer *mFile = 0;
   if (!data) {
-    std::unique_ptr<MemoryBuffer> File;
-    if (std::error_code ec = MemoryBuffer::getFile(member.getPath(), File)) {
+    ErrorOr<std::unique_ptr<MemoryBuffer> > File =
+      MemoryBuffer::getFile(member.getPath());
+    if (!File) {
       if (ErrMsg)
-        *ErrMsg = ec.message();
+        *ErrMsg = File.getError().message();
       return true;
     }
-    mFile = File.release();
+    mFile = File.get().release();
     data = mFile->getBufferStart();
     fSize = mFile->getBufferSize();
   }
