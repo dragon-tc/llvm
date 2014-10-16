@@ -62,7 +62,7 @@ EnableAtomicTidy("aarch64-atomic-cfg-tidy", cl::Hidden,
 static cl::opt<bool>
 EnableA53Fix835769("aarch64-fix-cortex-a53-835769", cl::Hidden,
                 cl::desc("Work around Cortex-A53 erratum 835769"),
-                cl::init(false));
+                cl::init(true));
 
 extern "C" void LLVMInitializeAArch64Target() {
   // Register the target.
