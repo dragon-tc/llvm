@@ -43,6 +43,7 @@ void llvm::initializeCodeGen(PassRegistry &Registry) {
   initializeMachineCopyPropagationPass(Registry);
   initializeMachineCombinerPass(Registry);
   initializeMachineCSEPass(Registry);
+  initializeMachineGCHPass(Registry);
   initializeMachineDominatorTreePass(Registry);
   initializeMachinePostDominatorTreePass(Registry);
   initializeMachineLICMPass(Registry);

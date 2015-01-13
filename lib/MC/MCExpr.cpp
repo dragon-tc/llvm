@@ -195,6 +195,7 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   case VK_WEAKREF: return "WEAKREF";
   case VK_ARM_NONE: return "none";
   case VK_ARM_TARGET1: return "target1";
+  case VK_ARM_GOTPREL: return "GOTPREL";
   case VK_ARM_TARGET2: return "target2";
   case VK_ARM_PREL31: return "prel31";
   case VK_ARM_SBREL: return "sbrel";
@@ -362,6 +363,9 @@ MCSymbolRefExpr::getVariantKindForName(StringRef Name) {
     .Case("got@tlsld@h", VK_PPC_GOT_TLSLD_HI)
     .Case("got@tlsld@ha", VK_PPC_GOT_TLSLD_HA)
     .Case("none", VK_ARM_NONE)
+    .Case("GOTPREL", VK_ARM_GOTPREL)
+    .Case("gotprel", VK_ARM_GOTPREL)
+    .Case("TARGET1", VK_ARM_TARGET1)
     .Case("target1", VK_ARM_TARGET1)
     .Case("target2", VK_ARM_TARGET2)
     .Case("prel31", VK_ARM_PREL31)

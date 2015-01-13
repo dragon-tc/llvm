@@ -54,6 +54,7 @@ namespace {
 
     bool isLikeA9;
     bool isSwift;
+    bool isKrait2;
     unsigned MIIdx;
     MachineInstr* LastMIs[4];
     SmallPtrSet<MachineInstr*, 4> IgnoreStall;
@@ -382,8 +383,9 @@ bool MLxExpansion::runOnMachineFunction(MachineFunction &Fn) {
   TRI = Fn.getSubtarget().getRegisterInfo();
   MRI = &Fn.getRegInfo();
   const ARMSubtarget *STI = &Fn.getTarget().getSubtarget<ARMSubtarget>();
-  isLikeA9 = STI->isLikeA9() || STI->isSwift();
+  isLikeA9 = STI->isLikeA9() || STI->isSwift() || STI->isKrait2();
   isSwift = STI->isSwift();
+  isKrait2 = STI->isKrait2();
 
   bool Modified = false;
   for (MachineBasicBlock &MBB : Fn)

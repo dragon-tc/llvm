@@ -12,10 +12,13 @@
 // reduce the length of the critical path through the basic block
 // on VLIW platforms.
 // The scheduler is basically a top-down adaptable list scheduler with DFA
-// resource tracking added to the cost function.
+// resource tracking and cluster computation added to the cost function.
 // DFA is queried as a state machine to model "packets/bundles" during
 // schedule. Currently packets/bundles are discarded at the end of
 // scheduling, affecting only order of instructions.
+// Clusters are employed to detect parallel data dependency chains
+// (the sort one would see after aggressive loop unrolling) and
+// serializing/overlapping them during scheduling.
 //
 //===----------------------------------------------------------------------===//
 
@@ -37,9 +40,17 @@ static cl::opt<bool> DisableDFASched("disable-dfa-sched", cl::Hidden,
   cl::ZeroOrMore, cl::init(false),
   cl::desc("Disable use of DFA during scheduling"));
 
+static cl::opt<unsigned> LateClustersThreshold(
+  "dfa-sched-indepth-threshold", cl::Hidden, cl::ZeroOrMore, cl::init(25),
+  cl::desc("Track reg pressure and switch strategy to in-depth"));
+
 static cl::opt<signed> RegPressureThreshold(
   "dfa-sched-reg-pressure-threshold", cl::Hidden, cl::ZeroOrMore, cl::init(5),
   cl::desc("Track reg pressure and switch priority to in-depth"));
+
+// Flag used for marking non-cluster use of
+// a field in SUnit.
+static const unsigned NonClusterUse = 0xffffffff;
 
 ResourcePriorityQueue::ResourcePriorityQueue(SelectionDAGISel *IS)
     : Picker(this), InstrItins(IS->MF->getSubtarget().getInstrItineraryData()) {
@@ -64,6 +75,76 @@ ResourcePriorityQueue::ResourcePriorityQueue(SelectionDAGISel *IS)
 
   ParallelLiveRanges = 0;
   HorizontalVerticalBalance = 0;
+   CurrentCluster = NonClusterUse;
+   DominatorChains = 1;
+   ClusterScheduling = false;
+}
+
+bool ResourcePriorityQueue::SUContainsCall(SUnit *SU) {
+  if (!SU)
+    return false;
+
+  for (SDNode *N = SU->getNode(); N; N = N->getGluedNode())
+    if (N->isMachineOpcode()) {
+      const MCInstrDesc &TID = TII->get(N->getMachineOpcode());
+      if (TID.isCall())
+        return true;
+    }
+
+  return false;
+}
+
+bool ResourcePriorityQueue::SUIsMachineOp(SUnit *SU) {
+  if (!SU || !SU->getNode())
+    return false;
+
+  if (SUContainsCall(SU))
+    return true;
+
+  if (SU->getNode()->isMachineOpcode())
+    return true;
+
+  return false;
+}
+
+bool ResourcePriorityQueue::SUIsMachineTop(SUnit *SU) {
+  // TODO See what to do about calls
+  // If this node itself is a machine op?
+  if (!SUIsMachineOp(SU))
+    return false;
+
+  // Do not include Branch here
+  if (SU->getNode() && SU->getNode()->isMachineOpcode()) {
+    const MCInstrDesc &TID = TII->get(SU->getNode()->getMachineOpcode());
+    if (TID.isBranch())
+      return false;
+  }
+  // Look through all its predecessors,
+  // if none of them is machine op, all pseudos,
+  // this is what we want?
+  for (SUnit::pred_iterator I = SU->Preds.begin(), E = SU->Preds.end();
+       I != E; ++I)
+    if (SUIsMachineOp(I->getSUnit()))
+      return false;
+
+  return true;
+}
+
+static bool SUInChain(SUnit *SU, std::vector<SUnit *> &Chain) {
+  for (unsigned i = 0, e = Chain.size(); i != e; ++i)
+    if (SU == Chain[i])
+      return true;
+
+  return false;
+}
+
+unsigned ResourcePriorityQueue::getChainForSU(SUnit *SU) {
+  for (unsigned i = 0, e = Dominators.size(); i != e; ++i)
+    for (unsigned ii = 0, ee = Dominators[i].size(); ii != ee; ++ii)
+      if (SU ==  Dominators[i][ii])
+        return i+1;
+
+  return 0;
 }
 
 unsigned
@@ -162,18 +243,269 @@ static unsigned numberCtrlPredInSU(SUnit *SU) {
   return NumberDeps;
 }
 
+unsigned ResourcePriorityQueue::iterateChainPred(
+                           SUnit *SU, unsigned *Depth,
+                           unsigned ClusterNumber,
+                           bool IncludePseudo,
+                           std::vector<SUnit *> &DepList) {
+  if (!SU || SU->isScheduled)
+    return *Depth;
+
+  // Same as "visited" marker.
+  // If it is not called from growth,
+  // use SU->NodeQueueId.
+  if (getChainForSU(SU) == ClusterNumber)
+    return *Depth;
+
+  // On the way up we should not be able to encounter a branch.
+  if (getChainForSU(SU) && (ClusterNumber !=getChainForSU(SU)))
+    return *Depth;
+
+  if (!getChainForSU(SU)) {
+    DepList.push_back(SU);
+    SU->NodeQueueId = ClusterNumber;
+    (*Depth)++;
+    for (SUnit::pred_iterator I = SU->Preds.begin(), E = SU->Preds.end();
+         I != E; ++I)
+      iterateChainPred (&(*I->getSUnit()),
+                      Depth,ClusterNumber,IncludePseudo,DepList);
+    return *Depth;
+  }
+  return ++(*Depth);
+}
+
+unsigned ResourcePriorityQueue::iterateDominatingCluster(
+                           SUnit *SU, unsigned *Depth,
+                           unsigned ClusterNumber,
+                           bool IncludePseudo,
+                           std::vector<SUnit *> &DepList) {
+  if (!SU || SU->isScheduled || SU->NodeQueueId)
+    return *Depth;
+
+  // Do not want it.
+  if (!IncludePseudo && !SUIsMachineOp(SU))
+    return *Depth;
+
+  // If all successors of this SU belong to the current cluster,
+  // include it as well.
+  // If it belongs to another cluster, or not assigned yet,
+  // do no touch it.
+  for (SUnit::const_succ_iterator I = SU->Succs.begin(), E = SU->Succs.end();
+       I != E; ++I)
+    if (I->getSUnit()->NodeQueueId != ClusterNumber)
+      return *Depth;
+
+  DepList.push_back(SU);
+  SU->NodeQueueId = ClusterNumber;
+  (*Depth)++;
+  for (SUnit::pred_iterator I = SU->Preds.begin(), E = SU->Preds.end();
+       I != E; ++I)
+    iterateDominatingCluster (&(*I->getSUnit()),
+                      Depth,ClusterNumber,IncludePseudo,DepList);
+  return *Depth;
+
+}
+
+unsigned ResourcePriorityQueue::iterateChainSucc(SUnit *SU, unsigned *Depth,
+                           unsigned ClusterNumber,
+                           bool IncludePseudo,
+                           std::vector<SUnit *> &DepList) {
+  if (!SU || SU->isScheduled)
+    return *Depth;
+
+  // Same as "visited" marker.
+  if (SU->NodeQueueId)
+    return *Depth;
+
+  if (!IncludePseudo && !SUIsMachineOp(SU))
+    return *Depth;
+
+  // If I want to include it, make sure it has not been yet
+  // included to some other chain.
+  if (!SUIsMachineOp(SU) && getChainForSU(SU))
+    return *Depth;
+
+ // Try not to include jmp into any clusters.
+  for (SDNode *N = SU->getNode(); N; N = N->getGluedNode())
+    if (N->isMachineOpcode()) {
+      const MCInstrDesc &TID = TII->get(N->getMachineOpcode());
+      // Do not include jumps.
+      if (TID.isBranch()) return *Depth;
+    }
+
+  DepList.push_back(SU);
+  SU->NodeQueueId = ClusterNumber;
+  (*Depth)++;
+
+  for (SUnit::const_succ_iterator I = SU->Succs.begin(), E = SU->Succs.end();
+       I != E; ++I)
+    iterateChainSucc (&(*I->getSUnit()),
+                      Depth,ClusterNumber,IncludePseudo,DepList);
+
+  if (!SUIsMachineOp(SU))
+    return *Depth;
+  for (SUnit::pred_iterator I = SU->Preds.begin(), E = SU->Preds.end();
+       I != E; ++I)
+    iterateDominatingCluster (&(*I->getSUnit()),
+                      Depth,ClusterNumber,IncludePseudo,DepList);
+
+  return *Depth;
+}
+
+/// This function detects clusters in BBs.
+/// It attempts to detect independent groups
+/// of machine instructions joined by
+/// dataflow.
+unsigned ResourcePriorityQueue::iterateChain(SUnit *SU, unsigned *Depth,
+                       unsigned ClusterNumber,
+                       bool IncludePseudo,
+                       std::vector<SUnit *> &DepList) {
+  if (!SU)
+    return *Depth;
+
+  DepList.push_back(SU);
+  SU->NodeQueueId = ClusterNumber;
+  unsigned AccumulatedDepth = 0;
+  unsigned ChainDept = 1;
+  (*Depth)++;
+  // TODO: Better detection of terminator node.
+  if (SU->NodeNum <= 0)
+    return *Depth;
+
+  for (SUnit::const_succ_iterator I = SU->Succs.begin(), E = SU->Succs.end();
+                                  I != E; ++I) {
+    ChainDept = 1;
+    iterateChainSucc(&(*I->getSUnit()),
+                     &ChainDept,ClusterNumber,IncludePseudo,DepList);
+    if (ChainDept > AccumulatedDepth) AccumulatedDepth = ChainDept;
+  }
+  // Now go up a bit, and if pred node dominates only this cluster,
+  // add it in here as well.
+  for (SUnit::pred_iterator I = SU->Preds.begin(), E = SU->Preds.end();
+       I != E; ++I)
+    iterateDominatingCluster (&(*I->getSUnit()),
+                      Depth,ClusterNumber,IncludePseudo,DepList);
+
+  return AccumulatedDepth;
+}
+
 ///
-/// Initialize nodes.
+/// Grow thin clusters.
+///
+unsigned ResourcePriorityQueue::growClusters() {
+  unsigned Depth = 0;
+
+  if (Dominators.size() < 2)
+    return 0;
+
+  // Include non-shared SUs into existing clusters.
+  for (unsigned i = 0, e = Dominators.size(); i != e; ++i)
+    for (unsigned ii = 0, ee = Dominators[i].size(); ii != ee; ++ii) {
+      SUnit *SU =    Dominators[i][ii];
+      for (SUnit::pred_iterator I = SU->Preds.begin(), E = SU->Preds.end();
+                            I != E; ++I)
+        iterateChainPred(&(*I->getSUnit()),
+                          &Depth,(i+1),true,Dominators[i]);
+    }
+
+  // Try to merge some clusters.
+  // If a cluster is dominated by another cluster - merge them.
+  for (unsigned i = 0, e = Dominators.size(); i != e; ++i) {
+    unsigned Dominator = 0;
+    bool HasMultiplePreds = false;
+
+    for (unsigned ii = 0, ee = Dominators[i].size(); ii != ee; ++ii) {
+      SUnit *SU =    Dominators[i][ii];
+      // If any predecessors of this SU belongs to another cluster...
+      for (SUnit::pred_iterator I = SU->Preds.begin(), E = SU->Preds.end();
+           I != E; ++I) {
+        if (getChainForSU(I->getSUnit()) != (i+1)) {
+          if (Dominator && (Dominator != getChainForSU(I->getSUnit()))) {
+            // Multiple predecessors.
+            HasMultiplePreds = true;
+            break;
+          }
+          else Dominator = getChainForSU(I->getSUnit());
+        }
+      }
+    }
+    // Ok, there is only one dominating cluster - merge them.
+    if (!HasMultiplePreds && Dominator) {
+      for (unsigned ii = 0, ee = Dominators[i].size(); ii != ee; ++ii) {
+        SUnit *SU =    Dominators[i][ii];
+        Dominators[Dominator-1].push_back(SU);
+        SU->NodeQueueId = Dominator;
+      }
+      // Remove this SU from original cluster.
+      for (unsigned ii = 0, ee = Dominators[i].size(); ii != ee; ++ii)
+        Dominators[i].pop_back();
+    }
+  }
+
+  return Depth;
+}
+
+struct CustomSU {
+    SUnit *SU;
+    CustomSU (SUnit *su) : SU(su) {}
+};
+
+struct CustomSUCmp {
+  bool operator () (const CustomSU &SU1, const CustomSU &SU2) {
+    return SU1.SU->getHeight() > SU2.SU->getHeight();
+  }
+};
+
+///
+/// Initialize nodes.  Detect clusters.
 ///
 void ResourcePriorityQueue::initNodes(std::vector<SUnit> &sunits) {
   SUnits = &sunits;
   NumNodesSolelyBlocking.resize(SUnits->size(), 0);
+  // Find nodes that are likely chain starters
+  // and sort them.
+  std::vector<CustomSU> ChainTops;
 
   for (unsigned i = 0, e = SUnits->size(); i != e; ++i) {
     SUnit *SU = &(*SUnits)[i];
     initNumRegDefsLeft(SU);
+    if (SUIsMachineTop(SU))
+        ChainTops.push_back(CustomSU(SU));
+    // This means unassigned node.
     SU->NodeQueueId = 0;
   }
+  std::sort(ChainTops.begin(), ChainTops.end(), CustomSUCmp());
+
+  for (unsigned i = 0, e = ChainTops.size(); i != e; ++i) {
+    SUnit *SU = ChainTops[i].SU;
+    std::vector<SUnit*> DominatorChain;
+    unsigned Depth = 0;
+    bool SUAlreadyInChain = false;
+
+    for (unsigned i = 0, e = Dominators.size(); i != e; ++i) {
+        if (SUInChain(SU,Dominators[i])) {
+            SUAlreadyInChain = true;
+            break;
+        }
+    }
+    if  (!SUAlreadyInChain) {
+        // TODO: This is the location of adaptive scheduling
+        // decision making prior to scheduling initiation.
+        // In the future an early decision on starting cluster
+        // could be performed at this time.
+        Depth = iterateChain(SU,&Depth,DominatorChains++,true,
+                             DominatorChain);
+        assert(DominatorChain.size() && "Empty cluster");
+        Dominators.push_back(DominatorChain);
+    }
+  }
+  // Now grow cluster to unclude non shared pseudos.
+  growClusters();
+  UnscheduledClusterMembers.resize(Dominators.size());
+
+  for (unsigned i = 0, e = Dominators.size(); i != e; ++i)
+    UnscheduledClusterMembers[i] = Dominators[i].size();
+
 }
 
 /// This heuristic is used if DFA scheduling is not desired
@@ -410,10 +742,39 @@ signed ResourcePriorityQueue::SUSchedulingCost(SUnit *SU) {
   if (SU->isScheduleHigh)
     ResCount += PriorityOne;
 
-  // Adaptable scheduling
-  // A small, but very parallel
-  // region, where reg pressure is an issue.
-  if (HorizontalVerticalBalance > RegPressureThreshold) {
+  // Adaptable scheduling has three broad scenarios
+  // Cluster scheduling for wide, crowded regions
+  // with clusters of dependencies, largely
+  // independent from each other.
+  if (ClusterScheduling) {
+    // Heavily prioratize current cluster
+    // and allow other started clusters to rise.
+    for (unsigned i = 0, e = StartedCluster.size(); i != e; ++i)
+      if (StartedCluster[i] == (SU->NodeQueueId - 1)) {
+        ResCount += PriorityTwo;
+        break;
+      }
+
+    if (CurrentCluster == (SU->NodeQueueId - 1))
+      ResCount += PriorityTwo;
+
+    // Critical path first.
+    ResCount += (SU->getHeight() * ScaleTwo);
+    // Now see how many instructions is blocked by this SU.
+    ResCount += (NumNodesSolelyBlocking[SU->NodeNum] * ScaleTwo);
+    // If resources are available for it, multiply the
+    // chance of scheduling.
+    if (isResourceAvailable(SU))
+      ResCount <<= FactorOne;
+
+    // Adjust for potential reg pressure delta.
+    ResCount -= (regPressureDelta(SU) * ScaleTwo);
+  }
+  // A non-cluster, small, but very parallel
+  // region, where reg pressure is an issue,
+  // but no clusters could be identified.
+  else if (HorizontalVerticalBalance > RegPressureThreshold) {
+
     // Critical path first
     ResCount += (SU->getHeight() * ScaleTwo);
     // If resources are available for it, multiply the
@@ -514,8 +875,100 @@ void ResourcePriorityQueue::scheduledNode(SUnit *SU) {
     }
   }
 
+  // If the cluster scheduling is already underway
+  // see when do we want to overlap next cluster with
+  // the current one.
+  // For this we need to track local reg pressure
+  // and detect when it peaks and starts going down
+  if (ClusterScheduling) {
+    // This threshold determines when to allow next cluster
+    // to start. It is largely platform independent, and
+    // mainly a function of cluster size.
+    // Empirical value of 15 seems to work well for
+    // a variety of scenarious. If in the future this would
+    // be proven to be false, this might receive its own
+    // computational method.
+    static const unsigned OverlapThreshold = 15;
+    // Keep track of number scheduled cluster members.
+    if ((SU->NodeQueueId != 0) && (SU->NodeQueueId != NonClusterUse))
+        UnscheduledClusterMembers[SU->NodeQueueId - 1]--;
+
+    // If we are almost done with the current cluster, allow
+    // the next one start.
+    if ((SU->NodeQueueId != 0)
+         && (SU->NodeQueueId != NonClusterUse)
+         && (CurrentCluster != (SU->NodeQueueId - 1))
+         && (UnscheduledClusterMembers[CurrentCluster] < OverlapThreshold))
+      StartedCluster.push_back((SU->NodeQueueId - 1));
+  }
+
+  // If this node has no predecessors, see which cluster it belongs to.
+  // It might be starting a new cluster, and we would want to note this event.
+  // TODO: This is foundation of BB characterisation for improved
+  // adaptive scheduling in the future.
+  if (!ClusterScheduling
+      && (Dominators.size() > 1)
+      && SU->NodeQueueId != 0
+      && SU->NodeQueueId != NonClusterUse) {
+    ClusterScheduling = true;
+    // Cluster # and cluster ID are off by one.
+    CurrentCluster = SU->NodeQueueId - 1;
+    // This SU is already scheduled
+    UnscheduledClusterMembers[CurrentCluster]--;
+    // All clusters "in flight"
+    StartedCluster.push_back(CurrentCluster);
+
+    // After initial cluster formation some none machine
+    // SUs could belong to multiple clusters, here we need to
+    // include them all in the cluster currently being selected
+    // for scheduling.
+    for (unsigned ii = 0, ee = Dominators[CurrentCluster].size();
+         ii != ee; ++ii)
+      Dominators[CurrentCluster][ii]->NodeQueueId = CurrentCluster + 1;
+  }
+
   // Reserve resources for this SU.
   reserveResources(SU);
+
+  // Detect trailing clusters.
+  // If we have began with no clusters, or situation has
+  // dynamically changed, see if we can detect a subcluster
+  // chain, and finish it first, in the hope to reduce number of
+ // parallel live ranges.
+  if (!ClusterScheduling
+      && (ParallelLiveRanges > LateClustersThreshold)
+      && !SU->isScheduleHigh) {
+    std::vector<SUnit*> DominatorChain;
+    unsigned Depth = 0;
+    // If this is an unscheduled node, set cluster name correctly.
+    unsigned TrailingChains = 1;
+
+    // First throw away current cluster assignment (if any).
+    for (unsigned i = 0, e = SUnits->size(); i != e; ++i) {
+      SUnit *SU = &(*SUnits)[i];
+      SU->NodeQueueId = 0;
+    }
+    // Reconstruct partial clusters.
+    Depth = iterateChain(SU, &Depth, TrailingChains, false,
+                             DominatorChain);
+
+    // Mark the sub-cluster for priority scheduling.
+    // Note the different way to mark SUs.
+    for (unsigned i = 0, e = DominatorChain.size(); i != e; ++i) {
+        DominatorChain[i]->isScheduleHigh = true;
+        // Reset this to look unclustered, so we do not
+        // interfere with early clustering.
+        DominatorChain[i]->NodeQueueId = 0;
+    }
+  }
+
+
+  // If this cluster is fully scheduled, and another has not started yet,
+  // reset to the initial state.
+  if (ClusterScheduling && !UnscheduledClusterMembers[CurrentCluster]) {
+    ClusterScheduling = false;
+    CurrentCluster = NonClusterUse;
+  }
 
   // Adjust number of parallel live ranges.
   // Heuristic is simple - node with no data successors reduces

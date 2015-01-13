@@ -109,6 +109,9 @@ public:
   CreateTargetPostRAHazardRecognizer(const InstrItineraryData *II,
                                      const ScheduleDAG *DAG) const override;
 
+  ScheduleProfitRecognizer *
+  CreateTargetPostRAProfitRecognizer(const InstrItineraryData *II) const;
+
   // Branch analysis.
   bool AnalyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
                      MachineBasicBlock *&FBB,
@@ -343,6 +346,10 @@ private:
 
   virtual void expandLoadStackGuard(MachineBasicBlock::iterator MI,
                                     Reloc::Model RM) const = 0;
+
+  /// getInstrExtraPredCost - return the extra cost to predicate an
+  /// instruction with multiple input and output operands.
+  unsigned getInstrExtraPredCost(const MachineInstr *MI) const;
 
 private:
   /// Modeling special VFP / NEON fp MLA / MLS hazards.

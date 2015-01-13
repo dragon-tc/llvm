@@ -37,6 +37,39 @@ extern Target TheARMLETarget, TheThumbLETarget;
 extern Target TheARMBETarget, TheThumbBETarget;
 
 namespace ARM_MC {
+
+  // Krait Integer and NEON/VFP Pipelines
+  // L Integer Load Pipeline
+  // S Integer Store Pipeline
+  // X_Y_M_B_Z: Integer Execute Pipelines
+  // B Integer Execute Pipeline
+  // Z Integer Execute Pipeline
+  // VL VFP/NEON Load, Permute and MOV Pipeline
+  // VS VFP/NEON Store and MOV Pipeline
+  // VX VFP/NEON Execute Pipeline
+
+  typedef enum {
+    PipeType_Unknown,
+
+
+    // Krait
+    PipeType_Krait_L,
+    PipeType_Krait_S,
+    PipeType_Krait_X_Y_M_B_Z,
+    PipeType_Krait_VL,
+    PipeType_Krait_VS,
+    PipeType_Krait_VX
+  } PipeType;
+
+
+  // Returns an instruction pipe affinity given the
+  // instruction itinerary units in Krait2.
+  PipeType getKrait2PipeType(unsigned Units);
+
+  // Returns the number of different execution pipelines
+  // used by the instruction itinerary units in Krait2.
+  unsigned int getKrait2PipeCount(unsigned Units);
+
   std::string ParseARMTriple(StringRef TT, StringRef CPU);
 
   /// createARMMCSubtargetInfo - Create a ARM MCSubtargetInfo instance.

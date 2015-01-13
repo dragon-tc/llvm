@@ -23,6 +23,7 @@
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetRegistry.h"
 
@@ -478,4 +479,92 @@ extern "C" void LLVMInitializeARMTargetMC() {
                                            createARMMCRelocationInfo);
   TargetRegistry::RegisterMCRelocationInfo(TheThumbBETarget,
                                            createARMMCRelocationInfo);
+}
+
+// Instruction pipeline affinity for Krait2 processor.
+ARM_MC::PipeType ARM_MC::getKrait2PipeType(unsigned Units)
+{
+  // Krait Instruction Pipeline affinity
+  // L pipe (Integer mem): uses LSUnit and L
+  // S pipe (Integer mem): uses LSUnit and S
+  // X_Y_M_B_Z pipe (Integer non-mem): uses Y, M, X, Z, or B
+  // VL pipe (Neon/VFP mem and non-mem): uses LSUnit and VL, or uses VL
+  // VS pipe (Neon/VFP mem and non-mem): uses LSUnit and VS, or uses VS
+  // VX pipe (Neon/VFP Execute Pipe): uses VX
+
+  // Return pipe unknown for empty itineraries.
+  if (0 == Units)
+    return ARM_MC::PipeType_Unknown;
+
+  if (Krait2ItinerariesFU::KRT2_LSUnit & Units){
+    // can be Integer or Neon/VFP
+    if (Krait2ItinerariesFU::KRT2_L & Units)
+      return ARM_MC::PipeType_Krait_L;
+    if (Krait2ItinerariesFU::KRT2_S & Units)
+      return ARM_MC::PipeType_Krait_S;
+    if (Krait2ItinerariesFU::KRT2_VL & Units)
+      return ARM_MC::PipeType_Krait_VL;
+    if (Krait2ItinerariesFU::KRT2_VS & Units)
+      return ARM_MC::PipeType_Krait_VS;
+  }
+
+  if (Krait2ItinerariesFU::KRT2_VS & Units)
+    return ARM_MC::PipeType_Krait_VS; // VS non-mem
+
+  if (Krait2ItinerariesFU::KRT2_VL & Units)
+    return ARM_MC::PipeType_Krait_VL; // VL non-mem
+
+  if (Krait2ItinerariesFU::KRT2_VX & Units)
+    return ARM_MC::PipeType_Krait_VX;
+
+  if ((Krait2ItinerariesFU::KRT2_X & Units) ||
+      (Krait2ItinerariesFU::KRT2_Y & Units) ||
+      (Krait2ItinerariesFU::KRT2_M & Units) ||
+      (Krait2ItinerariesFU::KRT2_B & Units) ||
+      (Krait2ItinerariesFU::KRT2_Z & Units))
+    return ARM_MC::PipeType_Krait_X_Y_M_B_Z;
+
+  if (Krait2ItinerariesFU::KRT2_MUX0 & Units)
+    return ARM_MC::PipeType_Krait_VS; // DP/SP MOV to GPR only models MUX0
+
+  // Krait itineraries should always fall into the above conditions.
+  // This situation is not possible
+  DEBUG(errs() << "Units=" << Units << "\n");
+  llvm_unreachable("unexpected Krait2 instruction itinerary: "
+                   "could not determine pipe type");
+}
+
+unsigned int ARM_MC::getKrait2PipeCount(unsigned Units)
+{
+  // Most instructions are executed in one specific pipe/FU.
+  // But some integer instructions can be executed in more than one pipe/FU:
+  // - KRT_X, KRT_Y, KRT_B and KRT_Z (4 pipes)
+  // - KRT_X, KRT_Y and KRT_Z (3 pipes)
+  // - KRT_X, KRT_Y (2 pipes)
+
+  // Return high pipe count for empty itineraries.
+  if (0 == Units)
+    return 0xFFFF;
+
+  if ((Krait2ItinerariesFU::KRT2_X & Units) &&
+      (Krait2ItinerariesFU::KRT2_Y & Units) &&
+      (Krait2ItinerariesFU::KRT2_B & Units) &&
+      (Krait2ItinerariesFU::KRT2_Z & Units))
+    return 4;
+
+  if ((Krait2ItinerariesFU::KRT2_X & Units) &&
+      (Krait2ItinerariesFU::KRT2_Y & Units) &&
+      (Krait2ItinerariesFU::KRT2_Z & Units))
+    return 3;
+
+  if ((Krait2ItinerariesFU::KRT2_X & Units) &&
+      (Krait2ItinerariesFU::KRT2_Y & Units) &&
+      (Krait2ItinerariesFU::KRT2_B & Units))
+    return 3;
+
+  if ((Krait2ItinerariesFU::KRT2_X & Units) &&
+      (Krait2ItinerariesFU::KRT2_Y & Units))
+    return 2;
+
+  return 1;
 }

@@ -111,6 +111,17 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
           TySize *= CUI->getZExtValue();   // Get total allocated size.
           if (TySize == 0) TySize = 1; // Don't create zero-sized stack objects.
 
+        // For string buffers more than 16 bytes, align to 8 byte boundary
+        if (TySize > 16)
+          Align = std::max(Align, (unsigned) 8);
+
+        // Align local arrays (char, short, int) to 8 byte boundary.
+        // This is done to make their alignment compatible with GCC.
+        if (isa<ArrayType>(Ty) &&
+            cast<ArrayType>(Ty)->getElementType()->isIntegerTy()) {
+          Align = std::max(Align, (unsigned) 8);
+        }
+
           StaticAllocaMap[AI] =
             MF->getFrameInfo()->CreateStackObject(TySize, Align, false, AI);
 
@@ -497,7 +508,10 @@ void llvm::AddCatchInfo(const CallInst &I, MachineModuleInfo *MMI,
         TyInfo.reserve(N - FirstCatch);
         for (unsigned j = FirstCatch; j < N; ++j)
           TyInfo.push_back(ExtractTypeInfo(I.getArgOperand(j)));
-        MMI->addCatchTypeInfo(MBB, TyInfo);
+        // Make sure TyInfo is not empty. This results in null exception specification
+        // being generated causing runtime issues.
+        if (TyInfo.size() != 0)
+          MMI->addCatchTypeInfo(MBB, TyInfo);
         TyInfo.clear();
       }
 
@@ -509,7 +523,10 @@ void llvm::AddCatchInfo(const CallInst &I, MachineModuleInfo *MMI,
         TyInfo.reserve(FilterLength - 1);
         for (unsigned j = i + 1; j < FirstCatch; ++j)
           TyInfo.push_back(ExtractTypeInfo(I.getArgOperand(j)));
-        MMI->addFilterTypeInfo(MBB, TyInfo);
+        // Make sure TyInfo is not empty. This results in null exception specification
+        // being generated causing runtime issues.
+        if (TyInfo.size() != 0)
+          MMI->addFilterTypeInfo(MBB, TyInfo);
         TyInfo.clear();
       }
 

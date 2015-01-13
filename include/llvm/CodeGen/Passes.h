@@ -535,6 +535,10 @@ namespace llvm {
   /// MachineCSE - This pass performs global CSE on machine instructions.
   extern char &MachineCSEID;
 
+  /// MachineGCH - This pass performs global GCH (Global Code Hoisting)
+  /// on machine instructions.
+  extern char &MachineGCHID;
+
   /// MachineLICM - This pass performs LICM on machine instructions.
   extern char &MachineLICMID;
 

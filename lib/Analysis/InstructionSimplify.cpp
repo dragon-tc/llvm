@@ -33,6 +33,7 @@
 #include "llvm/IR/PatternMatch.h"
 #include "llvm/IR/ValueHandle.h"
 #include <algorithm>
+#include "llvm/Support/CommandLine.h"
 using namespace llvm;
 using namespace llvm::PatternMatch;
 
@@ -42,6 +43,10 @@ enum { RecursionLimit = 3 };
 
 STATISTIC(NumExpand,  "Number of expansions");
 STATISTIC(NumReassoc, "Number of reassociations");
+
+// Should we conduct the Div simplify?
+static cl::opt<bool> DisableSimplifyDivBool("disable_simplify_div",
+                                cl::init(false), cl::Hidden);
 
 namespace {
 struct Query {
@@ -998,6 +1003,8 @@ Value *llvm::SimplifyMulInst(Value *Op0, Value *Op1, const DataLayout *DL,
 /// fold the result.  If not, this returns null.
 static Value *SimplifyDiv(Instruction::BinaryOps Opcode, Value *Op0, Value *Op1,
                           const Query &Q, unsigned MaxRecurse) {
+  if (DisableSimplifyDivBool)
+    return 0;
   if (Constant *C0 = dyn_cast<Constant>(Op0)) {
     if (Constant *C1 = dyn_cast<Constant>(Op1)) {
       Constant *Ops[] = { C0, C1 };

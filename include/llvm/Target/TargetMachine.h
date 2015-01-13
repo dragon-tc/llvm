@@ -194,6 +194,12 @@ public:
     CGFT_Null         // Do not emit any output.
   };
 
+  // addPassesForOptimizations - Allow the backend (target) to add Target Independent
+  // Optimization passes to the Pass Manager.
+  virtual bool addPassesForOptimizations(PassManagerBase &) {
+    return true;
+  }
+
   /// addPassesToEmitFile - Add passes to the specified pass manager to get the
   /// specified file emitted.  Typically this will involve several steps of code
   /// generation.  This method should return true if emission of this file type

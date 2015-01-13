@@ -285,8 +285,8 @@ ARMBaseRegisterInfo::UpdateRegAllocHint(unsigned Reg, unsigned NewReg,
 
 bool
 ARMBaseRegisterInfo::avoidWriteAfterWrite(const TargetRegisterClass *RC) const {
-  // CortexA9 has a Write-after-write hazard for NEON registers.
-  if (!STI.isLikeA9())
+  // CortexA9/Krait has a Write-after-write hazard for NEON registers.
+  if (!STI.isLikeA9() || STI.isKrait2())
     return false;
 
   switch (RC->getID()) {

@@ -636,8 +636,11 @@ void ARMAsmPrinter::emitAttributes() {
   std::string CPUString = Subtarget->getCPUString();
 
   // FIXME: remove krait check when GNU tools support krait cpu
-  if (CPUString != "generic" && CPUString != "krait")
+  if (CPUString != "generic" && CPUString != "krait" && CPUString != "krait2")
     ATS.emitTextAttribute(ARMBuildAttrs::CPU_name, CPUString);
+
+  if (CPUString != "krait" && CPUString != "krait2")
+    ATS.emitTextAttribute(ARMBuildAttrs::CPU_name, "cortex-a15");
 
   ATS.emitAttribute(ARMBuildAttrs::CPU_arch,
                     getArchForCPU(CPUString, Subtarget));
@@ -872,6 +875,7 @@ getModifierVariantKind(ARMCP::ARMCPModifier Modifier) {
   case ARMCP::GOTTPOFF:    return MCSymbolRefExpr::VK_GOTTPOFF;
   case ARMCP::GOT:         return MCSymbolRefExpr::VK_GOT;
   case ARMCP::GOTOFF:      return MCSymbolRefExpr::VK_GOTOFF;
+  case ARMCP::GOTPREL:     return MCSymbolRefExpr::VK_ARM_GOTPREL;
   }
   llvm_unreachable("Invalid ARMCPModifier!");
 }

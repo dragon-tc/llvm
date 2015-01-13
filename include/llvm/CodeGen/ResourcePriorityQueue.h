@@ -45,6 +45,18 @@ namespace llvm {
     /// mobility.
     std::vector<unsigned> NumNodesSolelyBlocking;
 
+    /// Cluster tracking structure.
+    std::vector< std::vector<SUnit*> > Dominators;
+    /// ID tracking for clusters. Since clusters could be merged
+    /// or deleted, might not match Dominators.size().
+    unsigned DominatorChains;
+   /// List of clusters currently available for scheduling.
+    std::vector<unsigned> StartedCluster;
+    /// Keeping track of scheduled memebers in a cluster.
+    std::vector<unsigned> UnscheduledClusterMembers;
+    unsigned CurrentCluster;
+    bool ClusterScheduling;
+
     /// Queue - The queue.
     std::vector<SUnit*> Queue;
 
@@ -130,12 +142,34 @@ namespace llvm {
     void scheduledNode(SUnit *Node) override;
     bool isResourceAvailable(SUnit *SU);
     void reserveResources(SUnit *SU);
+    bool SUContainsCall (SUnit *SU);
+    bool SUIsMachineOp (SUnit *SU);
+    bool SUIsMachineTop (SUnit *SU);
+    unsigned getChainForSU  (SUnit *SU);
 
 private:
     void adjustPriorityOfUnscheduledPreds(SUnit *SU);
     SUnit *getSingleUnscheduledPred(SUnit *SU);
     unsigned numberRCValPredInSU (SUnit *SU, unsigned RCId);
     unsigned numberRCValSuccInSU (SUnit *SU, unsigned RCId);
+    /// Cluster construction helpers.
+    unsigned iterateChain (SUnit *SU, unsigned *Depth,
+                       unsigned ClusterNumber,
+                       bool IncludePseudo,
+                      std::vector<SUnit *> &DepList);
+    unsigned iterateChainSucc (SUnit *SU, unsigned *Depth,
+                           unsigned ClusterNumber,
+                           bool IncludePseudo,
+                           std::vector<SUnit *> &DepList);
+    unsigned iterateChainPred (SUnit *SU, unsigned *Depth,
+                           unsigned ClusterNumber,
+                           bool IncludePseudo,
+                           std::vector<SUnit *> &DepList);
+    unsigned iterateDominatingCluster (SUnit *SU, unsigned *Depth,
+                           unsigned ClusterNumber,
+                           bool IncludePseudo,
+                           std::vector<SUnit *> &DepList);
+    unsigned growClusters ();
   };
 }
 

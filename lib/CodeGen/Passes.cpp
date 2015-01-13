@@ -53,11 +53,14 @@ static cl::opt<bool> DisableMachineLICM("disable-machine-licm", cl::Hidden,
     cl::desc("Disable Machine LICM"));
 static cl::opt<bool> DisableMachineCSE("disable-machine-cse", cl::Hidden,
     cl::desc("Disable Machine Common Subexpression Elimination"));
+static cl::opt<bool> DisableMachineGCH("disable-machine-gch",
+    cl::desc("Disable Machine Global Code Hoisting/Unification"),
+    cl::Hidden, cl::init(true));
 static cl::opt<cl::boolOrDefault>
 OptimizeRegAlloc("optimize-regalloc", cl::Hidden,
     cl::desc("Enable optimized register allocation compilation path."));
 static cl::opt<cl::boolOrDefault>
-EnableMachineSched("enable-misched",
+EnableMachineSched("enable-misched", cl::ZeroOrMore,
     cl::desc("Enable the machine instruction scheduling pass."));
 static cl::opt<bool> DisablePostRAMachineLICM("disable-postra-machine-licm",
     cl::Hidden,
@@ -180,6 +183,9 @@ static IdentifyingPassPtr overridePass(AnalysisID StandardID,
 
   if (StandardID == &MachineCSEID)
     return applyDisable(TargetID, DisableMachineCSE);
+
+  if (StandardID == &MachineGCHID)
+    return applyDisable(TargetID, DisableMachineGCH);
 
   if (StandardID == &MachineSchedulerID)
     return applyOverride(TargetID, EnableMachineSched, StandardID);
@@ -453,7 +459,7 @@ void TargetPassConfig::addPassesToHandleExceptions() {
     break;
   case ExceptionHandling::MSVC: // FIXME: Add preparation.
   case ExceptionHandling::None:
-    addPass(createLowerInvokePass());
+//    addPass(createLowerInvokePass());
 
     // The lower invoke pass may create unreachable code. Remove it.
     addPass(createUnreachableBlockEliminationPass());
@@ -624,6 +630,7 @@ void TargetPassConfig::addMachineSSAOptimization() {
 
   addPass(&MachineLICMID, false);
   addPass(&MachineCSEID, false);
+  addPass(&MachineGCHID);
   addPass(&MachineSinkingID);
 
   addPass(&PeepholeOptimizerID, false);

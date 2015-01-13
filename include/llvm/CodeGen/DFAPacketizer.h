@@ -93,6 +93,7 @@ class VLIWPacketizerList {
 protected:
   const MachineFunction &MF;
   const TargetInstrInfo *TII;
+  AliasAnalysis *AA;
 
   // The VLIW Scheduler.
   DefaultVLIWScheduler *VLIWScheduler;
@@ -106,7 +107,7 @@ protected:
   std::map<MachineInstr*, SUnit*> MIToSUnit;
 
 public:
-  VLIWPacketizerList(MachineFunction &MF, MachineLoopInfo &MLI, bool IsPostRA);
+  VLIWPacketizerList(MachineFunction &MF, MachineLoopInfo &MLI, AliasAnalysis *AA, bool IsPostRA);
 
   virtual ~VLIWPacketizerList();
 

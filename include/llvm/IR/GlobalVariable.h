@@ -45,6 +45,8 @@ class GlobalVariable : public GlobalObject, public ilist_node<GlobalVariable> {
                                                // can change from its initial
                                                // value before global
                                                // initializers are run?
+  bool isSafeToLocalizeSymbol : 1;     // Is this safe to localize in loops?
+  bool isSafeToLocalizeSymbolMF : 1;   // Is this safe to localize in a function?
 
 public:
   // allocate space for exactly one operand
@@ -150,6 +152,15 @@ public:
   void setExternallyInitialized(bool Val) {
     isExternallyInitializedConstant = Val;
   }
+
+  /// If this global variable is safe to localize in loops
+  bool isSafeToLocalize() const { return isSafeToLocalizeSymbol; }
+  void setSafeToLocalize(bool Val) { isSafeToLocalizeSymbol = Val; }
+
+  /// If this global variable is safe to localize in function.
+  bool isSafeToLocalizeMF() const { return isSafeToLocalizeSymbolMF; }
+  void setSafeToLocalizeMF(bool Val) { isSafeToLocalizeSymbolMF = Val; }
+
 
   /// copyAttributesFrom - copy all additional attributes (those not needed to
   /// create a GlobalVariable) from the GlobalVariable Src to this one.

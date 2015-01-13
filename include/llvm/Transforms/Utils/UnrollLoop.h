@@ -28,6 +28,8 @@ bool UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool AllowRuntime,
                 unsigned TripMultiple, LoopInfo *LI, Pass *PP,
                 LPPassManager *LPM, AssumptionCache *AC);
 
+bool UnrollRuntimeLoopProfitable(Loop *L);
+
 bool UnrollRuntimeLoopProlog(Loop *L, unsigned Count, LoopInfo *LI,
                              LPPassManager* LPM);
 }

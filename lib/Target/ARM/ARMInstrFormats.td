@@ -68,7 +68,8 @@ def N3RegVShFrm   : Format<38>;
 def NVExtFrm      : Format<39>;
 def NVMulSLFrm    : Format<40>;
 def NVTBLFrm      : Format<41>;
-def DPSoRegImmFrm  : Format<42>;
+def DPSoRegImmFrm : Format<42>;
+def DivFrm        : Format<43>;
 
 // Misc flags.
 
@@ -799,6 +800,16 @@ class AXI4<dag oops, dag iops, IndexMode im, Format f, InstrItinClass itin,
   let Inst{22}    = 0; // S bit
   let Inst{19-16} = Rn;
   let Inst{15-0}  = regs;
+}
+
+// Signed and Unsigned divide
+class AsDiv1I<bits<3> opcod, dag oops, dag iops, InstrItinClass itin,
+              string opc, string asm, list<dag> pattern>
+  : I<oops, iops, AddrModeNone, 4, IndexModeNone, DivFrm, itin,
+       opc, asm, "", pattern> {
+  let Inst{7-4}   = 0b0001;
+  let Inst{22-20}   = opcod;
+  let Inst{27-23} = 0b01110;
 }
 
 // Unsigned multiply, multiply-accumulate instructions.

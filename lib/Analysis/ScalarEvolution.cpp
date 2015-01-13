@@ -5076,6 +5076,24 @@ ScalarEvolution::ComputeExitLimitFromICmp(const Loop *L,
     if (EL.hasAnyInfo()) return EL;
     break;
   }
+  case ICmpInst::ICMP_SLE: {
+    // Compute trip count only if the expression is marked as non-wrapping.
+    if (const SCEVAddRecExpr *AddRec = dyn_cast<SCEVAddRecExpr>(LHS)) {
+      if (AddRec->getNoWrapFlags(SCEV::FlagNSW)) {
+        ExitLimit EL = HowManyLessThans(LHS, RHS, L, true, IsSubExpr);
+        if (EL.hasAnyInfo()) {
+          const SCEV *BTCount = EL.Exact;
+          if (const SCEVConstant *CountConst =dyn_cast<SCEVConstant>(BTCount)) {
+            const APInt &CountA = CountConst->getValue()->getValue();
+             BTCount = getConstant(CountA + 1);
+            EL.Exact = BTCount;
+            return EL;
+          }
+        }
+      }
+    }
+    break;
+  }
   case ICmpInst::ICMP_SGT:
   case ICmpInst::ICMP_UGT: {                    // while (X > Y)
     bool IsSigned = Cond == ICmpInst::ICMP_SGT;

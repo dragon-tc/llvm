@@ -39,9 +39,11 @@ namespace llvm {
     /// mobility.
     std::vector<unsigned> NumNodesSolelyBlocking;
 
+    latency_sort Picker;
+
+  protected:
     /// Queue - The queue.
     std::vector<SUnit*> Queue;
-    latency_sort Picker;
 
   public:
     LatencyPriorityQueue() : Picker(this) {

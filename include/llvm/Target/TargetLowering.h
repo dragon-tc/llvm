@@ -940,6 +940,12 @@ public:
     return PrefLoopAlignment;
   }
 
+  /// getPrefBranchTargetAlignment - return the preferred alignment
+  /// of a branch target (if never set, the default is 0).
+  unsigned getPrefBranchTargetAlignment() const {
+    return PrefBranchTargetAlignment;
+  }
+
   /// Return whether the DAG builder should automatically insert fences and
   /// reduce ordering for atomics.
   bool getInsertFencesForAtomic() const {
@@ -1350,6 +1356,17 @@ protected:
   void setPrefLoopAlignment(unsigned Align) {
     PrefLoopAlignment = Align;
   }
+
+  /// setPrefBranchTargetAlignment - Set the target's preferred branch target
+  /// alignment.  Default is zero, meaning that branch target does not need
+  /// any alignment considerations.
+  void setPrefBranchTargetAlignment(unsigned Align) {
+    PrefBranchTargetAlignment = Align;
+  }
+
+  /// PrefBranchTargetAlignment - The preferred branch target alignment.
+  ///
+  unsigned PrefBranchTargetAlignment;
 
   /// Set the minimum stack alignment of an argument (in log2(bytes)).
   void setMinStackArgumentAlignment(unsigned Align) {
