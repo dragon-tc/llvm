@@ -162,6 +162,9 @@ namespace llvm {
       VMULLs,       // ...signed
       VMULLu,       // ...unsigned
 
+      SBFX,         // Signed bit field extract
+      UBFX,         // Unsigned bit field extract
+
       UMLAL,        // 64bit Unsigned Accumulate Multiply
       SMLAL,        // 64bit Signed Accumulate Multiply
 

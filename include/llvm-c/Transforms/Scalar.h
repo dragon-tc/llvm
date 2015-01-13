@@ -147,6 +147,15 @@ void LLVMAddScopedNoAliasAAPass(LLVMPassManagerRef PM);
 /** See llvm::createBasicAliasAnalysisPass function */
 void LLVMAddBasicAliasAnalysisPass(LLVMPassManagerRef PM);
 
+/** See llvm::createSelectConversionPass function */
+//void LLVMAddSelectConversionPass(LLVMPassManagerRef PM);
+
+/** See createFactorizeExpressionsPass function */
+//void LLVMAddFactorizeExpressionsPass(LLVMPassManagerRef PM);
+
+/** See createPrecomputeLoopExpressionsPass function */
+//void LLVMAddPrecomputeLoopExpressionsPass(LLVMPassManagerRef PM);
+
 /**
  * @}
  */

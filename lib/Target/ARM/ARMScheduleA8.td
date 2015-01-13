@@ -103,6 +103,26 @@ def CortexA8Itineraries : ProcessorItineraries<
   InstrItinData<IIC_iMUL64   , [InstrStage<3, [A8_Pipe0]>], [6, 6, 1, 1]>,
   InstrItinData<IIC_iMAC64   , [InstrStage<3, [A8_Pipe0]>], [6, 6, 1, 1]>,
 
+  // Integer parallel add and sub for now modeled as NoItinerary
+
+  // todo: IIC_iDML32: MAC dual for now defined as IIC_iMAC32
+  // SMLAD,DX; SMLSD,DX;
+  InstrItinData<IIC_iDML32   , [InstrStage<2, [A8_Pipe0]>], [6, 1, 1, 4]>,
+
+  // todo: IIC_iDML64: MAC long dual for now defined as IIC_iMAC64
+  // SMLALD,LDX; SMLSLD,LDX
+  InstrItinData<IIC_iDML64   , [InstrStage<3, [A8_Pipe0]>], [6, 6, 1, 1]>,
+
+  // todo: IIC_iMUAD32: Dual multiply add for now defined as IIC_iMAC32
+  // SMUAD,DX, SMUSD,DX
+  InstrItinData<IIC_iMUAD32   , [InstrStage<2, [A8_Pipe0]>], [6, 1, 1]>,
+
+  // todo: IIC_iDIV32: integer division for now defined as IIC_iALUr
+  // min latency=3 min throughput=2; max latency=36 throughput=34
+  // SDIV, UDIV
+  InstrItinData<IIC_iDIV32 ,[InstrStage<1, [A8_Pipe0, A8_Pipe1]>], [2, 2, 2]>,
+
+
   // Integer load pipeline
   //
   // Immediate offset
@@ -1055,7 +1075,100 @@ def CortexA8Itineraries : ProcessorItineraries<
   InstrItinData<IIC_VTBX4,    [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
                                InstrStage<1, [A8_NLSPipe]>,
                                InstrStage<1, [A8_NPipe], 0>,
-                            InstrStage<2, [A8_NLSPipe]>], [4, 1, 2, 2, 3, 3, 1]>
+                            InstrStage<2, [A8_NLSPipe]>], [4, 1, 2, 2, 3, 3, 1]>,
+
+  //
+  // Double-register Integer Add IIC_VADDiD for now defined as IIC_VBINiD
+  // and reusing same latency info
+  InstrItinData<IIC_VADDiD,   [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                              InstrStage<1, [A8_NPipe]>], [3, 2, 2]>,
+
+  //
+  // Quad-register Integer Add IIC_VADDiQ for now defined as IIC_VBINiQ
+  // and reusing same latency info
+  InstrItinData<IIC_VADDiQ,   [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<1, [A8_NPipe]>], [3, 2, 2]>,
+
+  //
+  // Double-register FP Add (in SP) IIC_VADDD for now defined as IIC_VBIND
+  // and reusing same latency info
+  InstrItinData<IIC_VADDD,    [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<1, [A8_NPipe]>], [5, 2, 2]>,
+
+  //
+  // Quad-register FP Add (in SP) IIC_VADDQ for now defined as IIC_VBINQ
+  // and reusing same latency info
+  InstrItinData<IIC_VADDQ,    [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<2, [A8_NPipe]>], [6, 2, 2]>,
+
+  //
+  // Double-register Integer Binary IIC_VBINi2D for now defined as IIC_VSUBi4D
+  // and reusing same latency info
+  InstrItinData<IIC_VBINi2D,  [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<1, [A8_NPipe]>], [4, 2, 1]>,
+
+  //
+  // Quad-register Integer Binary IIC_VBINi2Q for now defined as IIC_VSUBi4Q
+  // and reusing same latency info
+  InstrItinData<IIC_VBINi2Q,  [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<1, [A8_NPipe]>], [4, 2, 1]>,
+
+  //
+  // Double-register FP Binary IIC_VBIN2D for now defined as IIC_VBIND
+  // and reusing same latency info
+  InstrItinData<IIC_VBIN2D,    [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<1, [A8_NPipe]>], [5, 2, 2]>,
+
+  //
+  // Quad-register FP Binary IIC_VBIN2Q for now defined as IIC_VBINQ
+  // and reusing same latency info
+  InstrItinData<IIC_VBIN2Q,    [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<2, [A8_NPipe]>], [6, 2, 2]>,
+
+  // Integer Pairwise IIC_VPBIN2D for now defined as IIC_VPBIND
+  // and reusing same latency info
+  InstrItinData<IIC_VPBIN2D,   [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<1, [A8_NPipe]>], [5, 2, 2]>,
+
+  //
+  // Double-register Integer Count IIC_VCNTi2D for now defined as IIC_VCNTiD
+  // and reusing same latency info
+  InstrItinData<IIC_VCNTi2D,   [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<1, [A8_NPipe]>], [3, 2, 2]>,
+
+  //
+  // Quad-register Integer Count IIC_VCNTi2Q for now defined as IIC_VCNTiQ
+  // and reusing same latency info
+  InstrItinData<IIC_VCNTi2Q,   [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<2, [A8_NPipe]>], [4, 2, 2]>,
+
+  //
+  // Double-register Integer Shift IIC_VSHLi4D for now defined as IIC_VSHLiD
+  // and reusing same latency info
+  InstrItinData<IIC_VSHLi4D,   [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<1, [A8_NPipe]>], [3, 1, 1]>,
+
+  //
+  // Double-register FP Unary IIC_VUNA1D for now defined as IIC_VUNAD
+  // and reusing same latency info
+  InstrItinData<IIC_VUNA1D,    [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<1, [A8_NPipe]>], [5, 2]>,
+
+  //
+  // Quad-register FP Unary IIC_VUNA1Q for now defined as IIC_VUNAQ
+  // and reusing same latency info
+  InstrItinData<IIC_VUNA1Q,    [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<2, [A8_NPipe]>], [6, 2]>,
+
+  //
+  // Double-register Reverse IIC_VREVD for now defined as IIC_VMOVD
+  InstrItinData<IIC_VMOVD,    [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<1, [A8_NLSPipe]>], [2, 1]>,
+
+  //
+  // Quad-register Reverse IIC_VREVQ for now defined as IIC_VMOVQ
+  InstrItinData<IIC_VREVQ,    [InstrStage<1, [A8_Pipe0, A8_Pipe1], 0>,
+                               InstrStage<2, [A8_NLSPipe]>], [3, 1]>
 ]>;
 
 // ===---------------------------------------------------------------------===//

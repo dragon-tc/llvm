@@ -36,7 +36,13 @@ bool UnrollRuntimeLoopProlog(Loop *L, unsigned Count,
                              bool AllowExpensiveTripCount, LoopInfo *LI,
                              LPPassManager *LPM);
 
+
 MDNode *GetUnrollMetadata(MDNode *LoopID, StringRef Name);
+
+bool UnrollRuntimeLoopProfitable(Loop *L);
+
+bool UnrollRuntimeLoopProlog(Loop *L, unsigned Count, LoopInfo *LI,
+                             LPPassManager* LPM);
 }
 
 #endif
