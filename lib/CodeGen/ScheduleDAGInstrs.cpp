@@ -315,7 +315,7 @@ void ScheduleDAGInstrs::addPhysRegDeps(SUnit *SU, unsigned OperIdx) {
       SUnit *DefSU = I->SU;
       if (DefSU == &ExitSU)
         continue;
-      if (DefSU != SU &&
+     if (DefSU != SU &&
           (Kind != SDep::Output || !MO.isDead() ||
            !DefSU->getInstr()->registerDefIsDead(*Alias))) {
         if (Kind == SDep::Anti)
@@ -341,11 +341,8 @@ void ScheduleDAGInstrs::addPhysRegDeps(SUnit *SU, unsigned OperIdx) {
   }
   else {
     addPhysRegDataDeps(SU, OperIdx);
+    }
     unsigned Reg = MO.getReg();
-
-    // clear this register's use list
-    if (Uses.contains(Reg))
-      Uses.eraseAll(Reg);
 
     if (!MO.isDead()) {
       Defs.eraseAll(Reg);
@@ -369,7 +366,6 @@ void ScheduleDAGInstrs::addPhysRegDeps(SUnit *SU, unsigned OperIdx) {
     // Defs are pushed in the order they are visited and never reordered.
     Defs.insert(PhysRegSUOper(SU, OperIdx, Reg));
   }
-}
 
 /// addVRegDefDeps - Add register output and data dependencies from this SUnit
 /// to instructions that occur later in the same scheduling region if they read
@@ -464,9 +460,8 @@ void ScheduleDAGInstrs::addVRegUseDeps(SUnit *SU, unsigned OperIdx) {
 /// Return true if MI is an instruction we are unable to reason about
 /// (like a call or something with unmodeled side effects).
 static inline bool isGlobalMemoryObject(AliasAnalysis *AA, MachineInstr *MI) {
-  if (MI->isCall() || MI->hasUnmodeledSideEffects() ||
-      (MI->hasOrderedMemoryRef() &&
-       (!MI->mayLoad() || !MI->isInvariantLoad(AA))))
+  if (MI->isCall() || MI->hasUnmodeledSideEffects() &&
+      (!MI->mayLoad() || !MI->isInvariantLoad(AA)))
     return true;
   return false;
 }
@@ -824,6 +819,9 @@ void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
         (CanHandleTerminators || (!MI->isTerminator() && !MI->isPosition())) &&
         "Cannot schedule terminators or labels!");
 
+    // Record uses by this instruction
+    std::vector<std::pair<unsigned, SUnit*> > MIUses;
+
     // Add register-based dependencies (data, anti, and output).
     bool HasVRegDef = false;
     for (unsigned j = 0, n = MI->getNumOperands(); j != n; ++j) {
@@ -832,8 +830,11 @@ void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
       unsigned Reg = MO.getReg();
       if (Reg == 0) continue;
 
-      if (TRI->isPhysicalRegister(Reg))
+      if (TRI->isPhysicalRegister(Reg)) {
         addPhysRegDeps(SU, j);
+	if (MO.isUse())
+		MIUses.push_back(std::pair<unsigned, SUnit*>(Reg, SU));
+	}
       else {
         assert(!IsPostRA && "Virtual register encountered!");
         if (MO.isDef()) {
@@ -1264,7 +1265,11 @@ void ScheduleDAGInstrs::fixupKills(MachineBasicBlock *MBB) {
 
 void ScheduleDAGInstrs::dumpNode(const SUnit *SU) const {
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
-  SU->getInstr()->dump();
+  if (SU->isInstr()) {
+    SU->getInstr()->dump();
+  } else {
+    dbgs() << "\n";
+  }
 #endif
 }
 

@@ -42,6 +42,7 @@ namespace ARMCP {
     GOT,
     GOTOFF,
     GOTTPOFF,
+    GOTPREL,
     TPOFF
   };
 }

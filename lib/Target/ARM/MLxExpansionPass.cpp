@@ -54,6 +54,7 @@ namespace {
 
     bool isLikeA9;
     bool isSwift;
+    bool isKrait2;
     unsigned MIIdx;
     MachineInstr* LastMIs[4];
     SmallPtrSet<MachineInstr*, 4> IgnoreStall;
@@ -385,8 +386,9 @@ bool MLxExpansion::runOnMachineFunction(MachineFunction &Fn) {
   // Only run this for CortexA9.
   if (!STI->isCortexA9())
     return false;
-  isLikeA9 = STI->isLikeA9() || STI->isSwift();
+  isLikeA9 = STI->isLikeA9() || STI->isSwift() || STI->isKrait2();
   isSwift = STI->isSwift();
+  isKrait2 = STI->isKrait2();
 
   bool Modified = false;
   for (MachineBasicBlock &MBB : Fn)

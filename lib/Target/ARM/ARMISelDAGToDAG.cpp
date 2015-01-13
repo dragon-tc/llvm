@@ -49,6 +49,11 @@ CheckVMLxHazard("check-vmlx-hazard", cl::Hidden,
   cl::desc("Check fp vmla / vmls hazard at isel time"),
   cl::init(true));
 
+static cl::opt<bool>
+EnableNegativeAddrModeSelection("enable-neg-addr-mode-sel", cl::Hidden,
+                                cl::desc("Enable negative addr mode selection"),
+                                cl::init(true));
+
 //===--------------------------------------------------------------------===//
 /// ARMDAGToDAGISel - ARM specific code to select ARM machine
 /// instructions for SelectionDAG operations.
@@ -421,7 +426,8 @@ bool ARMDAGToDAGISel::hasNoVMLxHazardUse(SDNode *N) const {
     return true;
 
   if (!Subtarget->isCortexA7() && !Subtarget->isCortexA8() &&
-      !Subtarget->isCortexA9() && !Subtarget->isSwift())
+      !Subtarget->isCortexA9() && !Subtarget->isSwift() &&
+      !Subtarget->isKrait2())
     return true;
 
   if (!N->hasOneUse())
@@ -462,7 +468,7 @@ bool ARMDAGToDAGISel::hasNoVMLxHazardUse(SDNode *N) const {
 bool ARMDAGToDAGISel::isShifterOpProfitable(const SDValue &Shift,
                                             ARM_AM::ShiftOpc ShOpcVal,
                                             unsigned ShAmt) {
-  if (!Subtarget->isLikeA9() && !Subtarget->isSwift())
+  if (!Subtarget->isLikeA9() && !Subtarget->isSwift() && !Subtarget->isKrait2())
     return true;
   if (Shift.hasOneUse())
     return true;
@@ -550,11 +556,21 @@ bool ARMDAGToDAGISel::SelectAddrModeImm12(SDValue N,
 
   if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
     int RHSC = (int)RHS->getSExtValue();
+
+    bool IsNeg = false;
+    if (EnableNegativeAddrModeSelection && RHS->getAPIntValue().isNegative()) {
+      RHSC = RHS->getSExtValue();
+      RHSC = -RHSC;
+      IsNeg = true;
+    }
+
     if (N.getOpcode() == ISD::SUB)
       RHSC = -RHSC;
 
     if (RHSC > -0x1000 && RHSC < 0x1000) { // 12 bits
       Base   = N.getOperand(0);
+      if (IsNeg)
+        RHSC = -RHSC;
       if (Base.getOpcode() == ISD::FrameIndex) {
         int FI = cast<FrameIndexSDNode>(Base)->getIndex();
         Base = CurDAG->getTargetFrameIndex(
@@ -576,7 +592,7 @@ bool ARMDAGToDAGISel::SelectAddrModeImm12(SDValue N,
 bool ARMDAGToDAGISel::SelectLdStSOReg(SDValue N, SDValue &Base, SDValue &Offset,
                                       SDValue &Opc) {
   if (N.getOpcode() == ISD::MUL &&
-      ((!Subtarget->isLikeA9() && !Subtarget->isSwift()) || N.hasOneUse())) {
+      ((!Subtarget->isLikeA9() && !Subtarget->isSwift() && !Subtarget->isKrait2()) || N.hasOneUse())) {
     if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
       // X * [3,5,9] -> X + X * [2,4,8] etc.
       int RHSC = (int)RHS->getZExtValue();
@@ -640,7 +656,7 @@ bool ARMDAGToDAGISel::SelectLdStSOReg(SDValue N, SDValue &Base, SDValue &Offset,
 
   // Try matching (R shl C) + (R).
   if (N.getOpcode() != ISD::SUB && ShOpcVal == ARM_AM::no_shift &&
-      !(Subtarget->isLikeA9() || Subtarget->isSwift() ||
+      !(Subtarget->isLikeA9() || Subtarget->isSwift() || Subtarget->isKrait2() ||
         N.getOperand(0).hasOneUse())) {
     ShOpcVal = ARM_AM::getShiftOpcForNode(N.getOperand(0).getOpcode());
     if (ShOpcVal != ARM_AM::no_shift) {
@@ -675,7 +691,7 @@ AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDValue N,
                                                      SDValue &Offset,
                                                      SDValue &Opc) {
   if (N.getOpcode() == ISD::MUL &&
-      (!(Subtarget->isLikeA9() || Subtarget->isSwift()) || N.hasOneUse())) {
+      (!(Subtarget->isLikeA9() || Subtarget->isSwift() || Subtarget->isKrait2()) || N.hasOneUse())) {
     if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
       // X * [3,5,9] -> X + X * [2,4,8] etc.
       int RHSC = (int)RHS->getZExtValue();
@@ -742,7 +758,7 @@ AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDValue N,
     }
   }
 
-  if ((Subtarget->isLikeA9() || Subtarget->isSwift()) && !N.hasOneUse()) {
+  if ((Subtarget->isLikeA9() || Subtarget->isSwift() || Subtarget->isKrait2()) && !N.hasOneUse()) {
     // Compute R +/- (R << N) and reuse it.
     Base = N;
     Offset = CurDAG->getRegister(0, MVT::i32);
@@ -780,7 +796,7 @@ AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDValue N,
 
   // Try matching (R shl C) + (R).
   if (N.getOpcode() != ISD::SUB && ShOpcVal == ARM_AM::no_shift &&
-      !(Subtarget->isLikeA9() || Subtarget->isSwift() ||
+      !(Subtarget->isLikeA9() || Subtarget->isSwift() || Subtarget->isKrait2() ||
         N.getOperand(0).hasOneUse())) {
     ShOpcVal = ARM_AM::getShiftOpcForNode(N.getOperand(0).getOpcode());
     if (ShOpcVal != ARM_AM::no_shift) {
@@ -1053,7 +1069,8 @@ bool ARMDAGToDAGISel::SelectAddrMode6Offset(SDNode *Op, SDValue N,
 
 bool ARMDAGToDAGISel::SelectAddrModePC(SDValue N,
                                        SDValue &Offset, SDValue &Label) {
-  if (N.getOpcode() == ARMISD::PIC_ADD && N.hasOneUse()) {
+
+if (N.getOpcode() == ARMISD::PIC_ADD && N.hasOneUse()) {
     Offset = N.getOperand(0);
     SDValue N1 = N.getOperand(1);
     Label = CurDAG->getTargetConstant(cast<ConstantSDNode>(N1)->getZExtValue(),

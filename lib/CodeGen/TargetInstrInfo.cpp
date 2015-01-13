@@ -37,6 +37,10 @@ static cl::opt<bool> DisableHazardRecognizer(
   "disable-sched-hazard", cl::Hidden, cl::init(false),
   cl::desc("Disable hazard detection during preRA scheduling"));
 
+static cl::opt<bool> DisableProfitRecognizer(
+  "disable-sched-profit", cl::Hidden, cl::init(false),
+  cl::desc("Enable instr mix profit analysis during postRA scheduling"));
+
 TargetInstrInfo::~TargetInstrInfo() {
 }
 
@@ -698,6 +702,12 @@ bool TargetInstrInfo::usePreRAHazardRecognizer() const {
   return !DisableHazardRecognizer;
 }
 
+// Provide a global flag for enabling the PostRA profit recognizer that targets
+// may choose to honor.
+bool TargetInstrInfo::usePostRAProfitRecognizer() const {
+  return !DisableProfitRecognizer;
+}
+
 // Default implementation of CreateTargetRAHazardRecognizer.
 ScheduleHazardRecognizer *TargetInstrInfo::
 CreateTargetHazardRecognizer(const TargetSubtargetInfo *STI,
@@ -720,6 +730,12 @@ CreateTargetPostRAHazardRecognizer(const InstrItineraryData *II,
                                    const ScheduleDAG *DAG) const {
   return (ScheduleHazardRecognizer *)
     new ScoreboardHazardRecognizer(II, DAG, "post-RA-sched");
+}
+
+// Default implementation of CreateTargetPostRAProfitRecognizer.
+ScheduleProfitRecognizer *TargetInstrInfo::
+CreateTargetPostRAProfitRecognizer(const InstrItineraryData *II) const {
+  return 0;
 }
 
 //===----------------------------------------------------------------------===//

@@ -278,12 +278,10 @@ def ProcR5      : SubtargetFeature<"r5", "ARMProcFamily", "CortexR5",
                                     FeatureAvoidPartialCPSR,
                                     FeatureT2XtPk]>;
 
-// FIXME: krait has currently the same features as A9
-// plus VFP4 and hardware division features.
 def ProcKrait   : SubtargetFeature<"krait", "ARMProcFamily", "Krait",
                                    "Qualcomm ARM processors",
-                                   [FeatureVMLxForwarding,
-                                    FeatureT2XtPk, FeatureFP16,
+                                   [FeatureNEONForFP,
+                                    FeatureT2XtPk, FeatureMP,
                                     FeatureAvoidPartialCPSR,
                                     FeatureTrustZone,
                                     FeatureVFP4,
@@ -415,6 +413,10 @@ def : ProcessorModel<"cortex-r4f",  CortexA8Model,
                                     [ProcR4,
                                      FeatureSlowFPBrcc, FeatureHasSlowFPVMLx,
                                      FeatureVFP3, FeatureD16]>;
+def : ProcessorModel<"krait2",      Krait2Model,
+                                    [ProcKrait, HasV7Ops, FeatureNEON, FeatureVFP4,
+                                     FeatureDB, FeatureHasRAS, FeatureAClass,
+                                     FeatureDSPThumb2, FeatureHWDiv]>;
 
 // FIXME: R5 has currently the same ProcessorModel as A8.
 def : ProcessorModel<"cortex-r5",   CortexA8Model,

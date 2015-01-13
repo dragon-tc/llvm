@@ -55,6 +55,7 @@ const char *ARMConstantPoolValue::getModifierText() const {
   case ARMCP::GOT:         return "GOT";
   case ARMCP::GOTOFF:      return "GOTOFF";
   case ARMCP::GOTTPOFF:    return "gottpoff";
+  case ARMCP::GOTPREL:     return "GOT_PREL";
   case ARMCP::TPOFF:       return "tpoff";
   }
   llvm_unreachable("Unknown modifier!");

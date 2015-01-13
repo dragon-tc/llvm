@@ -104,32 +104,34 @@ namespace llvm {
 // DefaultVLIWScheduler - This class extends ScheduleDAGInstrs and overrides
 // Schedule method to build the dependence graph.
 class DefaultVLIWScheduler : public ScheduleDAGInstrs {
+  AliasAnalysis *AA;
 public:
   DefaultVLIWScheduler(MachineFunction &MF, MachineLoopInfo &MLI,
-                       bool IsPostRA);
+                       AliasAnalysis *AA, bool IsPostRA);
   // Schedule - Actual scheduling work.
   void schedule() override;
 };
 }
 
 DefaultVLIWScheduler::DefaultVLIWScheduler(MachineFunction &MF,
-                                           MachineLoopInfo &MLI, bool IsPostRA)
-    : ScheduleDAGInstrs(MF, &MLI, IsPostRA) {
+                                           MachineLoopInfo &MLI, AliasAnalysis *AA, bool IsPostRA)
+    : ScheduleDAGInstrs(MF, &MLI, IsPostRA), AA(AA) {
+
   CanHandleTerminators = true;
 }
 
 void DefaultVLIWScheduler::schedule() {
   // Build the scheduling graph.
-  buildSchedGraph(nullptr);
+  buildSchedGraph(AA);
 }
 
 // VLIWPacketizerList Ctor
 VLIWPacketizerList::VLIWPacketizerList(MachineFunction &MF,
-                                       MachineLoopInfo &MLI, bool IsPostRA)
-    : MF(MF) {
+                                       MachineLoopInfo &MLI, AliasAnalysis *AA, bool IsPostRA)
+    : MF(MF), AA(AA) {
   TII = MF.getSubtarget().getInstrInfo();
   ResourceTracker = TII->CreateTargetScheduleState(MF.getSubtarget());
-  VLIWScheduler = new DefaultVLIWScheduler(MF, MLI, IsPostRA);
+  VLIWScheduler = new DefaultVLIWScheduler(MF, MLI, AA, IsPostRA);
 }
 
 // VLIWPacketizerList Dtor

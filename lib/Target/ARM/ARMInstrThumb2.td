@@ -2116,7 +2116,7 @@ class T2I_pam<bits<3> op22_20, bits<4> op7_4, string opc,
               list<dag> pat = [/* For disassembly only; pattern left blank */],
               dag iops = (ins rGPR:$Rn, rGPR:$Rm),
               string asm = "\t$Rd, $Rn, $Rm">
-  : T2I<(outs rGPR:$Rd), iops, NoItinerary, opc, asm, pat>,
+  : T2I<(outs rGPR:$Rd), iops, IIC_iALUpr, opc, asm, pat>,
     Requires<[IsThumb2, HasThumb2DSP]> {
   let Inst{31-27} = 0b11111;
   let Inst{26-23} = 0b0101;
@@ -2856,60 +2856,60 @@ def t2SMLALTT : T2FourReg_mac<1, 0b100, 0b1011, (outs rGPR:$Ra,rGPR:$Rd),
 // Dual halfword multiple: SMUAD, SMUSD, SMLAD, SMLSD, SMLALD, SMLSLD
 def t2SMUAD: T2ThreeReg_mac<
             0, 0b010, 0b0000, (outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm),
-            IIC_iMAC32, "smuad", "\t$Rd, $Rn, $Rm", []>,
+            IIC_iMUAD32, "smuad", "\t$Rd, $Rn, $Rm", []>,
           Requires<[IsThumb2, HasThumb2DSP]> {
   let Inst{15-12} = 0b1111;
 }
 def t2SMUADX:T2ThreeReg_mac<
             0, 0b010, 0b0001, (outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm),
-            IIC_iMAC32, "smuadx", "\t$Rd, $Rn, $Rm", []>,
+            IIC_iMUAD32, "smuadx", "\t$Rd, $Rn, $Rm", []>,
           Requires<[IsThumb2, HasThumb2DSP]> {
   let Inst{15-12} = 0b1111;
 }
 def t2SMUSD: T2ThreeReg_mac<
             0, 0b100, 0b0000, (outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm),
-            IIC_iMAC32, "smusd", "\t$Rd, $Rn, $Rm", []>,
+            IIC_iMUAD32, "smusd", "\t$Rd, $Rn, $Rm", []>,
           Requires<[IsThumb2, HasThumb2DSP]> {
   let Inst{15-12} = 0b1111;
 }
 def t2SMUSDX:T2ThreeReg_mac<
             0, 0b100, 0b0001, (outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm),
-            IIC_iMAC32, "smusdx", "\t$Rd, $Rn, $Rm", []>,
+            IIC_iMUAD32, "smusdx", "\t$Rd, $Rn, $Rm", []>,
           Requires<[IsThumb2, HasThumb2DSP]> {
   let Inst{15-12} = 0b1111;
 }
 def t2SMLAD   : T2FourReg_mac<
             0, 0b010, 0b0000, (outs rGPR:$Rd),
-            (ins rGPR:$Rn, rGPR:$Rm, rGPR:$Ra), IIC_iMAC32, "smlad",
+            (ins rGPR:$Rn, rGPR:$Rm, rGPR:$Ra), IIC_iDML32, "smlad",
             "\t$Rd, $Rn, $Rm, $Ra", []>,
           Requires<[IsThumb2, HasThumb2DSP]>;
 def t2SMLADX  : T2FourReg_mac<
             0, 0b010, 0b0001, (outs rGPR:$Rd),
-            (ins rGPR:$Rn, rGPR:$Rm, rGPR:$Ra), IIC_iMAC32, "smladx",
+            (ins rGPR:$Rn, rGPR:$Rm, rGPR:$Ra), IIC_iDML32, "smladx",
             "\t$Rd, $Rn, $Rm, $Ra", []>,
           Requires<[IsThumb2, HasThumb2DSP]>;
 def t2SMLSD   : T2FourReg_mac<0, 0b100, 0b0000, (outs rGPR:$Rd),
-            (ins rGPR:$Rn, rGPR:$Rm, rGPR:$Ra), IIC_iMAC32, "smlsd",
+            (ins rGPR:$Rn, rGPR:$Rm, rGPR:$Ra), IIC_iDML32, "smlsd",
             "\t$Rd, $Rn, $Rm, $Ra", []>,
           Requires<[IsThumb2, HasThumb2DSP]>;
 def t2SMLSDX  : T2FourReg_mac<0, 0b100, 0b0001, (outs rGPR:$Rd),
-            (ins rGPR:$Rn, rGPR:$Rm, rGPR:$Ra), IIC_iMAC32, "smlsdx",
+            (ins rGPR:$Rn, rGPR:$Rm, rGPR:$Ra), IIC_iDML32, "smlsdx",
             "\t$Rd, $Rn, $Rm, $Ra", []>,
           Requires<[IsThumb2, HasThumb2DSP]>;
 def t2SMLALD  : T2FourReg_mac<1, 0b100, 0b1100, (outs rGPR:$Ra,rGPR:$Rd),
-                        (ins rGPR:$Rn, rGPR:$Rm), IIC_iMAC64, "smlald",
+                        (ins rGPR:$Rn, rGPR:$Rm), IIC_iDML64, "smlald",
                         "\t$Ra, $Rd, $Rn, $Rm", []>,
           Requires<[IsThumb2, HasThumb2DSP]>;
 def t2SMLALDX : T2FourReg_mac<1, 0b100, 0b1101, (outs rGPR:$Ra,rGPR:$Rd),
-                        (ins rGPR:$Rn,rGPR:$Rm), IIC_iMAC64, "smlaldx",
+                        (ins rGPR:$Rn,rGPR:$Rm), IIC_iDML64, "smlaldx",
                         "\t$Ra, $Rd, $Rn, $Rm", []>,
           Requires<[IsThumb2, HasThumb2DSP]>;
 def t2SMLSLD  : T2FourReg_mac<1, 0b101, 0b1100, (outs rGPR:$Ra,rGPR:$Rd),
-                        (ins rGPR:$Rn,rGPR:$Rm), IIC_iMAC64, "smlsld",
+                        (ins rGPR:$Rn,rGPR:$Rm), IIC_iDML64, "smlsld",
                         "\t$Ra, $Rd, $Rn, $Rm", []>,
           Requires<[IsThumb2, HasThumb2DSP]>;
 def t2SMLSLDX : T2FourReg_mac<1, 0b101, 0b1101, (outs rGPR:$Ra,rGPR:$Rd),
-                        (ins rGPR:$Rm,rGPR:$Rn), IIC_iMAC64, "smlsldx",
+                        (ins rGPR:$Rm,rGPR:$Rn), IIC_iDML64, "smlsldx",
                         "\t$Ra, $Rd, $Rn, $Rm", []>,
           Requires<[IsThumb2, HasThumb2DSP]>;
 
@@ -2917,7 +2917,7 @@ def t2SMLSLDX : T2FourReg_mac<1, 0b101, 0b1101, (outs rGPR:$Ra,rGPR:$Rd),
 //  Division Instructions.
 //  Signed and unsigned division on v7-M
 //
-def t2SDIV : T2ThreeReg<(outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm), IIC_iDIV,
+def t2SDIV : T2ThreeReg<(outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm), IIC_iDIV32,
                  "sdiv", "\t$Rd, $Rn, $Rm",
                  [(set rGPR:$Rd, (sdiv rGPR:$Rn, rGPR:$Rm))]>,
                  Requires<[HasDivide, IsThumb2]> {
@@ -2928,7 +2928,7 @@ def t2SDIV : T2ThreeReg<(outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm), IIC_iDIV,
   let Inst{7-4} = 0b1111;
 }
 
-def t2UDIV : T2ThreeReg<(outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm), IIC_iDIV,
+def t2UDIV : T2ThreeReg<(outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm), IIC_iDIV32,
                  "udiv", "\t$Rd, $Rn, $Rm",
                  [(set rGPR:$Rd, (udiv rGPR:$Rn, rGPR:$Rm))]>,
                  Requires<[HasDivide, IsThumb2]> {
@@ -3702,6 +3702,24 @@ let imod = 0, iflags = 0, M = 1 in
 def : t2InstAlias<"cps$imod.w $iflags, $mode",
                    (t2CPS3p imod_op:$imod, iflags_op:$iflags, i32imm:$mode), 0>;
 def : t2InstAlias<"cps.w $mode", (t2CPS1p imm0_31:$mode), 0>;
+
+// A6.3.4 Branches and miscellaneous control
+// Table A6-14 Change Processor State, and hint instructions
+class T2I_hint<bits<8> op7_0, string opc, string asm>
+  : T2I<(outs), (ins), NoItinerary, opc, asm, []> {
+  let Inst{31-20} = 0xf3a;
+  let Inst{19-16} = 0b1111;
+  let Inst{15-14} = 0b10;
+  let Inst{12} = 0;
+  let Inst{10-8} = 0b000;
+  let Inst{7-0} = op7_0;
+}
+
+def t2NOP   : T2I_hint<0b00000000, "nop",   ".w">;
+def t2YIELD : T2I_hint<0b00000001, "yield", ".w">;
+def t2WFE   : T2I_hint<0b00000010, "wfe",   ".w">;
+def t2WFI   : T2I_hint<0b00000011, "wfi",   ".w">;
+def t2SEV   : T2I_hint<0b00000100, "sev",   ".w">;
 
 // A6.3.4 Branches and miscellaneous control
 // Table A6-14 Change Processor State, and hint instructions
