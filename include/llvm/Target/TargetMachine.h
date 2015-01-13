@@ -244,6 +244,12 @@ public:
     return true;
   }
 
+  // addPassesForOptimizations - Allow the backend (target) to add Target Independent
+  // Optimization passes to the Pass Manager.
+  virtual bool addPassesForOptimizations(PassManagerBase &) {
+    return true;
+  }
+
   /// Add passes to the specified pass manager to get machine code emitted with
   /// the MCJIT. This method returns true if machine code is not supported. It
   /// fills the MCContext Ctx pointer which can be used to build custom

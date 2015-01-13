@@ -121,6 +121,17 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
           TySize *= CUI->getZExtValue();   // Get total allocated size.
           if (TySize == 0) TySize = 1; // Don't create zero-sized stack objects.
 
+        // For string buffers more than 16 bytes, align to 8 byte boundary
+        if (TySize > 16)
+          Align = std::max(Align, (unsigned) 8);
+
+        // Align local arrays (char, short, int) to 8 byte boundary.
+        // This is done to make their alignment compatible with GCC.
+        if (isa<ArrayType>(Ty) &&
+            cast<ArrayType>(Ty)->getElementType()->isIntegerTy()) {
+          Align = std::max(Align, (unsigned) 8);
+        }
+
           StaticAllocaMap[AI] =
             MF->getFrameInfo()->CreateStackObject(TySize, Align, false, AI);
         } else {

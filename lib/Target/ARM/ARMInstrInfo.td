@@ -96,6 +96,11 @@ def SDT_ARM64bitmlal : SDTypeProfile<2,4, [ SDTCisVT<0, i32>, SDTCisVT<1, i32>,
 def ARMUmlal         : SDNode<"ARMISD::UMLAL", SDT_ARM64bitmlal>;
 def ARMSmlal         : SDNode<"ARMISD::SMLAL", SDT_ARM64bitmlal>;
 
+def SDT_ARMubfx : SDTypeProfile<1,3, [ SDTCisVT<0, i32>, SDTCisVT<1, i32>,
+                                       SDTCisVT<2, i32>, SDTCisVT<3, i32> ] >;
+
+def ARMUbfx          : SDNode<"ARMISD::UBFX", SDT_ARMubfx>;
+
 // Node definitions.
 def ARMWrapper       : SDNode<"ARMISD::Wrapper",     SDTIntUnaryOp>;
 def ARMWrapperPIC    : SDNode<"ARMISD::WrapperPIC",  SDTIntUnaryOp>;
@@ -372,6 +377,11 @@ def and_su : PatFrag<(ops node:$lhs, node:$rhs), (and node:$lhs, node:$rhs), [{
 
 // An 'xor' node with a single use.
 def xor_su : PatFrag<(ops node:$lhs, node:$rhs), (xor node:$lhs, node:$rhs), [{
+  return N->hasOneUse();
+}]>;
+
+ // An 'mul' node with a single use.
+def mul_su : PatFrag<(ops node:$lhs, node:$rhs), (mul node:$lhs, node:$rhs),[{
   return N->hasOneUse();
 }]>;
 
@@ -2100,7 +2110,7 @@ def PICSTRB : ARMPseudoInst<(outs), (ins GPR:$src, addrmodepc:$addr, pred:$p),
 
 // LEApcrel - Load a pc-relative address into a register without offending the
 // assembler.
-let hasSideEffects = 0, isReMaterializable = 1 in
+let hasSideEffects = 0, neverHasSideEffects = 1, isReMaterializable = 1 in {
 // The 'adr' mnemonic encodes differently if the label is before or after
 // the instruction. The {24-21} opcode bits are set by the fixup, as we don't
 // know until then which form of the instruction will be used.
@@ -2119,14 +2129,14 @@ def ADR : AI1<{0,?,?,0}, (outs GPR:$Rd), (ins adrlabel:$label),
   let Inst{11-0} = label{11-0};
 }
 
-let hasSideEffects = 1 in {
 def LEApcrel : ARMPseudoInst<(outs GPR:$Rd), (ins i32imm:$label, pred:$p),
                     4, IIC_iALUi, []>, Sched<[WriteALU, ReadALU]>;
+}
 
 def LEApcrelJT : ARMPseudoInst<(outs GPR:$Rd),
                       (ins i32imm:$label, pred:$p),
                       4, IIC_iALUi, []>, Sched<[WriteALU, ReadALU]>;
-}
+
 
 //===----------------------------------------------------------------------===//
 //  Control Flow Instructions.
@@ -3420,7 +3430,9 @@ def SBFX  : I<(outs GPRnopc:$Rd),
 def UBFX  : I<(outs GPRnopc:$Rd),
               (ins GPRnopc:$Rn, imm0_31:$lsb, imm1_32:$width),
                AddrMode1, 4, IndexModeNone, DPFrm, IIC_iUNAsi,
-               "ubfx", "\t$Rd, $Rn, $lsb, $width", "", []>,
+               "ubfx", "\t$Rd, $Rn, $lsb, $width", "",
+               [(set GPRnopc:$Rd, (ARMUbfx GPRnopc:$Rn, imm0_31:$lsb,
+                               imm1_32:$width))]>,
                Requires<[IsARM, HasV6T2]> {
   bits<4> Rd;
   bits<4> Rn;
@@ -3515,7 +3527,7 @@ class AAI<bits<8> op27_20, bits<8> op11_4, string opc,
           list<dag> pattern = [],
           dag iops = (ins GPRnopc:$Rn, GPRnopc:$Rm),
           string asm = "\t$Rd, $Rn, $Rm">
-  : AI<(outs GPRnopc:$Rd), iops, DPFrm, IIC_iALUr, opc, asm, pattern>,
+  : AI<(outs GPRnopc:$Rd), iops, DPFrm, IIC_iALUpr, opc, asm, pattern>,
     Sched<[WriteALU, ReadALU, ReadALU]> {
   bits<4> Rn;
   bits<4> Rd;
@@ -3793,6 +3805,39 @@ def  MVNi  : AsI1<0b1111, (outs GPR:$Rd), (ins mod_imm:$imm), DPFrm,
 def : ARMPat<(and   GPR:$src, mod_imm_not:$imm),
              (BICri GPR:$src, mod_imm_not:$imm)>;
 
+
+//===----------------------------------------------------------------------===//
+// Divide Instructions
+//
+
+class AsDiv1I32<bits<3> opcod, dag oops, dag iops, InstrItinClass itin,
+             string opc, string asm, list<dag> pattern>
+  : AsDiv1I<opcod, oops, iops, itin, opc, asm, pattern> {
+  bits<4> Rd;
+  bits<4> Rm;
+  bits<4> Rn;
+  let Inst{19-16} = Rd;
+  let Inst{11-8}  = Rm;
+  let Inst{3-0}   = Rn;
+}
+
+def SDIV  : AsDiv1I32<0b001, (outs GPRnopc:$Rd), (ins GPRnopc:$Rn, GPRnopc:$Rm),
+                   IIC_iDIV32, "sdiv", "\t$Rd, $Rn, $Rm",
+                   [(set GPRnopc:$Rd, (sdiv GPRnopc:$Rn, GPRnopc:$Rm))]>,
+                   Requires<[IsARM, HasDivide]> {
+  let Inst{15-12} = 0b1111;
+  let Unpredictable{15-12} = 0b1111;
+}
+
+
+def UDIV  : AsDiv1I32<0b011, (outs GPRnopc:$Rd), (ins GPRnopc:$Rn, GPRnopc:$Rm),
+                   IIC_iDIV32, "udiv", "\t$Rd, $Rn, $Rm",
+                   [(set GPRnopc:$Rd, (udiv GPRnopc:$Rn, GPRnopc:$Rm))]>,
+                   Requires<[IsARM, HasDivide]> {
+  let Inst{15-12} = 0b1111;
+  let Unpredictable{15-12} = 0b1111;
+}
+
 //===----------------------------------------------------------------------===//
 //  Multiply Instructions.
 //
@@ -3856,7 +3901,7 @@ def MULv5: ARMPseudoExpand<(outs GPRnopc:$Rd), (ins GPRnopc:$Rn, GPRnopc:$Rm,
 def MLA  : AsMul1I32<0b0000001, (outs GPRnopc:$Rd),
                      (ins GPRnopc:$Rn, GPRnopc:$Rm, GPRnopc:$Ra),
                      IIC_iMAC32, "mla", "\t$Rd, $Rn, $Rm, $Ra",
-        [(set GPRnopc:$Rd, (add (mul GPRnopc:$Rn, GPRnopc:$Rm), GPRnopc:$Ra))]>,
+        [(set GPRnopc:$Rd, (add (mul_su GPRnopc:$Rn, GPRnopc:$Rm), GPRnopc:$Ra))]>,
                      Requires<[IsARM, HasV6, UseMulOps]> {
   bits<4> Ra;
   let Inst{15-12} = Ra;
@@ -4142,18 +4187,18 @@ multiclass AI_smld<bit sub, string opc> {
 
   def D : AMulDualIa<0, sub, 0, (outs GPRnopc:$Rd),
                   (ins GPRnopc:$Rn, GPRnopc:$Rm, GPR:$Ra),
-                  NoItinerary, !strconcat(opc, "d"), "\t$Rd, $Rn, $Rm, $Ra">;
+                  IIC_iDML32, !strconcat(opc, "d"), "\t$Rd, $Rn, $Rm, $Ra">;
 
   def DX: AMulDualIa<0, sub, 1, (outs GPRnopc:$Rd),
                   (ins GPRnopc:$Rn, GPRnopc:$Rm, GPR:$Ra),
-                  NoItinerary, !strconcat(opc, "dx"), "\t$Rd, $Rn, $Rm, $Ra">;
+                  IIC_iDML32, !strconcat(opc, "dx"), "\t$Rd, $Rn, $Rm, $Ra">;
 
   def LD: AMulDualI64<1, sub, 0, (outs GPRnopc:$RdLo, GPRnopc:$RdHi),
-                  (ins GPRnopc:$Rn, GPRnopc:$Rm), NoItinerary,
+                  (ins GPRnopc:$Rn, GPRnopc:$Rm), IIC_iDML64,
                   !strconcat(opc, "ld"), "\t$RdLo, $RdHi, $Rn, $Rm">;
 
   def LDX : AMulDualI64<1, sub, 1, (outs GPRnopc:$RdLo, GPRnopc:$RdHi),
-                  (ins GPRnopc:$Rn, GPRnopc:$Rm), NoItinerary,
+                  (ins GPRnopc:$Rn, GPRnopc:$Rm), IIC_iDML64,
                   !strconcat(opc, "ldx"),"\t$RdLo, $RdHi, $Rn, $Rm">;
 
 }
@@ -4164,26 +4209,13 @@ defm SMLS : AI_smld<1, "smls">;
 multiclass AI_sdml<bit sub, string opc> {
 
   def D:AMulDualI<0, sub, 0, (outs GPRnopc:$Rd), (ins GPRnopc:$Rn, GPRnopc:$Rm),
-                  NoItinerary, !strconcat(opc, "d"), "\t$Rd, $Rn, $Rm">;
+                  IIC_iMUAD32, !strconcat(opc, "d"), "\t$Rd, $Rn, $Rm">;
   def DX:AMulDualI<0, sub, 1, (outs GPRnopc:$Rd),(ins GPRnopc:$Rn, GPRnopc:$Rm),
-                  NoItinerary, !strconcat(opc, "dx"), "\t$Rd, $Rn, $Rm">;
+                  IIC_iMUAD32, !strconcat(opc, "dx"), "\t$Rd, $Rn, $Rm">;
 }
 
 defm SMUA : AI_sdml<0, "smua">;
 defm SMUS : AI_sdml<1, "smus">;
-
-//===----------------------------------------------------------------------===//
-//  Division Instructions (ARMv7-A with virtualization extension)
-//
-def SDIV : ADivA1I<0b001, (outs GPR:$Rd), (ins GPR:$Rn, GPR:$Rm), IIC_iDIV,
-                   "sdiv", "\t$Rd, $Rn, $Rm",
-                   [(set GPR:$Rd, (sdiv GPR:$Rn, GPR:$Rm))]>,
-           Requires<[IsARM, HasDivideInARM]>;
-
-def UDIV : ADivA1I<0b011, (outs GPR:$Rd), (ins GPR:$Rn, GPR:$Rm), IIC_iDIV,
-                   "udiv", "\t$Rd, $Rn, $Rm",
-                   [(set GPR:$Rd, (udiv GPR:$Rn, GPR:$Rm))]>,
-           Requires<[IsARM, HasDivideInARM]>;
 
 //===----------------------------------------------------------------------===//
 //  Misc. Arithmetic Instructions.

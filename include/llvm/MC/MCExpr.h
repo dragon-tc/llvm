@@ -189,6 +189,7 @@ public:
 
     VK_ARM_NONE,
     VK_ARM_GOT_PREL,
+    VK_ARM_GOTPREL,
     VK_ARM_TARGET1,
     VK_ARM_TARGET2,
     VK_ARM_PREL31,

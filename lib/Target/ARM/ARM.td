@@ -246,9 +246,6 @@ def ProcA57     : SubtargetFeature<"a57", "ARMProcFamily", "CortexA57",
                                    "Cortex-A57 ARM processors", []>;
 def ProcA72     : SubtargetFeature<"a72", "ARMProcFamily", "CortexA72",
                                    "Cortex-A72 ARM processors", []>;
-
-def ProcKrait   : SubtargetFeature<"krait", "ARMProcFamily", "Krait",
-                                   "Qualcomm ARM processors", []>;
 def ProcSwift   : SubtargetFeature<"swift", "ARMProcFamily", "Swift",
                                    "Swift ARM processors", []>;
 
@@ -256,10 +253,22 @@ def ProcSwift   : SubtargetFeature<"swift", "ARMProcFamily", "Swift",
 def ProcR4      : SubtargetFeature<"r4", "ARMProcFamily", "CortexR4",
                                     "Cortex-R4 ARM processors", []>;
 def ProcR5      : SubtargetFeature<"r5", "ARMProcFamily", "CortexR5",
-                                   "Cortex-R5 ARM processors", []>;
-def ProcR7      : SubtargetFeature<"r7", "ARMProcFamily", "CortexR7",
-                                   "Cortex-R7 ARM processors", []>;
+                                   "Cortex-R5 ARM processors",
+                                   [FeatureSlowFPBrcc,
+                                    FeatureHWDiv, FeatureHWDivARM,
+                                    FeatureHasSlowFPVMLx,
+                                    FeatureAvoidPartialCPSR,
+                                    FeatureT2XtPk]>;
 
+def ProcKrait   : SubtargetFeature<"krait", "ARMProcFamily", "Krait",
+                                   "Qualcomm ARM processors",
+                                   [FeatureNEONForFP,
+                                    FeatureT2XtPk, FeatureMP,
+                                    FeatureAvoidPartialCPSR,
+                                    FeatureTrustZone,
+                                    FeatureVFP4,
+                                    FeatureHWDiv,
+                                    FeatureHWDivARM]>;
 
 //===----------------------------------------------------------------------===//
 // ARM schedules.
@@ -559,14 +568,14 @@ def : ProcessorModel<"cortex-r4",   CortexA8Model,      [ARMv7r, ProcR4,
                                                          FeatureT2XtPk]>;
 
 // FIXME: R4F has currently the same ProcessorModel as A8.
-def : ProcessorModel<"cortex-r4f",  CortexA8Model,      [ARMv7r, ProcR4,
-                                                         FeatureHasRAS,
-                                                         FeatureSlowFPBrcc,
-                                                         FeatureHasSlowFPVMLx,
-                                                         FeatureVFP3,
-                                                         FeatureD16,
-                                                         FeatureAvoidPartialCPSR,
-                                                         FeatureT2XtPk]>;
+def : ProcessorModel<"cortex-r4f",  CortexA8Model,
+                                    [ProcR4,
+                                     FeatureSlowFPBrcc, FeatureHasSlowFPVMLx,
+                                     FeatureVFP3, FeatureD16]>;
+def : ProcessorModel<"krait2",      Krait2Model,
+                                    [ProcKrait, HasV7Ops, FeatureNEON, FeatureVFP4,
+                                     FeatureDB, FeatureHasRAS, FeatureAClass,
+                                     FeatureDSPThumb2, FeatureHWDiv]>;
 
 // FIXME: R5 has currently the same ProcessorModel as A8.
 def : ProcessorModel<"cortex-r5",   CortexA8Model,      [ARMv7r, ProcR5,

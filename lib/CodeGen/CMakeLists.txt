@@ -66,6 +66,7 @@ add_llvm_library(LLVMCodeGen
   MachineFunctionAnalysis.cpp
   MachineFunctionPass.cpp
   MachineFunctionPrinterPass.cpp
+  MachineGCH.cpp
   MachineInstr.cpp
   MachineInstrBundle.cpp
   MachineLICM.cpp

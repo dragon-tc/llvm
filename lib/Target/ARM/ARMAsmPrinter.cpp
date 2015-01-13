@@ -611,8 +611,9 @@ void ARMAsmPrinter::emitAttributes() {
 
   std::string CPUString = STI.getCPUString();
 
-  if (CPUString.find("generic") != 0) { //CPUString doesn't start with "generic"
-    // FIXME: remove krait check when GNU tools support krait cpu
+//CPUString doesn't start with "generic" or "krait" or "krait2"
+  if (CPUString.find("generic") != 0 && CPUString.find("krait") != 0 CPUString.find("krait2") != 0 ) {
+ // FIXME: remove krait check when GNU tools support krait cpu
     if (STI.isKrait()) {
       ATS.emitTextAttribute(ARMBuildAttrs::CPU_name, "cortex-a9");
       // We consider krait as a "cortex-a9" + hwdiv CPU
@@ -858,6 +859,9 @@ getModifierVariantKind(ARMCP::ARMCPModifier Modifier) {
   case ARMCP::TPOFF:       return MCSymbolRefExpr::VK_TPOFF;
   case ARMCP::GOTTPOFF:    return MCSymbolRefExpr::VK_GOTTPOFF;
   case ARMCP::GOT_PREL:    return MCSymbolRefExpr::VK_ARM_GOT_PREL;
+  case ARMCP::GOT:         return MCSymbolRefExpr::VK_GOT;
+  case ARMCP::GOTOFF:      return MCSymbolRefExpr::VK_GOTOFF;
+  case ARMCP::GOTPREL:     return MCSymbolRefExpr::VK_ARM_GOTPREL;
   }
   llvm_unreachable("Invalid ARMCPModifier!");
 }

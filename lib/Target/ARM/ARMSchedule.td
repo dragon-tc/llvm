@@ -344,6 +344,26 @@ def IIC_VTBX1      : InstrItinClass;
 def IIC_VTBX2      : InstrItinClass;
 def IIC_VTBX3      : InstrItinClass;
 def IIC_VTBX4      : InstrItinClass;
+def IIC_iALUpr     : InstrItinClass;
+def IIC_iDML32     : InstrItinClass;
+def IIC_iDML64     : InstrItinClass;
+def IIC_iMUAD32    : InstrItinClass;
+def IIC_iDIV32     : InstrItinClass;
+def IIC_VADDiD     : InstrItinClass;
+def IIC_VADDiQ     : InstrItinClass;
+def IIC_VBINi2D    : InstrItinClass;
+def IIC_VBINi2Q    : InstrItinClass;
+def IIC_VBIN2D     : InstrItinClass;
+def IIC_VBIN2Q     : InstrItinClass;
+def IIC_VPBIN2D    : InstrItinClass;
+def IIC_VADDD      : InstrItinClass;
+def IIC_VADDQ      : InstrItinClass;
+def IIC_VCNTi2D    : InstrItinClass;
+def IIC_VCNTi2Q    : InstrItinClass;
+def IIC_VUNA1D     : InstrItinClass;
+def IIC_VUNA1Q     : InstrItinClass;
+def IIC_VREVD      : InstrItinClass;
+def IIC_VREVQ      : InstrItinClass;
 
 //===----------------------------------------------------------------------===//
 // Processor instruction itineraries.
@@ -352,3 +372,4 @@ include "ARMScheduleV6.td"
 include "ARMScheduleA8.td"
 include "ARMScheduleA9.td"
 include "ARMScheduleSwift.td"
+include "Krait2Schedule.td"

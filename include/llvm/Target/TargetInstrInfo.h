@@ -34,6 +34,7 @@ class MCInst;
 struct MCSchedModel;
 class MCSymbolRefExpr;
 class SDNode;
+class ScheduleProfitRecognizer;
 class ScheduleHazardRecognizer;
 class SelectionDAG;
 class ScheduleDAG;
@@ -1083,6 +1084,9 @@ public:
   virtual ScheduleHazardRecognizer*
   CreateTargetPostRAHazardRecognizer(const InstrItineraryData*,
                                      const ScheduleDAG *DAG) const;
+  bool usePostRAProfitRecognizer() const;
+  virtual ScheduleProfitRecognizer*
+  CreateTargetPostRAProfitRecognizer(const InstrItineraryData*) const;
 
   /// Provide a global flag for disabling the PreRA hazard recognizer that
   /// targets may choose to honor.

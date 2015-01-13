@@ -41,6 +41,7 @@ namespace ARMCP {
     TLSGD,
     GOT_PREL,
     GOTTPOFF,
+    GOTPREL,
     TPOFF
   };
 }

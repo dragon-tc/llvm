@@ -544,6 +544,8 @@ namespace llvm {
     ///
     virtual void scheduledNode(SUnit *) {}
 
+    virtual void setDag(ScheduleDAG *) {}
+
     virtual void unscheduledNode(SUnit *) {}
 
     void setCurCycle(unsigned Cycle) {

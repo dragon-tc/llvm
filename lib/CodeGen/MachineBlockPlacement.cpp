@@ -38,6 +38,7 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
+#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -45,6 +46,7 @@
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
+#include "llvm/Target/TargetRegisterInfo.h"
 #include <algorithm>
 using namespace llvm;
 
@@ -231,6 +233,9 @@ class MachineBlockPlacement : public MachineFunctionPass {
   /// all terminators of the MachineFunction.
   SmallPtrSet<MachineBasicBlock *, 4> UnavoidableBlocks;
 
+  /// \brief A handle to the target's register info.
+  const TargetRegisterInfo *TRI;
+
   /// \brief Allocator and owner of BlockChain structures.
   ///
   /// We build BlockChains lazily while processing the loop structure of
@@ -276,6 +281,13 @@ class MachineBlockPlacement : public MachineFunctionPass {
   void rotateLoopWithProfile(BlockChain &LoopChain, MachineLoop &L,
                              const BlockFilterSet &LoopBlockSet);
   void buildCFGChains(MachineFunction &F);
+
+  bool isBranchTarget(MachineBasicBlock &MBB);
+  MachineBasicBlock *splitBBAt(MachineFunction &MF, MachineBasicBlock &MBB,
+                               MachineBasicBlock::iterator I,
+                               RegScavenger *RS);
+  bool splitBB(MachineFunction &MF, MachineBasicBlock &MBB, RegScavenger *RS);
+  //bool alignBranchTargets(MachineFunction &MF);
 
 public:
   static char ID; // Pass identification, replacement for typeid
@@ -1370,6 +1382,184 @@ void MachineBlockPlacement::buildCFGChains(MachineFunction &F) {
   }
 }
 
+/// isBranchTarget - Check if the basic block is a branch target.
+///
+bool MachineBlockPlacement::isBranchTarget(MachineBasicBlock &MBB) {
+  if (MBB.hasAddressTaken()) return true;
+
+  unsigned PredNum = MBB.pred_size();
+  if (PredNum > 1)  return true;
+  if (PredNum == 0) return false;  // Dead?
+
+  // Single predecessor block.  Check for branch at the end.
+  MachineBasicBlock *TBB = 0, *FBB = 0;
+  SmallVector<MachineOperand, 4> Cond;
+  MachineBasicBlock &Pred = **MBB.pred_begin();
+
+  // Check if it's a return point.
+  const MachineInstr &LastI = Pred.back();
+  const MCInstrDesc &MCID = LastI.getDesc();
+  if (MCID.isCall()) return true;
+
+  if (!TII->AnalyzeBranch(Pred, TBB, FBB, Cond)) {
+    // If succeeded in analyzing branch, check the target. &MBB is never NULL.
+    return TBB == &MBB || FBB == &MBB;
+  } else {
+    // Failed to analyze branch.  Safe to assume there isn't one.
+    return false;
+  }
+}
+
+
+/// splitBBAt - Splits given block at a given position
+///
+MachineBasicBlock *MachineBlockPlacement::splitBBAt(MachineFunction &MF,
+      MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
+      RegScavenger *RS) {
+  const BasicBlock *IR_Block = MBB.getBasicBlock();
+  MachineBasicBlock *NewBlock = MF.CreateMachineBasicBlock(IR_Block);
+  MachineFunction::iterator MBBI = &MBB;
+  MF.insert(++MBBI, NewBlock);
+
+  NewBlock->transferSuccessors(&MBB);
+  MBB.addSuccessor(NewBlock);
+  NewBlock->splice(NewBlock->end(), &MBB, I, MBB.end());
+
+  // Update live-in information in the new block.
+  if (RS) {
+    RS->enterBasicBlock(&MBB);
+    if (!MBB.empty()) RS->forward(std::prev(MBB.end()));
+    BitVector RegsLiveAtExit(TRI->getNumRegs());
+    RS->getRegsUsed(RegsLiveAtExit, false);
+    for (unsigned int i = 0, e = TRI->getNumRegs(); i != e; i++) {
+      if (RegsLiveAtExit[i]) NewBlock->addLiveIn(i);
+    }
+  }
+
+  return NewBlock;
+}
+
+
+/// splitBB - Break up the block at points that indicate possible branch
+/// targets that are not directly reflected in the CFG.  For example,
+/// return points from call instructions.
+bool MachineBlockPlacement::splitBB(MachineFunction &MF,
+                                    MachineBasicBlock &MBB,
+                                    RegScavenger *RS) {
+  bool Changed = false;
+  MachineBasicBlock *Block = &MBB;
+
+  typedef std::vector<MachineInstr*> MIVector;
+  MIVector MIs;
+  for (MachineBasicBlock::instr_iterator I = MBB.instr_begin(),
+                                         E = MBB.instr_end();
+       I != E; ++I) {
+    MIs.push_back(&*I);
+  }
+  for (MIVector::iterator I = MIs.begin(), E = MIs.end(); I != E; ++I) {
+    MachineInstr *MI = *I;
+    const MCInstrDesc &MCID = MI->getDesc();
+    if (MCID.isCall()) {
+      MachineBasicBlock::instr_iterator It = MI;
+      ++It;  // Split the block (i.e. start a new one) at the next instruction.
+      if (It != Block->instr_end() && TII->isLegalToSplitMBBAt(*Block, It)) {
+        Block = splitBBAt(MF, *Block, It, RS);
+        Changed = true;
+      }
+    } // if (call)
+  }
+
+  return Changed;
+}
+
+
+/// alignBranchTargets - Sets proper alignment (i.e. one that is preferred
+/// by the target architecture) for targets of branches.  This also applies
+/// to return points from function calls.  If a call is in the middle of
+/// a basic block, it will be split into two blocks (with a fall-through
+/// edge between them), and the second block will have the preferred alignment
+/// set on it.
+/*
+bool MachineBlockPlacement::alignBranchTargets(MachineFunction &MF) {
+  unsigned Align = TLI->getPrefBranchTargetAlignment();
+  if (Align == 0) return false;  // Nothing to do.
+
+  if (MF.getFunction()->getAttributes().
+        hasAttribute(AttributeSet::FunctionIndex, Attribute::OptimizeForSize))
+
+
+  bool Changed = false;
+  bool needScavenger = TRI->requiresRegisterScavenging(MF);
+  RegScavenger *RS = needScavenger ?  new RegScavenger() : NULL;
+  typedef std::vector<MachineBasicBlock*> MBBVector;
+  MBBVector MBBs;
+  for (MachineFunction::iterator I = MF.begin(), E = MF.end();
+       I != E; ++I) {
+    MBBs.push_back(&*I);
+  }
+  typedef std::vector<MachineInstr*> MIVector;
+  MIVector MIs;
+  for (MIVector::iterator I = MIs.begin(), E = MIs.end(); I != E; ++I) {
+    MachineInstr *MI = *I;
+    const MCInstrDesc &MCID = MI->getDesc();
+    if (MCID.isCall()) {
+      MachineBasicBlock::instr_iterator It = MI;
+      ++It;  // Split the block (i.e. start a new one) at the next instruction.
+      if (It != Block->instr_end() && TII->isLegalToSplitMBBAt(*Block, It)) {
+        Block = splitBBAt(MF, *Block, It, RS);
+        Changed = true;
+      }
+    } // if (call)
+  }
+
+  return Changed;
+
+
+/// alignBranchTargets - Sets proper alignment (i.e. one that is preferred
+/// by the target architecture) for targets of branches.  This also applies
+/// to return points from function calls.  If a call is in the middle of
+/// a basic block, it will be split into two blocks (with a fall-through
+/// edge between them), and the second block will have the preferred alignment
+/// set on it.
+bool MachineBlockPlacement::alignBranchTargets(MachineFunction &MF) {
+  unsigned Align = TLI->getPrefBranchTargetAlignment();
+  if (Align == 0) return false;  // Nothing to do.
+
+  if (MF.getFunction()->getAttributes().
+        hasAttribute(AttributeSet::FunctionIndex, Attribute::OptimizeForSize))
+    return false;
+
+  bool Changed = false;
+  bool needScavenger = TRI->requiresRegisterScavenging(MF);
+  RegScavenger *RS = needScavenger ?  new RegScavenger() : NULL;
+
+  typedef std::vector<MachineBasicBlock*> MBBVector;
+  MBBVector MBBs;
+  for (MachineFunction::iterator I = MF.begin(), E = MF.end();
+       I != E; ++I) {
+    MBBs.push_back(&*I);
+  }
+
+  for (MBBVector::iterator I = MBBs.begin(), E = MBBs.end(); I != E; ++I) {
+    MachineBasicBlock *MBB = *I;
+    Changed |= splitBB(MF, *MBB, RS);
+  }
+
+  for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
+    MachineBasicBlock &MBB = *I;
+    if (MBB.getAlignment() < Align) {
+      if (isBranchTarget(MBB)) {
+        MBB.setAlignment(Align);
+        Changed = true;
+      }
+    }
+  }
+
+  delete RS;
+  return Changed;
+}
+
+*/
 bool MachineBlockPlacement::runOnMachineFunction(MachineFunction &F) {
   // Check for single-block functions and skip them.
   if (std::next(F.begin()) == F.end())
@@ -1384,12 +1574,15 @@ bool MachineBlockPlacement::runOnMachineFunction(MachineFunction &F) {
   TII = F.getSubtarget().getInstrInfo();
   TLI = F.getSubtarget().getTargetLowering();
   MDT = &getAnalysis<MachineDominatorTree>();
+  TRI = F.getTarget().getRegisterInfo();
   assert(BlockToChain.empty());
 
   buildCFGChains(F);
 
   BlockToChain.clear();
   ChainAllocator.DestroyAll();
+
+//  alignBranchTargets(F);
 
   if (AlignAllBlock)
     // Align all of the blocks in the function to a specific alignment.

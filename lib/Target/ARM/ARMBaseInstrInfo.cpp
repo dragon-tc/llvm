@@ -18,6 +18,7 @@
 #include "ARMFeatures.h"
 #include "ARMHazardRecognizer.h"
 #include "ARMMachineFunctionInfo.h"
+#include "ARMProfitRecognizer.h"
 #include "MCTargetDesc/ARMAddressingModes.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/LiveVariables.h"
@@ -27,6 +28,7 @@
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/ScheduleProfitRecognizer.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/CodeGen/TargetSchedule.h"
 #include "llvm/IR/Constants.h"
@@ -122,6 +124,20 @@ CreateTargetPostRAHazardRecognizer(const InstrItineraryData *II,
   if (Subtarget.isThumb2() || Subtarget.hasVFP2())
     return (ScheduleHazardRecognizer *)new ARMHazardRecognizer(II, DAG);
   return TargetInstrInfo::CreateTargetPostRAHazardRecognizer(II, DAG);
+}
+
+// Use a ScheduleProfitRecognizer for postRA ARM scheduling. TargetInstrImpl
+// currently defaults to no postRA profit recognizer.
+ScheduleProfitRecognizer *ARMBaseInstrInfo::
+CreateTargetPostRAProfitRecognizer(const InstrItineraryData *II) const {
+   if (usePostRAProfitRecognizer()) {
+      // instruction mixing rules only available for 8K target
+      if (Subtarget.isKrait2())
+        return (ScheduleProfitRecognizer *)
+          new ARMProfitRecognizer(II, *this, Subtarget);
+      return TargetInstrInfo::CreateTargetPostRAProfitRecognizer(II);
+   }
+   return TargetInstrInfo::CreateTargetPostRAProfitRecognizer(II);
 }
 
 MachineInstr *
@@ -1734,7 +1750,14 @@ isProfitableToIfCvt(MachineBasicBlock &MBB,
   const unsigned ScalingUpFactor = 1024;
   unsigned UnpredCost = Probability.scale(NumCycles * ScalingUpFactor);
   UnpredCost += ScalingUpFactor; // The branch itself
-  UnpredCost += Subtarget.getMispredictionPenalty() * ScalingUpFactor / 10;
+  // For cortex-a9 and Krait, a weight similar to the misprediciton
+  // penalty, resulting in extra UnpredCost of 1 cycle,
+  // allows more predicated instructions to be generated.
+  // Otherwise use the default 10.
+  if (Subtarget.isCortexA9() || Subtarget.isKrait2())
+    UnpredCost += 1;
+  else
+    UnpredCost += Subtarget.getMispredictionPenalty() / 10;
 
   return (NumCycles + ExtraPredCycles) * ScalingUpFactor <= UnpredCost;
 }
@@ -1757,7 +1780,14 @@ isProfitableToIfCvt(MachineBasicBlock &TMBB,
       Probability.getCompl().scale(FCycles * ScalingUpFactor);
   unsigned UnpredCost = TUnpredCost + FUnpredCost;
   UnpredCost += 1 * ScalingUpFactor; // The branch itself
-  UnpredCost += Subtarget.getMispredictionPenalty() * ScalingUpFactor / 10;
+  // For cortex-a9 and Krait, a weight similar to the misprediciton
+  // penalty, resulting in extra UnpredCost of 1 cycle,
+  // allows more predicated instructions to be generated.
+  // Otherwise use the default 10.
+  if (Subtarget.isCortexA9() || Subtarget.isKrait2())
+    UnpredCost += 1;
+  else
+    UnpredCost += Subtarget.getMispredictionPenalty() / 10;
 
   return (TCycles + FCycles + TExtra + FExtra) * ScalingUpFactor <= UnpredCost;
 }
@@ -3034,7 +3064,7 @@ ARMBaseInstrInfo::getNumMicroOps(const InstrItineraryData *ItinData,
   // same cycle. The scheduling for the first load / store must be done
   // separately by assuming the address is not 64-bit aligned.
   //
-  // On Cortex-A9, the formula is simply (#reg / 2) + (#reg % 2). If the address
+  // On Cortex-A9/Krait, the formula is simply (#reg / 2) + (#reg % 2). If the address
   // is not 64-bit aligned, then AGU would take an extra cycle.  For VFP / NEON
   // load / store multiple, the formula is (#reg / 2) + (#reg % 2) + 1.
   case ARM::VLDMDIA:
@@ -3130,7 +3160,7 @@ ARMBaseInstrInfo::getNumMicroOps(const InstrItineraryData *ItinData,
       if (NumRegs % 2)
         ++A8UOps;
       return A8UOps;
-    } else if (Subtarget.isLikeA9() || Subtarget.isSwift()) {
+    } else if (Subtarget.isLikeA9() || Subtarget.isKrait2() || Subtarget.isSwift()) {
       int A9UOps = (NumRegs / 2);
       // If there are odd number of registers or if it's not 64-bit aligned,
       // then it takes an extra AGU (Address Generation Unit) cycle.
@@ -3163,7 +3193,7 @@ ARMBaseInstrInfo::getVLDMDefCycle(const InstrItineraryData *ItinData,
     DefCycle = RegNo / 2 + 1;
     if (RegNo % 2)
       ++DefCycle;
-  } else if (Subtarget.isLikeA9() || Subtarget.isSwift()) {
+  } else if (Subtarget.isLikeA9() || Subtarget.isKrait2() || Subtarget.isSwift()) {
     DefCycle = RegNo;
     bool isSLoad = false;
 
@@ -3207,7 +3237,7 @@ ARMBaseInstrInfo::getLDMDefCycle(const InstrItineraryData *ItinData,
       DefCycle = 1;
     // Result latency is issue cycle + 2: E2.
     DefCycle += 2;
-  } else if (Subtarget.isLikeA9() || Subtarget.isSwift()) {
+  } else if (Subtarget.isLikeA9() || Subtarget.isKrait2() ||  Subtarget.isSwift()) {
     DefCycle = (RegNo / 2);
     // If there are odd number of registers or if it's not 64-bit aligned,
     // then it takes an extra AGU (Address Generation Unit) cycle.
@@ -3238,7 +3268,7 @@ ARMBaseInstrInfo::getVSTMUseCycle(const InstrItineraryData *ItinData,
     UseCycle = RegNo / 2 + 1;
     if (RegNo % 2)
       ++UseCycle;
-  } else if (Subtarget.isLikeA9() || Subtarget.isSwift()) {
+  } else if (Subtarget.isLikeA9() || Subtarget.isKrait2() || Subtarget.isSwift()) {
     UseCycle = RegNo;
     bool isSStore = false;
 
@@ -3279,7 +3309,7 @@ ARMBaseInstrInfo::getSTMUseCycle(const InstrItineraryData *ItinData,
       UseCycle = 2;
     // Read in E3.
     UseCycle += 2;
-  } else if (Subtarget.isLikeA9() || Subtarget.isSwift()) {
+  } else if (Subtarget.isLikeA9() || Subtarget.isKrait2() || Subtarget.isSwift()) {
     UseCycle = (RegNo / 2);
     // If there are odd number of registers or if it's not 64-bit aligned,
     // then it takes an extra AGU (Address Generation Unit) cycle.
@@ -3521,7 +3551,7 @@ static int adjustDefLatency(const ARMSubtarget &Subtarget,
     }
   }
 
-  if (DefAlign < 8 && Subtarget.isLikeA9()) {
+  if (DefAlign < 8 && (Subtarget.isLikeA9() || Subtarget.isKrait2())) {
     switch (DefMCID->getOpcode()) {
     default: break;
     case ARM::VLD1q8:
@@ -3679,7 +3709,7 @@ ARMBaseInstrInfo::getOperandLatency(const InstrItineraryData *ItinData,
   if (Reg == ARM::CPSR) {
     if (DefMI->getOpcode() == ARM::FMSTAT) {
       // fpscr -> cpsr stalls over 20 cycles on A8 (and earlier?)
-      return Subtarget.isLikeA9() ? 1 : 20;
+      return Subtarget.isLikeA9() || Subtarget.isKrait2() ? 1 : 20;
     }
 
     // CPSR set and branch can be paired in the same cycle.
@@ -3746,7 +3776,7 @@ ARMBaseInstrInfo::getOperandLatency(const InstrItineraryData *ItinData,
 
   if (!UseNode->isMachineOpcode()) {
     int Latency = ItinData->getOperandCycle(DefMCID.getSchedClass(), DefIdx);
-    if (Subtarget.isLikeA9() || Subtarget.isSwift())
+    if (Subtarget.isLikeA9() || Subtarget.isKrait2() || Subtarget.isSwift())
       return Latency <= 2 ? 1 : Latency - 1;
     else
       return Latency <= 3 ? 1 : Latency - 2;
@@ -3946,6 +3976,484 @@ ARMBaseInstrInfo::getOperandLatency(const InstrItineraryData *ItinData,
   return Latency;
 }
 
+unsigned ARMBaseInstrInfo::getInstrExtraPredCost(const MachineInstr *MI) const {
+  unsigned Opc = MI->getOpcode();
+    if (Subtarget.isKrait2()) {
+    // Krait instructions predication cost retrieved from
+    // Krait Code Generation Guidelines 80-VE670-6 Rev. A.
+    // In general the conditional form of the instructions below
+    // introduce an additional 6 to 10 cycles delay.
+    // ADD, ADC, SUB, SBC, RSB, RSC, AND, BIC, EOR, ORR
+    // - with a register shift and target not R15 and S=1
+    // - with target R15 and S=1
+    // MOV, MVN with target R15 and S=1
+    // SDIV, UDIV, all integer MULT and MAC
+    // Load and Store multiples (LDM, STM, PUSH, POP)
+    // Load and Store doubles (LDRD)
+    // Load exclusives (LDRRXD)
+    // Store exclusives (STREX, STREXB, STREXH, STREXD)
+    // Unsigned Sum of Absolute Differences and Accumulate (USADA8)
+    // Send Event (SEV)
+    // Secure Mode Call (SMC)
+    // Supervisor Call (SVC)
+    // Wait for Interrupt (WFI) and Wait for Event (WFE)
+    // Move special register APSR to Arm core register (MSR)
+    // Move to Coprocessor from ARM core register(s) (MCR/MCRR)
+    // Coprocessor Load and Store (LDC, STC)
+    // Thumb Return From Exception (RFE)
+    // Thumb Store Return State (SRS)
+    switch (Opc) {
+    default:
+      return 0;
+
+      // ADD, ADC, SUB, SBC, RSB, RSC, AND, BIC, EOR, ORR
+      // - with a register shift and target not R15 and S form.
+    case ARM::ADDrsr:
+    case ARM::ADCrsr:
+    case ARM::SUBrsr:
+    case ARM::SBCrsr:
+    case ARM::RSBrsr:
+    case ARM::RSCrsr:
+    case ARM::ANDrsr:
+    case ARM::BICrsr:
+    case ARM::EORrsr:
+    case ARM::ORRrsr:
+    case ARM::t2ADDrs:
+    case ARM::t2ADDSrs:
+    case ARM::t2ADCrs:
+    case ARM::t2SUBrs:
+    case ARM::t2SUBSrs:
+    case ARM::t2SBCrs:
+    case ARM::t2RSBrs:
+    case ARM::t2RSBSrs:
+    case ARM::t2ANDrs:
+    case ARM::t2BICrs:
+    case ARM::t2EORrs:
+    case ARM::t2ORRrs:
+      {
+        // Check if S form
+        const MCInstrDesc &MCID = MI->getDesc();
+        if (MCID.hasImplicitDefOfPhysReg(ARM::CPSR)){
+          // Check if target is NOT R15
+          const MachineOperand &MO = MI->getOperand(0);
+          if (MO.isReg() && MO.isDef() && MO.getReg() != ARM::PC)
+            return 0xFFFF;
+        }
+        return 0;
+      }
+
+      // ADD, ADC, SUB, SBC, RSB, RSC, AND, BIC, EOR, ORR
+      // - with target R15 and S form.
+    case ARM::ADDri:
+    case ARM::ADDrr:
+    case ARM::ADDrsi:
+    case ARM::ADDSri:
+    case ARM::ADDSrr:
+    case ARM::ADDSrsi:
+    case ARM::ADDSrsr:
+    case ARM::ADCri:
+    case ARM::ADCrr:
+    case ARM::ADCrsi:
+    case ARM::SUBri:
+    case ARM::SUBrr:
+    case ARM::SUBrsi:
+    case ARM::SUBSri:
+    case ARM::SUBSrr:
+    case ARM::SUBSrsi:
+    case ARM::SBCri:
+    case ARM::SBCrr:
+    case ARM::SBCrsi:
+    case ARM::RSBrr:
+    case ARM::RSBri:
+    case ARM::RSBrsi:
+    case ARM::RSBSri:
+    case ARM::RSBSrsi:
+    case ARM::RSCrr:
+    case ARM::RSCri:
+    case ARM::RSCrsi:
+    case ARM::ANDrr:
+    case ARM::ANDri:
+    case ARM::ANDrsi:
+    case ARM::BICrr:
+    case ARM::BICri:
+    case ARM::BICrsi:
+    case ARM::EORrr:
+    case ARM::EORri:
+    case ARM::EORrsi:
+    case ARM::ORRrr:
+    case ARM::ORRri:
+    case ARM::ORRrsi:
+    case ARM::t2ADDri:
+    case ARM::t2ADDri12:
+    case ARM::t2ADDrr:
+    case ARM::t2ADDSri:
+    case ARM::t2ADDSrr:
+    case ARM::t2ADCri:
+    case ARM::t2ADCrr:
+    case ARM::t2SUBri:
+    case ARM::t2SUBri12:
+    case ARM::t2SUBrr:
+    case ARM::t2SUBSri:
+    case ARM::t2SUBSrr:
+    case ARM::t2SBCri:
+    case ARM::t2SBCrr:
+    case ARM::t2RSBri:
+    case ARM::t2RSBrr:
+    case ARM::t2RSBSri:
+    case ARM::t2ANDri:
+    case ARM::t2ANDrr:
+    case ARM::t2BICri:
+    case ARM::t2BICrr:
+    case ARM::t2EORri:
+    case ARM::t2EORrr:
+    case ARM::t2ORRri:
+    case ARM::t2ORRrr:
+      {
+        // Check if S form
+        const MCInstrDesc &MCID = MI->getDesc();
+        if (MCID.hasImplicitDefOfPhysReg(ARM::CPSR)){
+          // Check if target is R15ssh llvm
+          const MachineOperand &MO = MI->getOperand(0);
+          if (MO.isReg() && MO.isDef() && MO.getReg() == ARM::PC)
+            return 0xFFFF;
+        }
+        return 0;
+      }
+
+      // MOV, MVN with target R15 and S form
+    case ARM::MOVr:
+    case ARM::MOVsr:
+    case ARM::MOVsi:
+    case ARM::MOVi:
+    case ARM::MOVi16:
+    case ARM::MOVi32imm:
+    case ARM::t2MOVr:
+    case ARM::t2MOVi:
+    case ARM::t2MOVi16:
+
+    case ARM::MVNr:
+    case ARM::MVNi:
+    case ARM::MVNsi:
+    case ARM::MVNsr:
+    case ARM::t2MVNi:
+    case ARM::t2MVNr:
+    case ARM::t2MVNs:
+      {
+        // Check if S form
+        const MCInstrDesc &MCID = MI->getDesc();
+        if (MCID.hasImplicitDefOfPhysReg(ARM::CPSR)){
+          // Check if target is R15
+          const MachineOperand &MO = MI->getOperand(0);
+          if (MO.isReg() && MO.isDef() && MO.getReg() == ARM::PC)
+            return 0xFFFF;
+        }
+        return 0;
+      }
+
+      // SDIV, UDIV and all integer MULT and MAC
+    case ARM::MUL:
+    case ARM::MULv5:
+    case ARM::SMMUL:
+    case ARM::SMMULR:
+    case ARM::SMULBB:
+    case ARM::SMULBT:
+    case ARM::SMULL:
+    case ARM::SMULLv5:
+    case ARM::SMULTB:
+    case ARM::SMULTT:
+    case ARM::SMULWB:
+    case ARM::SMULWT:
+    case ARM::UMULL:
+    case ARM::UMULLv5:
+    case ARM::MLA:
+    case ARM::MLAv5:
+    case ARM::SMLABB:
+    case ARM::SMLABT:
+    case ARM::SMLAD:
+    case ARM::SMLADX:
+    case ARM::SMLAL:
+    case ARM::SMLALBB:
+    case ARM::SMLALBT:
+    case ARM::SMLALD:
+    case ARM::SMLALDX:
+    case ARM::SMLALTB:
+    case ARM::SMLALTT:
+    case ARM::SMLALv5:
+    case ARM::SMLATB:
+    case ARM::SMLATT:
+    case ARM::SMLAWB:
+    case ARM::SMLAWT:
+    case ARM::SMMLA:
+    case ARM::SMMLAR:
+    case ARM::UMLAL:
+    case ARM::UMLALv5:
+    case ARM::MLS:
+    case ARM::SMLSD:
+    case ARM::SMLSDX:
+    case ARM::SMLSLD:
+    case ARM::SMLSLDX:
+    case ARM::SMMLS:
+    case ARM::SMMLSR:
+
+    case ARM::t2SDIV:
+    case ARM::t2UDIV:
+    case ARM::t2MUL:
+    case ARM::t2SMMUL:
+    case ARM::t2SMMULR:
+    case ARM::t2SMULBB:
+    case ARM::t2SMULBT:
+    case ARM::t2SMULL:
+    case ARM::t2SMULTB:
+    case ARM::t2SMULTT:
+    case ARM::t2SMULWB:
+    case ARM::t2SMULWT:
+    case ARM::t2UMULL:
+    case ARM::tMUL:
+    case ARM::t2MLA:
+    case ARM::t2SMLABB:
+    case ARM::t2SMLABT:
+    case ARM::t2SMLAD:
+    case ARM::t2SMLADX:
+    case ARM::t2SMLAL:
+    case ARM::t2SMLALBB:
+    case ARM::t2SMLALBT:
+    case ARM::t2SMLALD:
+    case ARM::t2SMLALDX:
+    case ARM::t2SMLALTB:
+    case ARM::t2SMLALTT:
+    case ARM::t2SMLATB:
+    case ARM::t2SMLATT:
+    case ARM::t2SMLAWB:
+    case ARM::t2SMLAWT:
+    case ARM::t2SMMLA:
+    case ARM::t2SMMLAR:
+    case ARM::t2UMLAL:
+    case ARM::t2MLS:
+    case ARM::t2SMLSD:
+    case ARM::t2SMLSDX:
+    case ARM::t2SMLSLD:
+    case ARM::t2SMLSLDX:
+    case ARM::t2SMMLS:
+    case ARM::t2SMMLSR:
+
+      // Load and Store multiples (LDM, STM, POP, PUSH)
+    case ARM::LDMDA:
+    case ARM::LDMDA_UPD:
+    case ARM::LDMDB:
+    case ARM::LDMDB_UPD:
+    case ARM::LDMIA:
+    case ARM::LDMIA_RET:
+    case ARM::LDMIA_UPD:
+    case ARM::LDMIB:
+    case ARM::LDMIB_UPD:
+
+    case ARM::t2LDMDB:
+    case ARM::t2LDMDB_UPD:
+    case ARM::t2LDMIA:
+    case ARM::t2LDMIA_RET:
+    case ARM::t2LDMIA_UPD:
+    case ARM::tPOP:
+    case ARM::tPOP_RET:
+
+    case ARM::STMDA:
+    case ARM::STMDA_UPD:
+    case ARM::STMDB:
+    case ARM::STMDB_UPD:
+    case ARM::STMIA:
+    case ARM::STMIA_UPD:
+    case ARM::STMIB:
+    case ARM::STMIB_UPD:
+
+    case ARM::t2STMDB:
+    case ARM::t2STMDB_UPD:
+    case ARM::t2STMIA:
+    case ARM::t2STMIA_UPD:
+    case ARM::tPUSH:
+
+      // Load and Store doubles (LDRD)
+    case ARM::LDRD:
+    case ARM::LDRD_POST:
+    case ARM::LDRD_PRE:
+    case ARM::t2LDRD_PRE:
+    case ARM::t2LDRD_POST:
+    case ARM::t2LDRDi8:
+
+    case ARM::STRD:
+    case ARM::STRD_POST:
+    case ARM::STRD_PRE:
+    case ARM::t2STRD_POST:
+    case ARM::t2STRD_PRE:
+    case ARM::t2STRDi8:
+
+      // Load exclusives (LDRRXD)
+    case ARM::LDREXD:
+    case ARM::t2LDREXD:
+
+      // Store exclusives (STREX, STREXB, STREXH, STREXD)
+      // todo: do not need to be avoided for Krait28COMP(A30/B10/B20)
+    case ARM::STREX:
+    case ARM::STREXB:
+    case ARM::STREXH:
+    case ARM::STREXD:
+    case ARM::t2STREXB:
+    case ARM::t2STREXH:
+    case ARM::t2STREX:
+    case ARM::t2STREXD:
+
+      // Unsigned Sum of Absolute Differences and Accumulate (USADA8)
+    case ARM::USADA8:
+    case ARM::t2USADA8:
+
+      // Send Event (SEV)
+//    case ARM::SEV:
+    case ARM::t2SEV:
+      // Secure Mode Call (SMC)
+    case ARM::SMC:
+    case ARM::t2SMC:
+      // Supervisor Call (SVC)
+    case ARM::SVC:
+      // Wait for Interrupt (WFI)
+//    case ARM::WFI:
+    case ARM::t2WFI:
+      // Wait for Event (WFE)
+//    case ARM::WFE:
+    case ARM::t2WFE:
+
+      // Move from ARM core register to special register (MSR) privileged fields
+      // todo: how check if writing privileged fields
+    case ARM::MSR:
+    case ARM::MSRi:
+    case ARM::t2MSR_AR:
+    case ARM::t2MSR_M:
+
+      // Move from coprocessor to ARM core register (VU MCR, MCRR)
+      // that are NOT to VU or L2
+      // todo: how to enforce move NOT to VU or L2
+    case ARM::MCR:
+    case ARM::MCR2:
+    case ARM::MCRR:
+    case ARM::MCRR2:
+    case ARM::t2MCR:
+    case ARM::t2MCR2:
+    case ARM::t2MCRR:
+    case ARM::t2MCRR2:
+
+      // Coprocessor Load and Store (LDC, STC)
+    case ARM::LDC_OFFSET:
+    case ARM::LDC_PRE:
+    case ARM::LDC_POST:
+    case ARM::LDC_OPTION:
+    case ARM::LDCL_OFFSET:
+    case ARM::LDCL_PRE:
+    case ARM::LDCL_POST:
+    case ARM::LDCL_OPTION:
+    case ARM::LDC2_OFFSET:
+    case ARM::LDC2_PRE:
+    case ARM::LDC2_POST:
+    case ARM::LDC2_OPTION:
+    case ARM::LDC2L_OFFSET:
+    case ARM::LDC2L_PRE:
+    case ARM::LDC2L_POST:
+    case ARM::LDC2L_OPTION:
+    case ARM::STC_OFFSET:
+    case ARM::STC_PRE:
+    case ARM::STC_POST:
+    case ARM::STC_OPTION:
+    case ARM::STCL_OFFSET:
+    case ARM::STCL_PRE:
+    case ARM::STCL_POST:
+    case ARM::STCL_OPTION:
+    case ARM::STC2_OFFSET:
+    case ARM::STC2_PRE:
+    case ARM::STC2_POST:
+    case ARM::STC2_OPTION:
+    case ARM::STC2L_OFFSET:
+    case ARM::STC2L_PRE:
+    case ARM::STC2L_POST:
+    case ARM::STC2L_OPTION:
+
+    case ARM::t2LDC_OFFSET:
+    case ARM::t2LDC_PRE:
+    case ARM::t2LDC_POST:
+    case ARM::t2LDC_OPTION:
+    case ARM::t2LDCL_OFFSET:
+    case ARM::t2LDCL_PRE:
+    case ARM::t2LDCL_POST:
+    case ARM::t2LDCL_OPTION:
+    case ARM::t2LDC2_OFFSET:
+    case ARM::t2LDC2_PRE:
+    case ARM::t2LDC2_POST:
+    case ARM::t2LDC2_OPTION:
+    case ARM::t2LDC2L_OFFSET:
+    case ARM::t2LDC2L_PRE:
+    case ARM::t2LDC2L_POST:
+    case ARM::t2LDC2L_OPTION:
+    case ARM::t2STC_OFFSET:
+    case ARM::t2STC_PRE:
+    case ARM::t2STC_POST:
+    case ARM::t2STC_OPTION:
+    case ARM::t2STCL_OFFSET:
+    case ARM::t2STCL_PRE:
+    case ARM::t2STCL_POST:
+    case ARM::t2STCL_OPTION:
+    case ARM::t2STC2_OFFSET:
+    case ARM::t2STC2_PRE:
+    case ARM::t2STC2_POST:
+    case ARM::t2STC2_OPTION:
+    case ARM::t2STC2L_OFFSET:
+    case ARM::t2STC2L_PRE:
+    case ARM::t2STC2L_POST:
+    case ARM::t2STC2L_OPTION:
+
+      // Move from ARM core register to coprocessor
+    case ARM::MRRC:
+    case ARM::MRRC2:
+    case ARM::t2MRRC:
+    case ARM::t2MRRC2:
+
+      // Thumb Return From Exception (RFE)
+    case ARM::RFEDA:
+    case ARM::RFEDA_UPD:
+    case ARM::RFEDB:
+    case ARM::RFEDB_UPD:
+    case ARM::RFEIA:
+    case ARM::RFEIA_UPD:
+    case ARM::RFEIB:
+    case ARM::RFEIB_UPD:
+    case ARM::t2RFEDBW:
+    case ARM::t2RFEDB:
+    case ARM::t2RFEIAW:
+    case ARM::t2RFEIA:
+
+      // Thumb Store Return State (SRS)
+    case ARM::SRSDA:
+    case ARM::SRSDA_UPD:
+    case ARM::SRSDB:
+    case ARM::SRSDB_UPD:
+    case ARM::SRSIA:
+    case ARM::SRSIA_UPD:
+    case ARM::SRSIB:
+    case ARM::SRSIB_UPD:
+    case ARM::t2SRSDB_UPD:
+    case ARM::t2SRSDB:
+    case ARM::t2SRSIA_UPD:
+    case ARM::t2SRSIA:
+      return 0xFFFF;
+
+    // Conditional return
+    case ARM::BX_RET:
+    case ARM::tBX_RET:
+      {
+        return 0xFFFF;
+      }
+    } // switch (Opc)
+  } else {
+    // No instruction predication cost info for
+    // subtargets other than Krait
+    return 0;
+  }
+}
+
 unsigned ARMBaseInstrInfo::getPredicationCost(const MachineInstr *MI) const {
    if (MI->isCopyLike() || MI->isInsertSubreg() ||
       MI->isRegSequence() || MI->isImplicitDef())
@@ -3989,6 +4497,11 @@ unsigned ARMBaseInstrInfo::getInstrLatency(const InstrItineraryData *ItinData,
     // When predicated, CPSR is an additional source operand for CPSR updating
     // instructions, this apparently increases their latencies.
     *PredCost = 1;
+
+  // check for other ARM Subtarget conditions that may result in non-zero
+  // predication cost
+  if (PredCost) *PredCost += getInstrExtraPredCost(MI);
+
   }
   // Be sure to call getStageLatency for an empty itinerary in case it has a
   // valid MinLatency property.
@@ -4162,6 +4675,7 @@ ARMBaseInstrInfo::getExecutionDomain(const MachineInstr *MI) const {
          MI->getOpcode() == ARM::VMOVS))
       return std::make_pair(ExeVFP, (1 << ExeVFP) | (1 << ExeNEON));
   }
+
   // No other instructions can be swizzled, so just determine their domain.
   unsigned Domain = MI->getDesc().TSFlags & ARMII::DomainMask;
 

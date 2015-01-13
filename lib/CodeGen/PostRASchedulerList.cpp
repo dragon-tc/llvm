@@ -26,6 +26,7 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/CodeGen/LatencyPriorityQueue.h"
+#include "llvm/CodeGen/LatencyProfitPriorityQueue.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -34,6 +35,7 @@
 #include "llvm/CodeGen/RegisterClassInfo.h"
 #include "llvm/CodeGen/ScheduleDAGInstrs.h"
 #include "llvm/CodeGen/ScheduleHazardRecognizer.h"
+#include "llvm/CodeGen/ScheduleProfitRecognizer.h"
 #include "llvm/CodeGen/SchedulerRegistry.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -108,7 +110,7 @@ namespace {
   class SchedulePostRATDList : public ScheduleDAGInstrs {
     /// AvailableQueue - The priority queue to use for the available SUnits.
     ///
-    LatencyPriorityQueue AvailableQueue;
+    LatencyProfitPriorityQueue AvailableQueue;
 
     /// PendingQueue - This contains all of the instructions whose operands have
     /// been issued, but their results are not ready yet (due to the latency of
@@ -118,6 +120,9 @@ namespace {
 
     /// HazardRec - The hazard recognizer to use.
     ScheduleHazardRecognizer *HazardRec;
+
+    /// ProfitRec - The profit recognizer to use.
+    ScheduleProfitRecognizer *ProfitRec;
 
     /// AntiDepBreak - Anti-dependence breaking object, or NULL if none
     AntiDepBreaker *AntiDepBreak;
@@ -212,11 +217,15 @@ SchedulePostRATDList::SchedulePostRATDList(
      (AntiDepBreaker *)new AggressiveAntiDepBreaker(MF, RCI, CriticalPathRCs) :
      ((AntiDepMode == TargetSubtargetInfo::ANTIDEP_CRITICAL) ?
       (AntiDepBreaker *)new CriticalAntiDepBreaker(MF, RCI) : nullptr));
+  ProfitRec =
+    TM.getInstrInfo()->CreateTargetPostRAProfitRecognizer(InstrItins);
+  AvailableQueue.setProfitRec(ProfitRec);
 }
 
 SchedulePostRATDList::~SchedulePostRATDList() {
   delete HazardRec;
   delete AntiDepBreak;
+  delete ProfitRec;
 }
 
 /// Initialize state associated with the next scheduling region.
@@ -369,6 +378,8 @@ void SchedulePostRATDList::startBlock(MachineBasicBlock *BB) {
 
   // Reset the hazard recognizer and anti-dep breaker.
   HazardRec->Reset();
+  if (ProfitRec != NULL)
+    ProfitRec->reset();
   if (AntiDepBreak)
     AntiDepBreak->StartBlock(BB);
 }
@@ -513,6 +524,10 @@ void SchedulePostRATDList::ListScheduleTopDown() {
   // blocks are a single region).
   HazardRec->Reset();
 
+  // Assuming previously emitted instructions not known.
+  if (ProfitRec != NULL)
+     ProfitRec->reset();
+
   // Release any successors of the special Entry node.
   ReleaseSuccessors(&EntrySU);
 
@@ -609,6 +624,8 @@ void SchedulePostRATDList::ListScheduleTopDown() {
       // ... schedule the node...
       ScheduleNodeTopDown(FoundSUnit, CurCycle);
       HazardRec->EmitInstruction(FoundSUnit);
+      if (ProfitRec != NULL)
+         ProfitRec->addInstruction(FoundSUnit);
       CycleHasInsts = true;
       if (HazardRec->atIssueLimit()) {
         DEBUG(dbgs() << "*** Max instructions per cycle " << CurCycle << '\n');
