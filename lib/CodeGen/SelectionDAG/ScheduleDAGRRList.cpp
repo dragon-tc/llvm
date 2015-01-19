@@ -20,6 +20,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/ScheduleHazardRecognizer.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
@@ -63,6 +64,58 @@ static RegisterScheduler
                       "Bottom-up register pressure aware list scheduling "
                       "which tries to balance ILP and register pressure",
                       createILPListDAGScheduler);
+
+static cl::opt<bool> DisableChooseBetweenBURRAndHybridSchedHeuristic(
+  "disable-choose-between-burr-and-hybrid-sched-heur", cl::Hidden,
+  cl::init(false));
+
+// The minimum ratio of integer instructions versus other instructions in a DAG
+// to choose the BURR over the Hybrid heuristics.
+static cl::opt<unsigned>
+SchedHeurMinIntegerInstRatio("sched-heur-min-int-insts-ratio", cl::Hidden,
+                             cl::init(20));
+
+// The minimum number of loads we want to see in a DAG to choose the BURR over
+// the Hybrid heuristic.
+static cl::opt<unsigned> SchedHeurMinNumLoads("sched-heur-min-num-loads",
+                                              cl::Hidden, cl::init(5));
+
+// The minimum ratio of loads versus other instructions to choose the burr over
+// the hybrid heuristic.
+static cl::opt<unsigned>
+SchedHeurNumOfLoadsRatio("sched-heur-loads-ratio", cl::Hidden,
+                         cl::init(5));
+
+// The mimimum ratio of loads versus store instructions to choose the burr over
+// the hybrid heuristic.
+static cl::opt<unsigned>
+SchedHeurLoadsStoresRatio("sched-heur-loads-stores-ratio", cl::Hidden,
+                          cl::init(3));
+
+// The minimum height that the longest load critical chain must have to choose
+// the burr over the hybrid heuristic.
+static cl::opt<unsigned>
+SchedHeurMinHeight("sched-heur-min-height", cl::Hidden, cl::init(20));
+
+// The ratio between the maximum load height and the num of instructions. This
+// is used as a characteristic to describe a chained-load dag.
+//    load  load
+//     \   /
+//      op   load
+//       \  /
+//        op    load
+//         \   /
+//          op
+static cl::opt<unsigned>
+SchedHeurLoadHeightToNumOfInstsRatio("sched-heur-load-height-insts-ratio",
+                                     cl::Hidden, cl::init(25));
+
+// The ratio of long latency instructions versus other instructions.
+static cl::opt<unsigned>
+SchedHeurLongLatencyInstsRatio("sched-heur-long-latency-insts-ratio",
+                               cl::Hidden, cl::init(4));
+// Latency of "long latency" instructions.
+const static unsigned SchedHeurLongLatencyValue = 3;
 
 static cl::opt<bool> DisableSchedCycles(
   "disable-sched-cycles", cl::Hidden, cl::init(false),
@@ -130,6 +183,9 @@ private:
   /// CurCycle - The current scheduler state corresponds to this cycle.
   unsigned CurCycle;
 
+  /// AA - AliasAnalysis for making memory reference queries.
+  AliasAnalysis *AA;
+
   /// MinAvailableCycle - Cycle of the soonest available instruction.
   unsigned MinAvailableCycle;
 
@@ -158,13 +214,19 @@ private:
   // DAG crawling.
   DenseMap<SUnit*, SUnit*> CallSeqEndForStart;
 
+  /// ShouldOnlyScheduleForRegPressure - Only perform Sethi-Ullman register
+  /// pressure scheduling if this flag is set to true.
+  bool ShouldOnlyScheduleForRegPressure;
+
 public:
-  ScheduleDAGRRList(MachineFunction &mf, bool needlatency,
+  ScheduleDAGRRList(MachineFunction &mf,
+                    AliasAnalysis *aa,
+                    bool needlatency,
                     SchedulingPriorityQueue *availqueue,
                     CodeGenOpt::Level OptLevel)
     : ScheduleDAGSDNodes(mf),
-      NeedLatency(needlatency), AvailableQueue(availqueue), CurCycle(0),
-      Topo(SUnits, nullptr) {
+      NeedLatency(needlatency), AvailableQueue(availqueue), AA(aa), CurCycle(0),
+      Topo(SUnits, nullptr), ShouldOnlyScheduleForRegPressure(false) {
 
     const TargetSubtargetInfo &STI = mf.getSubtarget();
     if (DisableSchedCycles || !NeedLatency)
@@ -208,6 +270,15 @@ public:
     Topo.RemovePred(SU, D.getSUnit());
     SU->removePred(D);
   }
+
+  bool shouldOnlySchedForPressure() const {
+    return ShouldOnlyScheduleForRegPressure;
+  }
+  void setOnlySchedForPressure(bool OnlyForPressure = true) {
+    ShouldOnlyScheduleForRegPressure = OnlyForPressure;
+  }
+
+  bool seemsBeneficialToSchedForRegPres();
 
 private:
   bool isReady(SUnit *SU) {
@@ -316,6 +387,168 @@ static void GetCostForDef(const ScheduleDAGSDNodes::RegDefIter &RegDefPos,
   }
 }
 
+static bool hasMostlyIntegerOps(ScheduleDAGSDNodes &DAG) {
+  unsigned NumIntOps = 0;
+  unsigned NumOtherOps = 0;
+  for (unsigned I = 0, E = DAG.SUnits.size(); I != E; ++I) {
+    SDNode *Node = DAG.SUnits[I].getNode();
+    for (unsigned VI = 0, VE = Node->getNumValues(); VI != VE; ++VI) {
+      EVT ValType = Node->getValueType(VI);
+      if (ValType.isInteger())
+        ++NumIntOps;
+      // Ignore chains and glue.
+      else if (ValType != MVT::Other && ValType != MVT::Glue)
+        ++NumOtherOps;
+    }
+  }
+  // Look for less than % operations of another type as specified by the flag.
+  if (SchedHeurMinIntegerInstRatio * NumOtherOps < NumIntOps)
+    return true;
+
+  return false;
+}
+
+static bool doesLoad(SDNode *Node, const TargetInstrInfo *TII) {
+  if (!Node->isMachineOpcode()) return false;
+
+  MachineSDNode *M = cast<MachineSDNode>(Node);
+  const MCInstrDesc &TID = TII->get(M->getMachineOpcode());
+
+  if (TID.mayLoad()) return true;
+
+  for (MachineSDNode::mmo_iterator I = M->memoperands_begin(),
+       E = M->memoperands_end(); I != E; ++I)
+    if ((*I)->isLoad())
+      return true;
+
+  return false;
+}
+
+static bool doesStore(SDNode *Node, const TargetInstrInfo *TII) {
+  if (!Node->isMachineOpcode()) return false;
+
+  MachineSDNode *M = cast<MachineSDNode>(Node);
+  const MCInstrDesc &TID = TII->get(M->getMachineOpcode());
+
+  if (TID.mayStore()) return true;
+
+  for (MachineSDNode::mmo_iterator I = M->memoperands_begin(),
+       E = M->memoperands_end(); I != E; ++I)
+    if ((*I)->isStore())
+      return true;
+
+  return false;
+}
+
+static unsigned getMaxLatency(SUnit *SU) {
+  unsigned Latency = 0;
+  for (SUnit::succ_iterator SD = SU->Succs.begin(), SE = SU->Succs.end(); SD !=
+       SE; ++SD) {
+    SDep &Edge = *SD;
+    if (Edge.getLatency() > Latency)
+      Latency = Edge.getLatency();
+  }
+  return Latency;
+}
+
+static bool hasParallelLoadOps(ScheduleDAGSDNodes &DAG) {
+  unsigned NumOfChainedLoads = 0;
+  unsigned NumOfLoads = 0;
+  unsigned NumOfStores = 0;
+  unsigned NumOfInsts = 0;
+  unsigned MaxLoadHeight = 0;
+  unsigned MaxNumOfLoadsIntoToken = 0;
+  unsigned NumLongLatencyOtherThanLoad = 0;
+
+  SmallPtrSet<SDNode *, 32> TokenFactorProcessed;
+  for (unsigned I = 0, E = DAG.SUnits.size(); I != E; ++I) {
+    SUnit &SU = DAG.SUnits[I];
+    // Look at glued nodes too.
+    for (SDNode *N = SU.getNode()->getGluedNode(); N; N = N->getGluedNode()) {
+      if (doesLoad(N, DAG.TII))
+        ++NumOfLoads;
+      if (doesStore(N, DAG.TII))
+        ++NumOfStores;
+      ++NumOfInsts;
+    }
+
+    // Look at the node.
+    SDNode *Node = SU.getNode();
+    if (doesLoad(Node, DAG.TII)) {
+      // Compute the maximum height of loads.
+      if (SU.getHeight() > MaxLoadHeight)
+        MaxLoadHeight = SU.getHeight();
+      ++NumOfLoads;
+      // Count the number of loads that feed into another load and count how
+      // wide token factor of loads are.
+      for (SDNode::use_iterator UI = Node->use_begin(), UE = Node->use_end();
+           UI != UE; ++UI) {
+        SDNode *User = *UI;
+        if (doesLoad(User, DAG.TII))
+          ++NumOfChainedLoads;
+        if (User->getOpcode() == ISD::TokenFactor &&
+            !TokenFactorProcessed.count(User)) {
+          unsigned NumLoadsIntoToken = 0;
+          TokenFactorProcessed.insert(User);
+          for (unsigned OI = 0, OE = User->getNumOperands(); OI != OE; ++OI) {
+            SDNode *OpOfToken = User->getOperand(OI).getNode();
+            if (OpOfToken && doesLoad(OpOfToken, DAG.TII))
+              ++NumLoadsIntoToken;
+          }
+          if (NumLoadsIntoToken > MaxNumOfLoadsIntoToken)
+            MaxNumOfLoadsIntoToken = NumLoadsIntoToken;
+        }
+      }
+    } else {
+      if (getMaxLatency(&SU) >= SchedHeurLongLatencyValue)
+        ++NumLongLatencyOtherThanLoad;
+    }
+    if (doesStore(Node, DAG.TII))
+      ++NumOfStores;
+    ++NumOfInsts;
+  }
+
+  // More than % loads as specified by the flag.
+  bool hasEnoughLoads = (NumOfLoads > SchedHeurMinNumLoads &&
+                         NumOfInsts < SchedHeurNumOfLoadsRatio * NumOfLoads);
+  if (!hasEnoughLoads)
+    return false;
+
+  // Don't use the BURR scheduler if there are long latency instructions that
+  // would seem to benefit from a different scheduler.
+  if (SchedHeurLongLatencyInstsRatio * NumLongLatencyOtherThanLoad > NumOfInsts)
+    return false;
+
+  bool isLoadToStoreRatioHighEnough =
+    NumOfLoads > SchedHeurLoadsStoresRatio * NumOfStores;
+  if (!isLoadToStoreRatioHighEnough)
+    return false;
+
+  // We want more than just b = *c; *a = *b | *b2.
+  if (MaxLoadHeight < SchedHeurMinHeight)
+    return false;
+
+  // We want a chained load DAG (NumOfInsts ca.= MaxUnitHeight).
+  if (SchedHeurLoadHeightToNumOfInstsRatio * MaxLoadHeight < NumOfInsts * 10)
+    return false;
+
+  return true;
+}
+
+
+bool ScheduleDAGRRList::seemsBeneficialToSchedForRegPres() {
+  // Check that the DAG contains mostly integer operations.
+  if (!hasMostlyIntegerOps(*this))
+   return false;
+
+  // Check that there a many load operations.
+  if (!hasParallelLoadOps(*this))
+    return false;
+
+  return true;
+}
+
+
 /// Schedule - Schedule the DAG using list scheduling.
 void ScheduleDAGRRList::Schedule() {
   DEBUG(dbgs()
@@ -334,7 +567,11 @@ void ScheduleDAGRRList::Schedule() {
   assert(Interferences.empty() && LRegsMap.empty() && "stale Interferences");
 
   // Build the scheduling graph.
-  BuildSchedGraph(nullptr);
+  BuildSchedGraph(AA);
+
+  if (!DisableChooseBetweenBURRAndHybridSchedHeuristic &&
+      seemsBeneficialToSchedForRegPres())
+    setOnlySchedForPressure(true);
 
   DEBUG(for (unsigned su = 0, e = SUnits.size(); su != e; ++su)
           SUnits[su].dumpAll(this));
@@ -1598,6 +1835,8 @@ struct hybrid_ls_rr_sort : public queue_sort {
 
   bool isReady(SUnit *SU, unsigned CurCycle) const;
 
+  bool shouldOnlySchedForPressure() const ;
+
   bool operator()(SUnit* left, SUnit* right) const;
 };
 
@@ -1728,6 +1967,10 @@ public:
   void scheduledNode(SUnit *SU) override;
 
   void unscheduledNode(SUnit *SU) override;
+
+  bool shouldOnlySchedForPressure() const {
+    return scheduleDAG->shouldOnlySchedForPressure();
+  }
 
 protected:
   bool canClobber(const SUnit *SU, const SUnit *Op);
@@ -2537,10 +2780,18 @@ bool hybrid_ls_rr_sort::isReady(SUnit *SU, unsigned CurCycle) const {
   return true;
 }
 
+bool hybrid_ls_rr_sort::shouldOnlySchedForPressure() const {
+    return SPQ->shouldOnlySchedForPressure();
+}
+
 // Return true if right should be scheduled with higher priority than left.
 bool hybrid_ls_rr_sort::operator()(SUnit *left, SUnit *right) const {
   if (int res = checkSpecialNodes(left, right))
     return res > 0;
+
+  // If we should only schedule for register pressure just do BURR scheduling.
+  if (shouldOnlySchedForPressure())
+    return BURRSort(left, right, SPQ);
 
   if (left->isCall || right->isCall)
     // No way to compute latency of calls.
@@ -2990,7 +3241,7 @@ llvm::createBURRListDAGScheduler(SelectionDAGISel *IS,
 
   BURegReductionPriorityQueue *PQ =
     new BURegReductionPriorityQueue(*IS->MF, false, false, TII, TRI, nullptr);
-  ScheduleDAGRRList *SD = new ScheduleDAGRRList(*IS->MF, false, PQ, OptLevel);
+  ScheduleDAGRRList *SD = new ScheduleDAGRRList(*IS->MF, IS->AA, false, PQ, OptLevel);
   PQ->setScheduleDAG(SD);
   return SD;
 }
@@ -3004,7 +3255,7 @@ llvm::createSourceListDAGScheduler(SelectionDAGISel *IS,
 
   SrcRegReductionPriorityQueue *PQ =
     new SrcRegReductionPriorityQueue(*IS->MF, false, true, TII, TRI, nullptr);
-  ScheduleDAGRRList *SD = new ScheduleDAGRRList(*IS->MF, false, PQ, OptLevel);
+  ScheduleDAGRRList *SD = new ScheduleDAGRRList(*IS->MF, IS->AA, false, PQ, OptLevel);
   PQ->setScheduleDAG(SD);
   return SD;
 }
@@ -3020,7 +3271,7 @@ llvm::createHybridListDAGScheduler(SelectionDAGISel *IS,
   HybridBURRPriorityQueue *PQ =
     new HybridBURRPriorityQueue(*IS->MF, true, false, TII, TRI, TLI);
 
-  ScheduleDAGRRList *SD = new ScheduleDAGRRList(*IS->MF, true, PQ, OptLevel);
+  ScheduleDAGRRList *SD = new ScheduleDAGRRList(*IS->MF, IS->AA, true, PQ, OptLevel);
   PQ->setScheduleDAG(SD);
   return SD;
 }
@@ -3035,7 +3286,7 @@ llvm::createILPListDAGScheduler(SelectionDAGISel *IS,
 
   ILPBURRPriorityQueue *PQ =
     new ILPBURRPriorityQueue(*IS->MF, true, false, TII, TRI, TLI);
-  ScheduleDAGRRList *SD = new ScheduleDAGRRList(*IS->MF, true, PQ, OptLevel);
+  ScheduleDAGRRList *SD = new ScheduleDAGRRList(*IS->MF, IS->AA, true, PQ, OptLevel);
   PQ->setScheduleDAG(SD);
   return SD;
 }

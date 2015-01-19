@@ -147,6 +147,10 @@ ARMSubtarget &ARMSubtarget::initializeSubtargetDependencies(StringRef CPU,
   return *this;
 }
 
+static cl::opt<bool>
+DisableUseMOVT("arm-disable-use-movt", cl::init(false), cl::Hidden);
+
+
 ARMSubtarget::ARMSubtarget(const std::string &TT, const std::string &CPU,
                            const std::string &FS, const ARMBaseTargetMachine &TM,
                            bool IsLittle)
@@ -255,7 +259,7 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
   if (isTargetNaCl())
     stackAlignment = 16;
 
-  UseMovt = hasV6T2Ops() && ArmUseMOVT;
+  UseMovt = !DisableUseMOVT && hasV6T2Ops() && ArmUseMOVT;
 
   if (isTargetMachO()) {
     IsR9Reserved = ReserveR9 || !HasV6Ops;

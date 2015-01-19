@@ -139,6 +139,9 @@ unsigned ARMELFObjectWriter::GetRelocTypeInner(const MCValue &Target,
       case MCSymbolRefExpr::VK_ARM_TLSCALL:
         Type = ELF::R_ARM_THM_TLS_CALL;
         break;
+    case ARM::fixup_t2_uncondbranch:
+      Type = ELF::R_ARM_THM_JUMP24;
+      break;
       default:
         Type = ELF::R_ARM_THM_CALL;
         break;

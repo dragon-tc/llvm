@@ -915,6 +915,33 @@ bool Thumb2SizeReduce::ReduceMBB(MachineBasicBlock &MBB) {
 
   // Yes, CPSR could be livein.
   bool LiveCPSR = MBB.isLiveIn(ARM::CPSR);
+  // Some prior passes are not updating LiveIn (e.g. IfConvert pass)
+  // Set LiveCPSR to false if CPSR is not consumed.
+  if (LiveCPSR) {
+    bool foundCPSR = false;
+    MachineBasicBlock::instr_iterator MII = MBB.instr_begin(), E = MBB.instr_end();
+    MachineBasicBlock::instr_iterator NextMII;
+    for (; MII != E; MII = std::next(MII)) {
+      MachineInstr *MI = &*MII;
+      if (MI->isBundle()) {
+        break;
+      }
+      for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
+        const MachineOperand &MO = MI->getOperand(i);
+        if (!MO.isReg() || MO.isUndef())
+          continue;
+        if (MO.getReg() != ARM::CPSR)
+          continue;
+        foundCPSR = true;
+        if (MO.isDef()) {
+          LiveCPSR = false;
+          break;
+        }
+      }
+      if (foundCPSR)
+        break;
+    }
+  }
   MachineInstr *BundleMI = nullptr;
 
   CPSRDef = nullptr;
