@@ -2499,12 +2499,12 @@ class KRT2WriteLMOpsListType<list<WriteSequence> writes> {
 
 // Krait2 machine model for scheduling and other instruction cost heuristics.
 def Krait2Model : SchedMachineModel {
-  let IssueWidth = 2; // 2 micro-ops are dispatched per cycle.
-  let MicroOpBufferSize = 56; // Based on available renamed registers.
-  let LoadLatency = 2; // Optimistic load latency assuming bypass.
+  let IssueWidth = 3; // 2 micro-ops are dispatched per cycle.
+  let MicroOpBufferSize = 45; // Based on NEON renamed registers.
+  let LoadLatency = 3; // Optimistic load latency assuming bypass.
                        // This is overriden by OperandCycles if the
                        // Itineraries are queried instead.
-  let MispredictPenalty = 8; // Based on estimate of pipeline depth.
+  let MispredictPenalty = 14; // Based on estimate of pipeline depth.
 
   let Itineraries = Krait2Itineraries;
 
