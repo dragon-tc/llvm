@@ -106,7 +106,7 @@ public:
 
   unsigned getMaxInterleaveFactor() const override {
     // These are out of order CPUs:
-    if (ST->isCortexA15() || ST->isSwift())
+    if (ST->isCortexA15() || ST->isSwift() || ST->isKrait2())
       return 2;
     return 1;
   }
@@ -384,7 +384,7 @@ unsigned ARMTTI::getVectorInstrCost(unsigned Opcode, Type *ValTy,
                                     unsigned Index) const {
   // Penalize inserting into an D-subregister. We end up with a three times
   // lower estimated throughput on swift.
-  if (ST->isSwift() &&
+  if (ST->isSwift() || ST->isKrait2() &&
       Opcode == Instruction::InsertElement &&
       ValTy->isVectorTy() &&
       ValTy->getScalarSizeInBits() <= 32)

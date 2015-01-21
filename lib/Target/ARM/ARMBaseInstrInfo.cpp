@@ -1753,7 +1753,7 @@ ARMBaseInstrInfo::isProfitableToUnpredicate(MachineBasicBlock &TMBB,
                                             MachineBasicBlock &FMBB) const {
   // Reduce false anti-dependencies to let Swift's out-of-order execution
   // engine do its thing.
-  return Subtarget.isSwift();
+  return Subtarget.isSwift() || Subtarget.isKrait2();
 }
 
 /// getInstrPredicate - If instruction is predicated, returns its predicate
@@ -3014,7 +3014,7 @@ ARMBaseInstrInfo::getNumMicroOps(const InstrItineraryData *ItinData,
   unsigned Class = Desc.getSchedClass();
   int ItinUOps = ItinData->getNumMicroOps(Class);
   if (ItinUOps >= 0) {
-    if (Subtarget.isSwift() && (Desc.mayLoad() || Desc.mayStore()))
+    if (Subtarget.isSwift() || (Subtarget.isKrait2()) && (Desc.mayLoad() || Desc.mayStore()))
       return getNumMicroOpsSwiftLdSt(ItinData, MI);
 
     return ItinUOps;
@@ -3087,7 +3087,7 @@ ARMBaseInstrInfo::getNumMicroOps(const InstrItineraryData *ItinData,
   case ARM::t2STMIA_UPD:
   case ARM::t2STMDB_UPD: {
     unsigned NumRegs = MI->getNumOperands() - Desc.getNumOperands() + 1;
-    if (Subtarget.isSwift()) {
+    if (Subtarget.isSwift() || Subtarget.isKrait2()) {
       int UOps = 1 + NumRegs;  // One for address computation, one for each ld / st.
       switch (Opc) {
       default: break;
@@ -4931,7 +4931,7 @@ getPartialRegUpdateClearance(const MachineInstr *MI,
                              unsigned OpNum,
                              const TargetRegisterInfo *TRI) const {
   if (!SwiftPartialUpdateClearance ||
-      !(Subtarget.isSwift() || Subtarget.isCortexA15()))
+      !(Subtarget.isSwift() || Subtarget.isCortexA15() || Subtarget.isKrait2()))
     return 0;
 
   assert(TRI && "Need TRI instance");

@@ -467,7 +467,7 @@ bool ARMDAGToDAGISel::isShifterOpProfitable(const SDValue &Shift,
     return true;
   // R << 2 is free.
   return ShOpcVal == ARM_AM::lsl &&
-         (ShAmt == 2 || (Subtarget->isSwift() && ShAmt == 1));
+         (ShAmt == 2 || (Subtarget->isSwift() || Subtarget->isKrait2() && ShAmt == 1));
 }
 
 bool ARMDAGToDAGISel::SelectImmShifterOperand(SDValue N,

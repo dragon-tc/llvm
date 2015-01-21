@@ -294,12 +294,12 @@ def DontUseFusedMAC  : Predicate<"!(TM.Options.AllowFPOpFusion =="
                                  "Subtarget->isTargetDarwin()">;
 
 // VGETLNi32 is microcoded on Swift - prefer VMOV.
-def HasFastVGETLNi32 : Predicate<"!Subtarget->isSwift()">;
-def HasSlowVGETLNi32 : Predicate<"Subtarget->isSwift()">;
+def HasFastVGETLNi32 : Predicate<"!Subtarget->isLikeA9()">;
+def HasSlowVGETLNi32 : Predicate<"Subtarget->isLikeA9()">;
 
 // VDUP.32 is microcoded on Swift - prefer VMOV.
-def HasFastVDUP32 : Predicate<"!Subtarget->isSwift()">;
-def HasSlowVDUP32 : Predicate<"Subtarget->isSwift()">;
+def HasFastVDUP32 : Predicate<"!Subtarget->isLikeA9()">;
+def HasSlowVDUP32 : Predicate<"Subtarget->isLikeA9()">;
 
 // Cortex-A9 prefers VMOVSR to VMOVDRR even when using NEON for scalar FP, as
 // this allows more effective execution domain optimization. See

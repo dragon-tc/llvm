@@ -864,7 +864,7 @@ ARMLoadStoreOpt::MergeLDR_STR(MachineBasicBlock &MBB, unsigned SIndex,
          ((Count < Limit) && RegNum == PRegNum+1)) &&
         // On Swift we don't want vldm/vstm to start with a odd register num
         // because Q register unaligned vldm/vstm need more uops.
-        (!STI->isSwift() || isNotVFP || Count != 1 || !(PRegNum & 0x1))) {
+        (!STI->isSwift() && !STI->isKrait2() || isNotVFP || Count != 1 || !(PRegNum & 0x1))) {
       Offset += Size;
       PRegNum = RegNum;
       ++Count;
