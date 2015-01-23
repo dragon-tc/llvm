@@ -273,7 +273,7 @@ def Krait2Itineraries : ProcessorItineraries<
   // Integer multiply pipeline
   // The latency and throughput of integer multiply and multiply accumulate
   // vary a lot. See Krait Code Generation Guidelines.
-  // - Assigning IIC_iMAC32, IIC_iMUL32, IIC_iMAC64, IIC_iMUL64, IIC_iMAC16, IIC_iMUL16
+  // - Assigning IIC_iDML32, IIC_iMUL32, IIC_iDML64, IIC_iMUL64, IIC_iMAC16, IIC_iMUL16
   //   the max latency and throughput  among all the instructions that use these itineraries
   // - New itineraries were created for the dual and dual long forms which
   //   had been originally defined with NoItinerary.
@@ -2492,10 +2492,15 @@ def Krait2Itineraries : ProcessorItineraries<
 // This following definitions describe the simple machine model which
 // will replace itineraries.
 
+class KRT2WriteLMOpsListType<list<WriteSequence> writes> {
+  list <WriteSequence> Writes = writes;
+  SchedMachineModel SchedModel = ?;
+}
+
 // Krait2 machine model for scheduling and other instruction cost heuristics.
 def Krait2Model : SchedMachineModel {
-  let IssueWidth = 3; // 3 micro-ops are dispatched per cycle.
-  let MicroOpBufferSize = 45; // Based on NEON renamed registers.
+  let IssueWidth = 4; // 3 micro-ops are dispatched per cycle.
+  let MicroOpBufferSize = 56; // Based on NEON renamed registers.
   let LoadLatency = 3;
   let MispredictPenalty = 14; // A branch direction mispredict.
 
@@ -2510,6 +2515,10 @@ let SchedModel = Krait2Model in {
   def KRT2UnitP1 : ProcResource<1> { let Super = KRT2UnitP01; } // Br unit.
   def KRT2UnitP2 : ProcResource<1>; // LS unit.
   def KRT2UnitDiv : ProcResource<1>;
+  def KRT2UnitAGU : ProcResource<1> { let BufferSize = 1; }
+  def KRT2UnitLS  : ProcResource<1>;
+  def KRT2UnitFP  : ProcResource<1> { let BufferSize = 0; }
+  def KRT2UnitB   : ProcResource<1>;
 
   // Generic resource requirements.
   def KRT2WriteP0OneCycle : SchedWriteRes<[KRT2UnitP0]>;
@@ -3488,5 +3497,581 @@ let SchedModel = Krait2Model in {
   def : WriteRes<WritePreLd, [KRT2UnitP2]> { let Latency = 0;
     let ResourceCycles = [0];
   }
+
+//===----------------------------------------------------------------------===//
+// Define scheduler read/write types with their resources and latency on Krait2.
+
+// Consume an issue slot, but no processor resources. This is useful when all
+// other writes associated with the operand have NumMicroOps = 0.
+def KRT2WriteIssue : SchedWriteRes<[]> { let Latency = 0; }
+
+// Write an integer register.
+def KRT2WriteI : SchedWriteRes<[KRT2UnitP01]>;
+// Write an integer shifted-by register
+def KRT2WriteIsr : SchedWriteRes<[KRT2UnitP01]> { let Latency = 2; }
+
+// Basic ALU.
+def KRT2WriteALU : SchedWriteRes<[KRT2UnitP01]>;
+// ALU with operand shifted by immediate.
+def : WriteRes<WriteALUsi, [KRT2UnitP01]> { let Latency = 2; }
+
+// Multiplication
+def KRT2WriteM   : SchedWriteRes<[KRT2UnitP0, KRT2UnitP0]> { let Latency = 4; }
+def KRT2WriteMHi : SchedWriteRes<[KRT2UnitP0]> { let Latency = 5;
+                                              let NumMicroOps = 0; }
+def KRT2WriteM16   : SchedWriteRes<[KRT2UnitP0]> { let Latency = 3; }
+def KRT2WriteM16Hi : SchedWriteRes<[KRT2UnitP0]> { let Latency = 4;
+                                                let NumMicroOps = 0; }
+
+// Floating-point
+// Only one FP or AGU instruction may issue per cycle. We model this
+// by having FP instructions consume the AGU resource.
+def KRT2WriteF      : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 4; }
+def KRT2WriteFMov   : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 1; }
+def KRT2WriteFMulS  : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 5; }
+def KRT2WriteFMulD  : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 6; }
+def KRT2WriteFMAS   : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 8; }
+def KRT2WriteFMAD   : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 9; }
+def KRT2WriteFDivS  : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 15; }
+def KRT2WriteFDivD  : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 25; }
+def KRT2WriteFSqrtS : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 17; }
+def KRT2WriteFSqrtD : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 32; }
+
+// NEON has an odd mix of latencies. Simply name the write types by latency.
+def KRT2WriteV1 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 1; }
+def KRT2WriteV2 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 2; }
+def KRT2WriteV3 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 3; }
+def KRT2WriteV4 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 4; }
+def KRT2WriteV5 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 5; }
+def KRT2WriteV6 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 6; }
+def KRT2WriteV7 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 7; }
+def KRT2WriteV9 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 9; }
+def KRT2WriteV10 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> { let Latency = 10; }
+
+// Reserve KRT2UnitFP for 2 consecutive cycles.
+def KRT2Write2V4 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> {
+  let Latency = 4;
+  let ResourceCycles = [2];
+}
+def KRT2Write2V7 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> {
+  let Latency = 7;
+  let ResourceCycles = [2];
+}
+def KRT2Write2V9 : SchedWriteRes<[KRT2UnitFP, KRT2UnitAGU]> {
+  let Latency = 9;
+  let ResourceCycles = [2];
+}
+
+// Branches don't have a def operand but still consume resources.
+def KRT2WriteB : SchedWriteRes<[KRT2UnitB]>;
+
+// Address generation.
+def KRT2WriteAdr : SchedWriteRes<[KRT2UnitAGU]> { let NumMicroOps = 0; }
+
+// Load Integer.
+def KRT2WriteL : SchedWriteRes<[KRT2UnitLS]> { let Latency = 3; }
+// Load the upper 32-bits using the same micro-op.
+def KRT2WriteLHi : SchedWriteRes<[]> { let Latency = 3;
+                                     let NumMicroOps = 0; }
+// Offset shifted by register.
+def KRT2WriteLsi : SchedWriteRes<[KRT2UnitLS]> { let Latency = 4; }
+// Load (and zero extend) a byte.
+def KRT2WriteLb : SchedWriteRes<[KRT2UnitLS]> { let Latency = 4; }
+def KRT2WriteLbsi : SchedWriteRes<[KRT2UnitLS]> { let Latency = 5; }
+
+// Load or Store Float, aligned.
+def KRT2WriteLSfp : SchedWriteRes<[KRT2UnitLS, KRT2UnitFP]> { let Latency = 1; }
+
+// Store Integer.
+def KRT2WriteS : SchedWriteRes<[KRT2UnitLS]>;
+
+//===----------------------------------------------------------------------===//
+// Define resources dynamically for load multiple variants.
+
+// Define helpers for extra latency without consuming resources.
+def KRT2WriteCycle1 : SchedWriteRes<[]> { let Latency = 1; let NumMicroOps = 0; }
+foreach NumCycles = 2-8 in {
+def KRT2WriteCycle#NumCycles : WriteSequence<[KRT2WriteCycle1], NumCycles>;
+} // foreach NumCycles
+
+// Define address generation sequences and predicates for 8 flavors of LDMs.
+foreach NumAddr = 1-8 in {
+
+// Define KRT2WriteAdr1-8 as a sequence of KRT2WriteAdr with additive
+// latency for instructions that generate multiple loads or stores.
+def KRT2WriteAdr#NumAddr : WriteSequence<[KRT2WriteAdr], NumAddr>;
+
+// Define a predicate to select the LDM based on number of memory addresses.
+def KRT2LMAdr#NumAddr#Pred :
+  SchedPredicate<"(TII->getNumLDMAddresses(MI)+1)/2 == "#NumAddr>;
+
+} // foreach NumAddr
+
+// Fall-back for unknown LDMs.
+def KRT2LMUnknownPred : SchedPredicate<"TII->getNumLDMAddresses(MI) == 0">;
+
+// LDM/VLDM/VLDn address generation latency & resources.
+// Dynamically select the KRT2WriteAdrN sequence using a predicate.
+def KRT2WriteLMAdr : SchedWriteVariant<[
+  SchedVar<KRT2LMAdr1Pred, [KRT2WriteAdr1]>,
+  SchedVar<KRT2LMAdr2Pred, [KRT2WriteAdr2]>,
+  SchedVar<KRT2LMAdr3Pred, [KRT2WriteAdr3]>,
+  SchedVar<KRT2LMAdr4Pred, [KRT2WriteAdr4]>,
+  SchedVar<KRT2LMAdr5Pred, [KRT2WriteAdr5]>,
+  SchedVar<KRT2LMAdr6Pred, [KRT2WriteAdr6]>,
+  SchedVar<KRT2LMAdr7Pred, [KRT2WriteAdr7]>,
+  SchedVar<KRT2LMAdr8Pred, [KRT2WriteAdr8]>,
+  // For unknown LDM/VLDM/VSTM, assume 2 32-bit registers.
+  SchedVar<KRT2LMUnknownPred, [KRT2WriteAdr2]>]>;
+
+// Define LDM Resources.
+// These take no issue resource, so they can be combined with other
+// writes like WriteB.
+// KRT2WriteLMLo takes a single LS resource and 2 cycles.
+def KRT2WriteLMLo : SchedWriteRes<[KRT2UnitLS]> { let Latency = 2;
+                                              let NumMicroOps = 0; }
+// Assuming aligned access, the upper half of each pair is free with
+// the same latency.
+def KRT2WriteLMHi : SchedWriteRes<[]> { let Latency = 2;
+                                      let NumMicroOps = 0; }
+// Each KRT2WriteL#N variant adds N cycles of latency without consuming
+// additional resources.
+foreach NumAddr = 1-8 in {
+def KRT2WriteL#NumAddr : WriteSequence<
+  [KRT2WriteLMLo, !cast<SchedWrite>("KRT2WriteCycle"#NumAddr)]>;
+def KRT2WriteL#NumAddr#Hi : WriteSequence<
+  [KRT2WriteLMHi, !cast<SchedWrite>("KRT2WriteCycle"#NumAddr)]>;
+}
+
+//===----------------------------------------------------------------------===//
+// LDM: Load multiple into 32-bit integer registers.
+
+def KRT2WriteLMOpsList : KRT2WriteLMOpsListType<
+                 [KRT2WriteL1, KRT2WriteL1Hi,
+                  KRT2WriteL2, KRT2WriteL2Hi,
+                  KRT2WriteL3, KRT2WriteL3Hi,
+                  KRT2WriteL4, KRT2WriteL4Hi,
+                  KRT2WriteL5, KRT2WriteL5Hi,
+                  KRT2WriteL6, KRT2WriteL6Hi,
+                  KRT2WriteL7, KRT2WriteL7Hi,
+                  KRT2WriteL8, KRT2WriteL8Hi]>;
+
+//===----------------------------------------------------------------------===//
+// VFP Load/Store Multiple Variants, and NEON VLDn/VSTn support.
+
+// KRT2WriteLfpOp is the same as KRT2WriteLSfp but takes no issue resources
+// so can be used in WriteSequences for in single-issue instructions that
+// encapsulate multiple loads.
+def KRT2WriteLfpOp : SchedWriteRes<[KRT2UnitLS, KRT2UnitFP]> {
+  let Latency = 1;
+  let NumMicroOps = 0;
+}
+
+foreach NumAddr = 1-8 in {
+
+// Helper for KRT2WriteLfp1-8: A sequence of fp loads with no micro-ops.
+def KRT2WriteLfp#NumAddr#Seq : WriteSequence<[KRT2WriteLfpOp], NumAddr>;
+
+// KRT2WriteLfp1-8 definitions are statically expanded into a sequence of
+// KRT2WriteLfpOps with additive latency that takes a single issue slot.
+// Used directly to describe NEON VLDn.
+def KRT2WriteLfp#NumAddr : WriteSequence<
+  [KRT2WriteIssue, !cast<SchedWrite>("KRT2WriteLfp"#NumAddr#Seq)]>;
+
+// KRT2WriteLfp1-8Mov adds a cycle of latency and FP resource for
+// permuting loaded values.
+def KRT2WriteLfp#NumAddr#Mov : WriteSequence<
+  [KRT2WriteF, !cast<SchedWrite>("KRT2WriteLfp"#NumAddr#Seq)]>;
+
+} // foreach NumAddr
+
+// Define VLDM/VSTM PreRA resources.
+// KRT2WriteLMfpPreRA are dynamically expanded into the correct
+// KRT2WriteLfp1-8 sequence based on a predicate. This supports the
+// preRA VLDM variants in which all 64-bit loads are written to the
+// same tuple of either single or double precision registers.
+def KRT2WriteLMfpPreRA : SchedWriteVariant<[
+  SchedVar<KRT2LMAdr1Pred, [KRT2WriteLfp1]>,
+  SchedVar<KRT2LMAdr2Pred, [KRT2WriteLfp2]>,
+  SchedVar<KRT2LMAdr3Pred, [KRT2WriteLfp3]>,
+  SchedVar<KRT2LMAdr4Pred, [KRT2WriteLfp4]>,
+  SchedVar<KRT2LMAdr5Pred, [KRT2WriteLfp5]>,
+  SchedVar<KRT2LMAdr6Pred, [KRT2WriteLfp6]>,
+  SchedVar<KRT2LMAdr7Pred, [KRT2WriteLfp7]>,
+  SchedVar<KRT2LMAdr8Pred, [KRT2WriteLfp8]>,
+  // For unknown VLDM/VSTM PreRA, assume 2xS registers.
+  SchedVar<KRT2LMUnknownPred, [KRT2WriteLfp2]>]>;
+
+// Define VLDM/VSTM PostRA Resources.
+// KRT2WriteLMfpLo takes a LS and FP resource and one issue slot but no latency.
+def KRT2WriteLMfpLo : SchedWriteRes<[KRT2UnitLS, KRT2UnitFP]> { let Latency = 0; }
+
+foreach NumAddr = 1-8 in {
+
+// Each KRT2WriteL#N variant adds N cycles of latency without consuming
+// additional resources.
+def KRT2WriteLMfp#NumAddr : WriteSequence<
+  [KRT2WriteLMfpLo, !cast<SchedWrite>("KRT2WriteCycle"#NumAddr)]>;
+
+// Assuming aligned access, the upper half of each pair is free with
+// the same latency.
+def KRT2WriteLMfp#NumAddr#Hi : WriteSequence<
+  [KRT2WriteLMHi, !cast<SchedWrite>("KRT2WriteCycle"#NumAddr)]>;
+
+} // foreach NumAddr
+
+// VLDM PostRA Variants. These variants expand KRT2WriteLMfpPostRA into a
+// pair of writes for each 64-bit data loaded. When the number of
+// registers is odd, the last WriteLMfpnHi is naturally ignored because
+// the instruction has no following def operands.
+
+def KRT2WriteLMfpPostRAOpsList : KRT2WriteLMOpsListType<
+                 [KRT2WriteLMfp1, KRT2WriteLMfp2,       // 0-1
+                  KRT2WriteLMfp3, KRT2WriteLMfp4,       // 2-3
+                  KRT2WriteLMfp5, KRT2WriteLMfp6,       // 4-5
+                  KRT2WriteLMfp7, KRT2WriteLMfp8,       // 6-7
+                  KRT2WriteLMfp1Hi,                   // 8-8
+                  KRT2WriteLMfp2Hi, KRT2WriteLMfp2Hi,   // 9-10
+                  KRT2WriteLMfp3Hi, KRT2WriteLMfp3Hi,   // 11-12
+                  KRT2WriteLMfp4Hi, KRT2WriteLMfp4Hi,   // 13-14
+                  KRT2WriteLMfp5Hi, KRT2WriteLMfp5Hi,   // 15-16
+                  KRT2WriteLMfp6Hi, KRT2WriteLMfp6Hi,   // 17-18
+                  KRT2WriteLMfp7Hi, KRT2WriteLMfp7Hi,   // 19-20
+                  KRT2WriteLMfp8Hi, KRT2WriteLMfp8Hi]>; // 21-22
+
+def KRT2WriteLMfpPostRA : SchedWriteVariant<[
+  SchedVar<KRT2LMAdr1Pred, KRT2WriteLMfpPostRAOpsList.Writes[0-0, 8-8]>,
+  SchedVar<KRT2LMAdr2Pred, KRT2WriteLMfpPostRAOpsList.Writes[0-1, 9-10]>,
+  SchedVar<KRT2LMAdr3Pred, KRT2WriteLMfpPostRAOpsList.Writes[0-2, 10-12]>,
+  SchedVar<KRT2LMAdr4Pred, KRT2WriteLMfpPostRAOpsList.Writes[0-3, 11-14]>,
+  SchedVar<KRT2LMAdr5Pred, KRT2WriteLMfpPostRAOpsList.Writes[0-4, 12-16]>,
+  SchedVar<KRT2LMAdr6Pred, KRT2WriteLMfpPostRAOpsList.Writes[0-5, 13-18]>,
+  SchedVar<KRT2LMAdr7Pred, KRT2WriteLMfpPostRAOpsList.Writes[0-6, 14-20]>,
+  SchedVar<KRT2LMAdr8Pred, KRT2WriteLMfpPostRAOpsList.Writes[0-7, 15-22]>,
+  // For unknown LDMs, define the maximum number of writes, but only
+  // make the first two consume resources. We are optimizing for the case
+  // where the operands are DPRs, and this determines the first eight
+  // types. The remaining eight types are filled to cover the case
+  // where the operands are SPRs.
+  SchedVar<KRT2LMUnknownPred, [KRT2WriteLMfp1, KRT2WriteLMfp2,
+                             KRT2WriteLMfp3Hi, KRT2WriteLMfp4Hi,
+                             KRT2WriteLMfp5Hi, KRT2WriteLMfp6Hi,
+                             KRT2WriteLMfp7Hi, KRT2WriteLMfp8Hi,
+                             KRT2WriteLMfp5Hi, KRT2WriteLMfp5Hi,
+                             KRT2WriteLMfp6Hi, KRT2WriteLMfp6Hi,
+                             KRT2WriteLMfp7Hi, KRT2WriteLMfp7Hi,
+                             KRT2WriteLMfp8Hi, KRT2WriteLMfp8Hi]>]> {
+  let Variadic = 1;
+}
+
+// Distinguish between our multiple MI-level forms of the same
+// VLDM/VSTM instructions.
+def KRT2PreRA : SchedPredicate<
+  "TargetRegisterInfo::isVirtualRegister(MI->getOperand(0).getReg())">;
+def KRT2PostRA : SchedPredicate<
+  "TargetRegisterInfo::isPhysicalRegister(MI->getOperand(0).getReg())">;
+
+// VLDM represents all destination registers as a single register
+// tuple, unlike LDM. So the number of write operands is not variadic.
+def KRT2WriteLMfp : SchedWriteVariant<[
+  SchedVar<KRT2PreRA, [KRT2WriteLMfpPreRA]>,
+  SchedVar<KRT2PostRA, [KRT2WriteLMfpPostRA]>]>;
+
+//===----------------------------------------------------------------------===//
+// Resources for other (non-LDM/VLDM) Variants.
+
+// These mov immediate writers are unconditionally expanded with
+// additive latency.
+def KRT2WriteI2 : WriteSequence<[KRT2WriteI, KRT2WriteI]>;
+def KRT2WriteI2pc : WriteSequence<[KRT2WriteI, KRT2WriteI, WriteALU]>;
+def KRT2WriteI2ld  : WriteSequence<[KRT2WriteI, KRT2WriteI, KRT2WriteL]>;
+
+// Some ALU operations can read loaded integer values one cycle early.
+def KRT2ReadALU : SchedReadAdvance<1,
+  [KRT2WriteL, KRT2WriteLHi, KRT2WriteLsi, KRT2WriteLb, KRT2WriteLbsi,
+   KRT2WriteL1, KRT2WriteL2, KRT2WriteL3, KRT2WriteL4,
+   KRT2WriteL5, KRT2WriteL6, KRT2WriteL7, KRT2WriteL8,
+   KRT2WriteL1Hi, KRT2WriteL2Hi, KRT2WriteL3Hi, KRT2WriteL4Hi,
+   KRT2WriteL5Hi, KRT2WriteL6Hi, KRT2WriteL7Hi, KRT2WriteL8Hi]>;
+
+// Read types for operands that are unconditionally read in cycle N
+// after the instruction issues, decreases producer latency by N-1.
+def KRT2Read2 : SchedReadAdvance<1>;
+def KRT2Read3 : SchedReadAdvance<2>;
+def KRT2Read4 : SchedReadAdvance<3>;
+
+
+//===----------------------------------------------------------------------===//
+// Map itinerary classes to scheduler read/write resources per operand.
+//
+// For ARM, we piggyback scheduler resources on the Itinerary classes
+// to avoid perturbing the existing instruction definitions.
+
+// This table follows the ARM Cortex-A9 Technical Reference Manuals,
+// mostly in order.
+
+def :ItinRW<[WriteALU], [IIC_iMOVi,IIC_iMOVr,IIC_iMOVsi,
+                         IIC_iMVNi,IIC_iMVNsi,
+                         IIC_iCMOVi,IIC_iCMOVr,IIC_iCMOVsi]>;
+def :ItinRW<[WriteALU, KRT2ReadALU],[IIC_iMVNr]>;
+def :ItinRW<[KRT2WriteIsr], [IIC_iMOVsr,IIC_iMVNsr,IIC_iCMOVsr]>;
+
+def :ItinRW<[KRT2WriteI2],   [IIC_iMOVix2,IIC_iCMOVix2]>;
+def :ItinRW<[KRT2WriteI2pc], [IIC_iMOVix2addpc]>;
+def :ItinRW<[KRT2WriteI2ld], [IIC_iMOVix2ld]>;
+
+def :ItinRW<[WriteALU], [IIC_iBITi,IIC_iBITr,IIC_iUNAr,IIC_iTSTi,IIC_iTSTr]>;
+def :ItinRW<[WriteALU, KRT2ReadALU], [IIC_iALUi, IIC_iCMPi, IIC_iCMPsi]>;
+def :ItinRW<[WriteALU, KRT2ReadALU, KRT2ReadALU],[IIC_iDIV32,IIC_iCMPr]>;
+def :ItinRW<[WriteALUsi], [IIC_iBITsi,IIC_iUNAsi,IIC_iEXTr,IIC_iTSTsi]>;
+def :ItinRW<[WriteALUsi, KRT2ReadALU], [IIC_iALUsi]>;
+def :ItinRW<[WriteALUsi, ReadDefault, KRT2ReadALU], [IIC_iALUsir]>; // RSB
+def :ItinRW<[KRT2WriteALUsr], [IIC_iBITsr,IIC_iTSTsr,IIC_iEXTAr,IIC_iEXTAsr]>;
+def :ItinRW<[KRT2WriteALUsr, KRT2ReadALU], [IIC_iALUsr,IIC_iCMPsr]>;
+
+// KRT2WriteHi ignored for MUL32.
+def :ItinRW<[KRT2WriteM, KRT2WriteMHi], [IIC_iMUL32,IIC_iDML32,
+                                     IIC_iMUL64,IIC_iDML64]>;
+// FIXME: SMLALxx needs itin classes
+def :ItinRW<[KRT2WriteM16, KRT2WriteM16Hi], [IIC_iMUL16,IIC_iMAC16]>;
+
+// TODO: For floating-point ops, we model the pipeline forwarding
+// latencies here. WAW latencies are sometimes longer.
+
+def :ItinRW<[KRT2WriteFMov], [IIC_fpSTAT, IIC_fpMOVIS, IIC_fpMOVID, IIC_fpMOVSI,
+                            IIC_fpUNA32, IIC_fpUNA64,
+                            IIC_fpCMP32, IIC_fpCMP64]>;
+def :ItinRW<[KRT2WriteFMov, KRT2WriteFMov], [IIC_fpMOVDI]>;
+def :ItinRW<[KRT2WriteF], [IIC_fpCVTSD, IIC_fpCVTDS, IIC_fpCVTSH, IIC_fpCVTHS,
+                         IIC_fpCVTIS, IIC_fpCVTID, IIC_fpCVTSI, IIC_fpCVTDI,
+                         IIC_fpALU32, IIC_fpALU64]>;
+def :ItinRW<[KRT2WriteFMulS], [IIC_fpMUL32]>;
+def :ItinRW<[KRT2WriteFMulD], [IIC_fpMUL64]>;
+def :ItinRW<[KRT2WriteFMAS], [IIC_fpMAC32]>;
+def :ItinRW<[KRT2WriteFMAD], [IIC_fpMAC64]>;
+def :ItinRW<[KRT2WriteFDivS], [IIC_fpDIV32]>;
+def :ItinRW<[KRT2WriteFDivD], [IIC_fpDIV64]>;
+def :ItinRW<[KRT2WriteFSqrtS], [IIC_fpSQRT32]>;
+def :ItinRW<[KRT2WriteFSqrtD], [IIC_fpSQRT64]>;
+
+def :ItinRW<[KRT2WriteB], [IIC_Br]>;
+
+// A9 PLD is processed in a dedicated unit.
+def :ItinRW<[], [IIC_Preload]>;
+
+// Note: We must assume that loads are aligned, since the machine
+// model cannot know this statically and A9 ignores alignment hints.
+
+// KRT2WriteAdr consumes AGU regardless address writeback. But it's
+// latency is only relevant for users of an updated address.
+def :ItinRW<[KRT2WriteL, KRT2WriteAdr], [IIC_iLoad_i,IIC_iLoad_r,
+                                     IIC_iLoad_iu,IIC_iLoad_ru]>;
+def :ItinRW<[KRT2WriteLsi, KRT2WriteAdr], [IIC_iLoad_si,IIC_iLoad_siu]>;
+def :ItinRW<[KRT2WriteLb, KRT2WriteAdr2], [IIC_iLoad_bh_i,IIC_iLoad_bh_r,
+                                       IIC_iLoad_bh_iu,IIC_iLoad_bh_ru]>;
+def :ItinRW<[KRT2WriteLbsi, KRT2WriteAdr2], [IIC_iLoad_bh_si,IIC_iLoad_bh_siu]>;
+def :ItinRW<[KRT2WriteL, KRT2WriteLHi, KRT2WriteAdr], [IIC_iLoad_d_i,IIC_iLoad_d_r,
+                                            IIC_iLoad_d_ru]>;
+// Store either has no def operands, or the one def for address writeback.
+def :ItinRW<[KRT2WriteAdr, KRT2WriteS], [IIC_iStore_i, IIC_iStore_r,
+                                     IIC_iStore_iu, IIC_iStore_ru,
+                                     IIC_iStore_d_i, IIC_iStore_d_r,
+                                     IIC_iStore_d_ru]>;
+def :ItinRW<[KRT2WriteAdr2, KRT2WriteS], [IIC_iStore_si, IIC_iStore_siu,
+                                      IIC_iStore_bh_i, IIC_iStore_bh_r,
+                                      IIC_iStore_bh_iu, IIC_iStore_bh_ru]>;
+def :ItinRW<[KRT2WriteAdr3, KRT2WriteS], [IIC_iStore_bh_si, IIC_iStore_bh_siu]>;
+
+// KRT2WriteML will be expanded into a separate write for each def
+// operand. Address generation consumes resources, but KRT2WriteLMAdr
+// is listed after all def operands, so has no effective latency.
+//
+// Note: KRT2WriteLM expands into an even number of def operands. The
+// actual number of def operands may be less by one.
+def :ItinRW<[KRT2WriteLM, KRT2WriteLMAdr, KRT2WriteIssue], [IIC_iLoad_m, IIC_iPop]>;
+
+// Load multiple with address writeback has an extra def operand in
+// front of the loaded registers.
+//
+// Reuse the load-multiple variants for store-multiple because the
+// resources are identical, For stores only the address writeback
+// has a def operand so the WriteL latencies are unused.
+def :ItinRW<[KRT2WriteLMAdr, KRT2WriteLM, KRT2WriteIssue], [IIC_iLoad_mu,
+                                                      IIC_iStore_m,
+                                                      IIC_iStore_mu]>;
+def :ItinRW<[KRT2WriteLM, KRT2WriteLMAdr, KRT2WriteB], [IIC_iLoad_mBr, IIC_iPop_Br]>;
+def :ItinRW<[KRT2WriteL, KRT2WriteAdr, WriteALU], [IIC_iLoadiALU]>;
+
+def :ItinRW<[KRT2WriteLSfp, KRT2WriteAdr], [IIC_fpLoad32, IIC_fpLoad64]>;
+
+def :ItinRW<[KRT2WriteLMfp, KRT2WriteLMAdr], [IIC_fpLoad_m]>;
+def :ItinRW<[KRT2WriteLMAdr, KRT2WriteLMfp], [IIC_fpLoad_mu]>;
+def :ItinRW<[KRT2WriteAdr, KRT2WriteLSfp], [IIC_fpStore32, IIC_fpStore64,
+                                        IIC_fpStore_m, IIC_fpStore_mu]>;
+
+// Note: Unlike VLDM, VLD1 expects the writeback operand after the
+// normal writes.
+def :ItinRW<[KRT2WriteLfp1, KRT2WriteAdr1], [IIC_VLD1, IIC_VLD1u,
+                                         IIC_VLD1x2, IIC_VLD1x2u]>;
+def :ItinRW<[KRT2WriteLfp2, KRT2WriteAdr2], [IIC_VLD1x3, IIC_VLD1x3u,
+                                         IIC_VLD1x4, IIC_VLD1x4u,
+                                         IIC_VLD4dup, IIC_VLD4dupu]>;
+def :ItinRW<[KRT2WriteLfp1Mov, KRT2WriteAdr1], [IIC_VLD1dup, IIC_VLD1dupu,
+                                            IIC_VLD2, IIC_VLD2u,
+                                            IIC_VLD2dup, IIC_VLD2dupu]>;
+def :ItinRW<[KRT2WriteLfp2Mov, KRT2WriteAdr1], [IIC_VLD1ln, IIC_VLD1lnu,
+                                            IIC_VLD2x2, IIC_VLD2x2u,
+                                            IIC_VLD2ln, IIC_VLD2lnu]>;
+def :ItinRW<[KRT2WriteLfp3Mov, KRT2WriteAdr3], [IIC_VLD3, IIC_VLD3u,
+                                            IIC_VLD3dup, IIC_VLD3dupu]>;
+def :ItinRW<[KRT2WriteLfp4Mov, KRT2WriteAdr4], [IIC_VLD4, IIC_VLD4u,
+                                            IIC_VLD4ln, IIC_VLD4lnu]>;
+def :ItinRW<[KRT2WriteLfp5Mov, KRT2WriteAdr5], [IIC_VLD3ln, IIC_VLD3lnu]>;
+
+// Vector stores use similar resources to vector loads, so use the
+// same write types. The address write must be first for stores with
+// address writeback.
+def :ItinRW<[KRT2WriteAdr1, KRT2WriteLfp1], [IIC_VST1, IIC_VST1u,
+                                         IIC_VST1x2, IIC_VST1x2u,
+                                         IIC_VST1ln, IIC_VST1lnu,
+                                         IIC_VST2, IIC_VST2u,
+                                         IIC_VST2x2, IIC_VST2x2u,
+                                         IIC_VST2ln, IIC_VST2lnu]>;
+def :ItinRW<[KRT2WriteAdr2, KRT2WriteLfp2], [IIC_VST1x3, IIC_VST1x3u,
+                                         IIC_VST1x4, IIC_VST1x4u,
+                                         IIC_VST3, IIC_VST3u,
+                                         IIC_VST3ln, IIC_VST3lnu,
+                                         IIC_VST4, IIC_VST4u,
+                                         IIC_VST4ln, IIC_VST4lnu]>;
+
+// NEON moves.
+def :ItinRW<[KRT2WriteV2], [IIC_VMOVSI, IIC_VMOVDI, IIC_VREVD, IIC_VREVQ]>;
+def :ItinRW<[KRT2WriteV1], [IIC_VMOV, IIC_VMOVIS, IIC_VMOVID]>;
+def :ItinRW<[KRT2WriteV3], [IIC_VMOVISL, IIC_VMOVN]>;
+
+// NEON integer arithmetic
+//
+// VADD/VAND/VORR/VEOR/VBIC/VORN/VBIT/VBIF/VBSL
+def :ItinRW<[KRT2WriteV3, KRT2Read2, KRT2Read2], [IIC_VADDiD, IIC_VADDiQ]>;
+// VSUB/VMVN/VCLSD/VCLZD/VCNTD
+def :ItinRW<[KRT2WriteV3, KRT2Read2], [IIC_VSUBiQ, IIC_VSUBiQ, IIC_VCNTi2D]>;
+// VADDL/VSUBL/VNEG are mapped later under IIC_SHLi.
+// ...
+// VHADD/VRHADD/VQADD/VTST/VADH/VRADH
+def :ItinRW<[KRT2WriteV4, KRT2Read2, KRT2Read2], [IIC_VBINi4D, IIC_VBINi4Q]>;
+
+// VSBH/VRSBH/VHSUB/VQSUB/VABD/VCEQ/VCGE/VCGT/VMAX/VMIN/VPMAX/VPMIN/VABDL
+def :ItinRW<[KRT2WriteV4, KRT2Read2], [IIC_VBINi2D, IIC_VBINi2Q]>;
+// VQNEG/VQABS
+def :ItinRW<[KRT2WriteV4], [IIC_VQUNAiD, IIC_VQUNAiQ]>;
+// VABS
+def :ItinRW<[KRT2WriteV4, KRT2Read2], [IIC_VUNAiD, IIC_VUNAiQ]>;
+// VPADD/VPADDL are mapped later under IIC_SHLi.
+// ...
+// VCLSQ/VCLZQ/VCNTQ, takes two cycles.
+def :ItinRW<[KRT2Write2V4, KRT2Read3], [IIC_VCNTi2Q]>;
+// VMOVimm/VMVNimm/VORRimm/VBICimm
+def :ItinRW<[KRT2WriteV3], [IIC_VMOVImm]>;
+def :ItinRW<[KRT2WriteV6, KRT2Read3, KRT2Read2], [IIC_VABAD, IIC_VABAQ]>;
+def :ItinRW<[KRT2WriteV6, KRT2Read3], [IIC_VPALiD, IIC_VPALiQ]>;
+
+// NEON integer multiply
+//
+// Note: these don't quite match the timing docs, but they do match
+// the original A9 itinerary.
+def :ItinRW<[KRT2WriteV6, KRT2Read2, KRT2Read2], [IIC_VMULi16D]>;
+def :ItinRW<[KRT2WriteV7, KRT2Read2, KRT2Read2], [IIC_VMULi16Q]>;
+def :ItinRW<[KRT2Write2V7, KRT2Read2], [IIC_VMULi32D]>;
+def :ItinRW<[KRT2Write2V9, KRT2Read2], [IIC_VMULi32Q]>;
+def :ItinRW<[KRT2WriteV6, KRT2Read3, KRT2Read2, KRT2Read2], [IIC_VMACi16D]>;
+def :ItinRW<[KRT2WriteV7, KRT2Read3, KRT2Read2, KRT2Read2], [IIC_VMACi16Q]>;
+def :ItinRW<[KRT2Write2V7, KRT2Read3, KRT2Read2], [IIC_VMACi32D]>;
+def :ItinRW<[KRT2Write2V9, KRT2Read3, KRT2Read2], [IIC_VMACi32Q]>;
+
+// NEON integer shift
+// TODO: Q,Q,Q shifts should actually reserve FP for 2 cycles.
+def :ItinRW<[KRT2WriteV3], [IIC_VSHLiD, IIC_VSHLiQ]>;
+def :ItinRW<[KRT2WriteV4], [IIC_VSHLi4D, IIC_VSHLi4Q]>;
+
+// NEON permute
+def :ItinRW<[KRT2WriteV2, KRT2WriteV2], [IIC_VPERMD, IIC_VPERMQ, IIC_VEXTD]>;
+def :ItinRW<[KRT2WriteV3, KRT2WriteV4, ReadDefault, KRT2Read2],
+            [IIC_VPERMQ3, IIC_VEXTQ]>;
+def :ItinRW<[KRT2WriteV3, KRT2Read2], [IIC_VTB1]>;
+def :ItinRW<[KRT2WriteV3, KRT2Read2, KRT2Read2], [IIC_VTB2]>;
+def :ItinRW<[KRT2WriteV4, KRT2Read2, KRT2Read2, KRT2Read3], [IIC_VTB3]>;
+def :ItinRW<[KRT2WriteV4, KRT2Read2, KRT2Read2, KRT2Read3, KRT2Read3], [IIC_VTB4]>;
+def :ItinRW<[KRT2WriteV3, ReadDefault, KRT2Read2], [IIC_VTBX1]>;
+def :ItinRW<[KRT2WriteV3, ReadDefault, KRT2Read2, KRT2Read2], [IIC_VTBX2]>;
+def :ItinRW<[KRT2WriteV4, ReadDefault, KRT2Read2, KRT2Read2, KRT2Read3], [IIC_VTBX3]>;
+def :ItinRW<[KRT2WriteV4, ReadDefault, KRT2Read2, KRT2Read2, KRT2Read3, KRT2Read3],
+            [IIC_VTBX4]>;
+
+// NEON floating-point
+def :ItinRW<[KRT2WriteV5, KRT2Read2, KRT2Read2], [IIC_VADDD]>;
+def :ItinRW<[KRT2WriteV6, KRT2Read2, KRT2Read2], [IIC_VADDQ]>;
+def :ItinRW<[KRT2WriteV5, KRT2Read2], [IIC_VUNA1D, IIC_VFMULD]>;
+def :ItinRW<[KRT2WriteV6, KRT2Read2], [IIC_VUNA1Q, IIC_VFMULQ]>;
+def :ItinRW<[KRT2WriteV9, KRT2Read3, KRT2Read2], [IIC_VMACD, IIC_VFMACD]>;
+def :ItinRW<[KRT2WriteV10, KRT2Read3, KRT2Read2], [IIC_VMACQ, IIC_VFMACQ]>;
+def :ItinRW<[KRT2WriteV9, KRT2Read2, KRT2Read2], [IIC_VRECSD]>;
+def :ItinRW<[KRT2WriteV10, KRT2Read2, KRT2Read2], [IIC_VRECSQ]>;
+
+// Map SchedRWs that are identical for cortexa9 to existing resources.
+def : SchedAlias<WriteALU, KRT2WriteALU>;
+def : SchedAlias<WriteALUsr, KRT2WriteALUsr>;
+def : SchedAlias<WriteALUSsr, KRT2WriteALUsr>;
+def : SchedAlias<ReadALU, KRT2ReadALU>;
+def : SchedAlias<ReadALUsr, KRT2ReadALU>;
+def : InstRW< [WriteALU],
+      (instregex "ANDri", "ORRri", "EORri", "BICri", "ANDrr", "ORRrr", "EORrr",
+                 "BICrr")>;
+def : InstRW< [WriteALUsi], (instregex "ANDrsi", "ORRrsi", "EORrsi", "BICrsi")>;
+def : InstRW< [WriteALUsr], (instregex "ANDrsr", "ORRrsr", "EORrsr", "BICrsr")>;
+
+
+def : SchedAlias<WriteCMP, KRT2WriteALU>;
+def : SchedAlias<WriteCMPsi, KRT2WriteALU>;
+def : SchedAlias<WriteCMPsr, KRT2WriteALU>;
+
+def : InstRW< [KRT2WriteIsr], (instregex "MOVsr", "MOVsi", "MVNsr", "MOVCCsi",
+                                       "MOVCCsr")>;
+def : InstRW< [WriteALU, KRT2ReadALU], (instregex "MVNr")>;
+def : InstRW< [KRT2WriteI2], (instregex "MOVCCi32imm", "MOVi32imm",
+                                      "MOV_ga_dyn")>;
+def : InstRW< [KRT2WriteI2pc], (instregex "MOV_ga_pcrel")>;
+def : InstRW< [KRT2WriteI2ld], (instregex "MOV_ga_pcrel_ldr")>;
+
+def : InstRW< [WriteALU], (instregex "SEL")>;
+
+def : InstRW< [WriteALUsi], (instregex "BFC", "BFI", "UBFX", "SBFX")>;
+
+def : InstRW< [KRT2WriteM],
+      (instregex "MUL", "MULv5", "SMMUL", "SMMULR", "MLA", "MLAv5", "MLS",
+      "SMMLA", "SMMLAR", "SMMLS", "SMMLSR")>;
+def : InstRW< [KRT2WriteM, KRT2WriteMHi],
+      (instregex "SMULL", "SMULLv5", "UMULL", "UMULLv5", "SMLAL$", "UMLAL",
+      "UMAAL", "SMLALv5", "UMLALv5", "UMAALv5", "SMLALBB", "SMLALBT", "SMLALTB",
+      "SMLALTT")>;
+// FIXME: These instructions used to have NoItinerary. Just copied the one from above.
+def : InstRW< [KRT2WriteM, KRT2WriteMHi],
+      (instregex "SMLAD", "SMLADX", "SMLALD", "SMLALDX", "SMLSD", "SMLSDX",
+      "SMLSLD", "SMLLDX", "SMUAD", "SMUADX", "SMUSD", "SMUSDX")>;
+
+def : InstRW<[KRT2WriteM16, KRT2WriteM16Hi],
+      (instregex "SMULBB", "SMULBT", "SMULTB", "SMULTT", "SMULWB", "SMULWT")>;
+def : InstRW<[KRT2WriteM16, KRT2WriteM16Hi],
+      (instregex "SMLABB", "SMLABT", "SMLATB", "SMLATT", "SMLAWB", "SMLAWT")>;
+
+def : InstRW<[KRT2WriteL], (instregex "LDRi12", "PICLDR$")>;
+def : InstRW<[KRT2WriteLsi], (instregex "LDRrs")>;
+def : InstRW<[KRT2WriteLb],
+      (instregex "LDRBi12", "PICLDRH", "PICLDRB", "PICLDRSH", "PICLDRSB",
+      "LDRH", "LDRSH", "LDRSB")>;
+def : InstRW<[KRT2WriteLbsi], (instregex "LDRrs")>;
+
+def : WriteRes<WriteDiv, []> { let Latency = 0; }
+
+def : SchedAlias<WriteCvtFP, KRT2WriteF>;
 
 }
