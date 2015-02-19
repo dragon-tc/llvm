@@ -219,6 +219,7 @@ static int compileModule(char **argv, LLVMContext &Context) {
   std::unique_ptr<Module> M;
   Module *mod = nullptr;
   Triple TheTriple;
+  Triple OrigTriple;
 
   bool SkipModule = MCPU == "help" ||
                     (!MAttrs.empty() && MAttrs.front() == "help");
@@ -237,6 +238,8 @@ static int compileModule(char **argv, LLVMContext &Context) {
       Err.print(argv[0], errs());
       return 1;
     }
+
+    OrigTriple.setTriple(mod->getTargetTriple());
 
     // If we are supposed to override the target triple, do so now.
     if (!TargetTriple.empty())
@@ -301,6 +304,13 @@ static int compileModule(char **argv, LLVMContext &Context) {
 
   if (GenerateSoftFloatCalls)
     FloatABIForCalls = FloatABI::Soft;
+
+  if (OrigTriple.getOS() == llvm::Triple::NDK) {
+    if (OrigTriple.getArch() == llvm::Triple::le32 ||
+        OrigTriple.getArch() == llvm::Triple::le64) {
+      Target.Options.MCOptions.MCNoExecStack = true;
+    }
+  }
 
   // Figure out where we are going to send the output.
   std::unique_ptr<tool_output_file> Out(

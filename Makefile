@@ -112,6 +112,7 @@ cross-compile-build-tools:
 	  cd BuildTools ; \
 	  unset CFLAGS ; \
 	  unset CXXFLAGS ; \
+	  unset LDFLAGS ; \
 	  AR=$(BUILD_AR) ; \
 	  AS=$(BUILD_AS) ; \
 	  LD=$(BUILD_LD) ; \
@@ -293,3 +294,7 @@ else # Building "Apple-style."
 # Look for the string "Apple-style" in utils/buildit/build_llvm.
 include $(shell find . -name GNUmakefile) # Building "Apple-style."
 endif # Building "Apple-style."
+
+ifeq ($(LLVM_CROSS_COMPILING),1)
+  DIRS := $(filter-out unittests, $(DIRS))
+endif

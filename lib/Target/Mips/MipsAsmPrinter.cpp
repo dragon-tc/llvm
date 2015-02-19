@@ -42,6 +42,7 @@
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ELF.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
@@ -52,6 +53,8 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "mips-asm-printer"
+
+cl::opt<bool> NoNanDirective("mips-no-nan-directive", cl::init(false));
 
 MipsTargetStreamer &MipsAsmPrinter::getTargetStreamer() {
   return static_cast<MipsTargetStreamer &>(*OutStreamer.getTargetStreamer());
@@ -687,8 +690,9 @@ void MipsAsmPrinter::EmitStartOfAsmFile(Module &M) {
   // NaN: At the moment we only support:
   // 1. .nan legacy (default)
   // 2. .nan 2008
-  Subtarget->isNaN2008() ? getTargetStreamer().emitDirectiveNaN2008()
-    : getTargetStreamer().emitDirectiveNaNLegacy();
+  if (!NoNanDirective)
+    Subtarget->isNaN2008() ? getTargetStreamer().emitDirectiveNaN2008()
+      : getTargetStreamer().emitDirectiveNaNLegacy();
 
   // TODO: handle O64 ABI
 

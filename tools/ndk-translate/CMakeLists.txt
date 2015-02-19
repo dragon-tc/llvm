@@ -1,0 +1,26 @@
+set(LLVM_LINK_COMPONENTS
+  asmparser
+  bitreader
+  bitwriter
+  codegen
+  instrumentation
+  ipo
+  irreader
+  linker
+  selectiondag
+  )
+
+add_llvm_tool(ndk-translate
+  ARMExpandVAArg.cpp
+  ARMReplaceUnwindHeaderSize.cpp
+  Arm64ExpandVAArg.cpp
+  ExpandVAArgPass.cpp
+  MipsExpandVAArg.cpp
+  MipsReplaceUnwindHeaderSize.cpp
+  Mips64ExpandVAArg.cpp
+  ReplaceUnwindHeaderSizePass.cpp
+  X86ExpandVAArg.cpp
+  X86ReplaceUnwindHeaderSize.cpp
+  X86_64ExpandVAArg.cpp
+  ndk-translate.cpp
+  )

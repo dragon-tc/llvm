@@ -718,8 +718,13 @@ LLVM_ENUM_TARGETS
 LLVM_ENUM_ASM_PRINTERS
 LLVM_ENUM_ASM_PARSERS
 LLVM_ENUM_DISASSEMBLERS
+ENABLE_SHRINK_BINARY_SIZE
 OPTIMIZE_OPTION
+DATA_SECTIONS
+FUNCTION_SECTIONS
+VISIBILITY_INLINES_HIDDEN
 EXTRA_OPTIONS
+GC_SECTIONS
 EXTRA_LD_OPTIONS
 CLANG_SRC_ROOT
 BINUTILS_INCDIR
@@ -1442,6 +1447,8 @@ Optional Features:
   --enable-experimental-targets
                           Build experimental host targets: disable or
                           target1,target2,... (default=disable)
+  --enable-shrink-binary-size
+                          Shrink LLVM toolchain size (default is NO)
   --enable-bindings       Build specific language bindings:
                           all,auto,none,{binding-name} (default=auto)
   --enable-terminfo       Query the terminfo database if available (default is
@@ -4166,8 +4173,10 @@ case "$llvm_cv_target_arch" in
     *)       LLVM_NATIVE_ARCH="$llvm_cv_target_arch" ;;
 esac
 
-ARCH=$llvm_cv_target_arch
+if test -z "$ARCH" ; then
+  ARCH=$llvm_cv_target_arch
 
+fi
 LLVM_NATIVE_ARCH=$LLVM_NATIVE_ARCH
 
 
@@ -4345,7 +4354,10 @@ fi
   test -z "$BUILD_CC" && { { echo "$as_me:$LINENO: error: no acceptable cc found in \$PATH" >&5
 echo "$as_me: error: no acceptable cc found in \$PATH" >&2;}
    { (exit 1); exit 1; }; }
-  ac_build_link='${BUILD_CC-cc} -o conftest $CFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $LIBS 1>&5'
+  test -z "$CFLAGS_FOR_BUILD" && CFLAGS_FOR_BUILD="$CFLAGS $CPPFLAGS"
+  test -z "$LDFLAGS_FOR_BUILD" && LDFLAGS_FOR_BUILD="$LDFLAGS"
+  ac_build_link='${BUILD_CC-cc} -o conftest $CFLAGS_FOR_BUILD $LDFLAGS_FOR_BUILD conftest.$ac_ext $LIBS 1>&5'
+
   rm -f conftest*
   echo 'int main () { return 0; }' > conftest.$ac_ext
   ac_cv_build_exeext=
@@ -5467,6 +5479,22 @@ done
 
 
 
+# Check whether --enable-shrink-binary-size was given.
+if test "${enable_shrink_binary_size+set}" = set; then
+  enableval=$enable_shrink_binary_size;
+else
+  enableval="no"
+fi
+
+
+if test ${enableval} = "no" ; then
+  ENABLE_SHRINK_BINARY_SIZE=0
+
+else
+  ENABLE_SHRINK_BINARY_SIZE=1
+
+fi
+
 
 # Check whether --with-optimize-option was given.
 if test "${with_optimize_option+set}" = set; then
@@ -5486,6 +5514,11 @@ case "$withval" in
     esac ;;
   *) optimize_option="$withval" ;;
 esac
+
+if test "$ENABLE_SHRINK_BINARY_SIZE" = "1"; then
+  optimize_option="$optimize_option -Os"
+fi
+
 OPTIMIZE_OPTION=$optimize_option
 
 { echo "$as_me:$LINENO: result: $optimize_option" >&5
@@ -5503,6 +5536,20 @@ case "$withval" in
   default) EXTRA_OPTIONS= ;;
   *) EXTRA_OPTIONS=$withval ;;
 esac
+
+{ echo "$as_me:$LINENO: checking binary size reduction compiler flags" >&5
+echo $ECHO_N "checking binary size reduction compiler flags... $ECHO_C" >&6; }
+DATA_SECTIONS=`$CXX -Werror -fdata-sections -fsyntax-only -xc /dev/null 2>/dev/null && echo -fdata-sections`
+
+FUNCTION_SECTIONS=`$CXX -Werror -ffunction-sections -fsyntax-only -xc /dev/null 2>/dev/null && echo -ffunction-sections`
+
+VISIBILITY_INLINES_HIDDEN=`$CXX -Werror -fvisibility-inlines-hidden -fsyntax-only -xc /dev/null 2>/dev/null && echo -fvisibility-inlines-hidden`
+
+
+if test "$ENABLE_SHRINK_BINARY_SIZE" = "1"; then
+  EXTRA_OPTIONS="$EXTRA_OPTIONS $DATA_SECTIONS $FUNCTION_SECTIONS $VISIBILITY_INLINES_HIDDEN"
+fi
+
 EXTRA_OPTIONS=$EXTRA_OPTIONS
 
 
@@ -5518,6 +5565,103 @@ case "$withval" in
   default) EXTRA_LD_OPTIONS= ;;
   *) EXTRA_LD_OPTIONS=$withval ;;
 esac
+
+{ echo "$as_me:$LINENO: checking binary size reduction linker flags" >&5
+echo $ECHO_N "checking binary size reduction linker flags... $ECHO_C" >&6; }
+
+{ echo "$as_me:$LINENO: checking for compiler -Wl,--gc-sections option" >&5
+echo $ECHO_N "checking for compiler -Wl,--gc-sections option... $ECHO_C" >&6; }
+if test "${llvm_cv_link_use_gc_sections+set}" = set; then
+  echo $ECHO_N "(cached) $ECHO_C" >&6
+else
+   ac_ext=c
+ac_cpp='$CPP $CPPFLAGS'
+ac_compile='$CC -c $CFLAGS $CPPFLAGS conftest.$ac_ext >&5'
+ac_link='$CC -o conftest$ac_exeext $CFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $LIBS >&5'
+ac_compiler_gnu=$ac_cv_c_compiler_gnu
+
+  oldcflags="$CFLAGS"
+  CFLAGS="$CFLAGS -Wl,--gc-sections"
+  cat >conftest.$ac_ext <<_ACEOF
+/* confdefs.h.  */
+_ACEOF
+cat confdefs.h >>conftest.$ac_ext
+cat >>conftest.$ac_ext <<_ACEOF
+/* end confdefs.h.  */
+
+int
+main ()
+{
+
+  ;
+  return 0;
+}
+_ACEOF
+rm -f conftest.$ac_objext conftest$ac_exeext
+if { (ac_try="$ac_link"
+case "(($ac_try" in
+  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
+  *) ac_try_echo=$ac_try;;
+esac
+eval "echo \"\$as_me:$LINENO: $ac_try_echo\"") >&5
+  (eval "$ac_link") 2>conftest.er1
+  ac_status=$?
+  grep -v '^ *+' conftest.er1 >conftest.err
+  rm -f conftest.er1
+  cat conftest.err >&5
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); } &&
+	 { ac_try='test -z "$ac_c_werror_flag" || test ! -s conftest.err'
+  { (case "(($ac_try" in
+  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
+  *) ac_try_echo=$ac_try;;
+esac
+eval "echo \"\$as_me:$LINENO: $ac_try_echo\"") >&5
+  (eval "$ac_try") 2>&5
+  ac_status=$?
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); }; } &&
+	 { ac_try='test -s conftest$ac_exeext'
+  { (case "(($ac_try" in
+  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
+  *) ac_try_echo=$ac_try;;
+esac
+eval "echo \"\$as_me:$LINENO: $ac_try_echo\"") >&5
+  (eval "$ac_try") 2>&5
+  ac_status=$?
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); }; }; then
+  llvm_cv_link_use_gc_sections=yes
+else
+  echo "$as_me: failed program was:" >&5
+sed 's/^/| /' conftest.$ac_ext >&5
+
+	llvm_cv_link_use_gc_sections=no
+fi
+
+rm -f core conftest.err conftest.$ac_objext \
+      conftest$ac_exeext conftest.$ac_ext
+  CFLAGS="$oldcflags"
+  ac_ext=c
+ac_cpp='$CPP $CPPFLAGS'
+ac_compile='$CC -c $CFLAGS $CPPFLAGS conftest.$ac_ext >&5'
+ac_link='$CC -o conftest$ac_exeext $CFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $LIBS >&5'
+ac_compiler_gnu=$ac_cv_c_compiler_gnu
+
+
+fi
+{ echo "$as_me:$LINENO: result: $llvm_cv_link_use_gc_sections" >&5
+echo "${ECHO_T}$llvm_cv_link_use_gc_sections" >&6; }
+if test "$llvm_cv_link_use_gc_sections" = yes ; then
+  GC_SECTIONS=-Wl,--gc-sections
+
+  fi
+
+
+if test "$ENABLE_SHRINK_BINARY_SIZE" = "1" ; then
+  EXTRA_LD_OPTIONS="$EXTRA_LD_OPTIONS $GC_SECTIONS"
+fi
+
 EXTRA_LD_OPTIONS=$EXTRA_LD_OPTIONS
 
 
@@ -7130,7 +7274,6 @@ _ACEOF
 
 
 
-
 { echo "$as_me:$LINENO: checking for compiler -Wl,-R<path> option" >&5
 echo $ECHO_N "checking for compiler -Wl,-R<path> option... $ECHO_C" >&6; }
 if test "${llvm_cv_link_use_r+set}" = set; then
@@ -8193,8 +8336,10 @@ else
 echo "$as_me: WARNING: specified python ($PYTHON) is not usable, searching path" >&2;}
   fi
 
-  # Extract the first word of "python python2 python26", so it can be a program name with args.
-set dummy python python2 python26; ac_word=$2
+  for ac_prog in python26 python2 python
+do
+  # Extract the first word of "$ac_prog", so it can be a program name with args.
+set dummy $ac_prog; ac_word=$2
 { echo "$as_me:$LINENO: checking for $ac_word" >&5
 echo $ECHO_N "checking for $ac_word... $ECHO_C" >&6; }
 if test "${ac_cv_path_PYTHON+set}" = set; then
@@ -8220,11 +8365,6 @@ done
 done
 IFS=$as_save_IFS
 
-  test -z "$ac_cv_path_PYTHON" && ac_cv_path_PYTHON="{ echo "$as_me:$LINENO: result: not found" >&5
-echo "${ECHO_T}not found" >&6; }
-                { { echo "$as_me:$LINENO: error: could not find python 2.5 or higher" >&5
-echo "$as_me: error: could not find python 2.5 or higher" >&2;}
-   { (exit 1); exit 1; }; }"
   ;;
 esac
 fi
@@ -8237,6 +8377,14 @@ else
 echo "${ECHO_T}no" >&6; }
 fi
 
+
+  test -n "$PYTHON" && break
+done
+test -n "$PYTHON" || PYTHON="{ echo "$as_me:$LINENO: result: not found" >&5
+echo "${ECHO_T}not found" >&6; }
+                { { echo "$as_me:$LINENO: error: could not find python 2.5 or higher" >&5
+echo "$as_me: error: could not find python 2.5 or higher" >&2;}
+   { (exit 1); exit 1; }; }"
 
 fi
 
@@ -19656,8 +19804,13 @@ LLVM_ENUM_TARGETS!$LLVM_ENUM_TARGETS$ac_delim
 LLVM_ENUM_ASM_PRINTERS!$LLVM_ENUM_ASM_PRINTERS$ac_delim
 LLVM_ENUM_ASM_PARSERS!$LLVM_ENUM_ASM_PARSERS$ac_delim
 LLVM_ENUM_DISASSEMBLERS!$LLVM_ENUM_DISASSEMBLERS$ac_delim
+ENABLE_SHRINK_BINARY_SIZE!$ENABLE_SHRINK_BINARY_SIZE$ac_delim
 OPTIMIZE_OPTION!$OPTIMIZE_OPTION$ac_delim
+DATA_SECTIONS!$DATA_SECTIONS$ac_delim
+FUNCTION_SECTIONS!$FUNCTION_SECTIONS$ac_delim
+VISIBILITY_INLINES_HIDDEN!$VISIBILITY_INLINES_HIDDEN$ac_delim
 EXTRA_OPTIONS!$EXTRA_OPTIONS$ac_delim
+GC_SECTIONS!$GC_SECTIONS$ac_delim
 EXTRA_LD_OPTIONS!$EXTRA_LD_OPTIONS$ac_delim
 CLANG_SRC_ROOT!$CLANG_SRC_ROOT$ac_delim
 BINUTILS_INCDIR!$BINUTILS_INCDIR$ac_delim
@@ -19729,11 +19882,6 @@ BINDINGS_TO_BUILD!$BINDINGS_TO_BUILD$ac_delim
 ALL_BINDINGS!$ALL_BINDINGS$ac_delim
 OCAML_LIBDIR!$OCAML_LIBDIR$ac_delim
 ENABLE_VISIBILITY_INLINES_HIDDEN!$ENABLE_VISIBILITY_INLINES_HIDDEN$ac_delim
-RPATH!$RPATH$ac_delim
-RDYNAMIC!$RDYNAMIC$ac_delim
-program_prefix!$program_prefix$ac_delim
-LIBOBJS!$LIBOBJS$ac_delim
-LTLIBOBJS!$LTLIBOBJS$ac_delim
 _ACEOF
 
   if test `sed -n "s/.*$ac_delim\$/X/p" conf$$subs.sed | grep -c X` = 97; then
@@ -19768,6 +19916,54 @@ N; s/^.*\n//; s/[,\\&]/\\&/g; s/@/@|#_!!_#|/g; b n
 ' >>$CONFIG_STATUS <conf$$subs.sed
 rm -f conf$$subs.sed
 cat >>$CONFIG_STATUS <<_ACEOF
+CEOF$ac_eof
+_ACEOF
+
+
+ac_delim='%!_!# '
+for ac_last_try in false false false false false :; do
+  cat >conf$$subs.sed <<_ACEOF
+RPATH!$RPATH$ac_delim
+RDYNAMIC!$RDYNAMIC$ac_delim
+program_prefix!$program_prefix$ac_delim
+LIBOBJS!$LIBOBJS$ac_delim
+LTLIBOBJS!$LTLIBOBJS$ac_delim
+_ACEOF
+
+  if test `sed -n "s/.*$ac_delim\$/X/p" conf$$subs.sed | grep -c X` = 5; then
+    break
+  elif $ac_last_try; then
+    { { echo "$as_me:$LINENO: error: could not make $CONFIG_STATUS" >&5
+echo "$as_me: error: could not make $CONFIG_STATUS" >&2;}
+   { (exit 1); exit 1; }; }
+  else
+    ac_delim="$ac_delim!$ac_delim _$ac_delim!! "
+  fi
+done
+
+ac_eof=`sed -n '/^CEOF[0-9]*$/s/CEOF/0/p' conf$$subs.sed`
+if test -n "$ac_eof"; then
+  ac_eof=`echo "$ac_eof" | sort -nru | sed 1q`
+  ac_eof=`expr $ac_eof + 1`
+fi
+
+cat >>$CONFIG_STATUS <<_ACEOF
+cat >"\$tmp/subs-3.sed" <<\CEOF$ac_eof
+/@[a-zA-Z_][a-zA-Z_0-9]*@/!b end
+_ACEOF
+sed '
+s/[,\\&]/\\&/g; s/@/@|#_!!_#|/g
+s/^/s,@/; s/!/@,|#_!!_#|/
+:n
+t n
+s/'"$ac_delim"'$/,g/; t
+s/$/\\/; p
+N; s/^.*\n//; s/[,\\&]/\\&/g; s/@/@|#_!!_#|/g; b n
+' >>$CONFIG_STATUS <conf$$subs.sed
+rm -f conf$$subs.sed
+cat >>$CONFIG_STATUS <<_ACEOF
+:end
+s/|#_!!_#|//g
 CEOF$ac_eof
 _ACEOF
 
@@ -20015,7 +20211,7 @@ s&@abs_builddir@&$ac_abs_builddir&;t t
 s&@abs_top_builddir@&$ac_abs_top_builddir&;t t
 s&@INSTALL@&$ac_INSTALL&;t t
 $ac_datarootdir_hack
-" $ac_file_inputs | sed -f "$tmp/subs-1.sed" | sed -f "$tmp/subs-2.sed" | sed 's/|#_!!_#|//g' >$tmp/out
+" $ac_file_inputs | sed -f "$tmp/subs-1.sed" | sed -f "$tmp/subs-2.sed" | sed -f "$tmp/subs-3.sed" >$tmp/out
 
 test -z "$ac_datarootdir_hack$ac_datarootdir_seen" &&
   { ac_out=`sed -n '/\${datarootdir}/p' "$tmp/out"`; test -n "$ac_out"; } &&

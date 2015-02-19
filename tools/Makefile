@@ -31,11 +31,16 @@ PARALLEL_DIRS := opt llvm-as llvm-dis llc llvm-ar llvm-nm llvm-link \
                  lli llvm-extract llvm-mc bugpoint llvm-bcanalyzer llvm-diff \
                  macho-dump llvm-objdump llvm-readobj llvm-rtdyld \
                  llvm-dwarfdump llvm-cov llvm-size llvm-stress llvm-mcmarkup \
-                 llvm-profdata llvm-symbolizer obj2yaml yaml2obj llvm-c-test
+                 llvm-profdata llvm-symbolizer obj2yaml yaml2obj llvm-c-test \
+                 ndk-link ndk-strip ndk-translate
 
 # If Intel JIT Events support is configured, build an extra tool to test it.
 ifeq ($(USE_INTEL_JITEVENTS), 1)
   PARALLEL_DIRS += llvm-jitlistener
+endif
+
+ifeq ($(LLVM_CROSS_COMPILING),1)
+  PARALLEL_DIRS := llc ndk-translate
 endif
 
 # Let users override the set of tools to build from the command line.
@@ -70,6 +75,11 @@ ifneq ($(ENABLE_SHARED),1)
     PARALLEL_DIRS := $(filter-out bugpoint-passes, \
                         $(PARALLEL_DIRS))
   endif
+endif
+
+LLVM_TOOLS_FILTER := $(strip $(LLVM_TOOLS_FILTER))
+ifdef LLVM_TOOLS_FILTER
+  $(eval $(LLVM_TOOLS_FILTER))
 endif
 
 include $(LEVEL)/Makefile.common
