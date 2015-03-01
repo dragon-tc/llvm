@@ -17,6 +17,11 @@
 #ifndef ANDROID_BITCODE_LINKER_H
 #define ANDROID_BITCODE_LINKER_H
 
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <set>
+#include <vector>
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -24,11 +29,6 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Wrap/BitcodeWrapper.h"
-#include <cstdio>
-#include <cstring>
-#include <set>
-#include <string>
-#include <vector>
 
 namespace llvm {
 
