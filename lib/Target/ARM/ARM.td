@@ -155,6 +155,10 @@ def FeatureLong64 : SubtargetFeature<"long64", "UseLong64",
                                      "true",
                                      "long type is forced to be 64-bit">;
 
+def FeatureLongCalls : SubtargetFeature<"long-calls", "GenLongCalls", "true",
+                                        "Generate calls via indirect call "
+                                        "instructions">;
+
 // ARM ISAs.
 def HasV4TOps   : SubtargetFeature<"v4t", "HasV4TOps", "true",
                                    "Support ARM v4T instructions">;
