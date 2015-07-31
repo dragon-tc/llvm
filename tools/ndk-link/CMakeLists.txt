@@ -11,5 +11,8 @@ set(LLVM_LINK_COMPONENTS
 
 add_llvm_tool(ndk-link
   AndroidBitcodeLinker.cpp
+  Archive.cpp
+  ArchiveReader.cpp
+  ArchiveWriter.cpp
   ndk-link.cpp
   )
