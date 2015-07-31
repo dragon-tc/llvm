@@ -135,6 +135,7 @@ public:
     Minix,
     RTEMS,
     NaCl,       // Native Client
+    NDK,        // Android NDK
     CNK,        // BG/P Compute-Node Kernel
     Bitrig,
     AIX,
@@ -449,6 +450,11 @@ public:
   /// \brief Tests whether the environment is MachO.
   bool isOSBinFormatMachO() const {
     return getObjectFormat() == Triple::MachO;
+  }
+
+  /// \brief Tests whether the environment is Android.
+  bool isOSAndroid() const {
+    return getEnvironment() == Triple::Android;
   }
 
   /// @}

@@ -13,6 +13,12 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Pass.h"
 
+// Undefined the following defined in mingw/include/stdio.h, etc
+#undef fseeko
+#undef ftello
+#undef fstat
+#undef stat
+
 namespace llvm {
   class Triple;
 
