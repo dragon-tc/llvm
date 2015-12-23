@@ -18,10 +18,26 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include <memory>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 using namespace llvm;
+
+#if 0
+/// Read a variable-bit-rate encoded unsigned integer
+static inline unsigned readInteger(const char*&At, const char*End) {
+  unsigned Shift = 0;
+  unsigned Result = 0;
+
+  do {
+    if (At == End)
+      return Result;
+    Result |= (unsigned)((*At++) & 0x7F) << Shift;
+    Shift += 7;
+  } while (At[-1] & 0x80);
+  return Result;
+}
+#endif
 
 // This member parses an ArchiveMemberHeader that is presumed to be pointed to
 // by At. The At pointer is updated to the byte just after the header, which
@@ -252,23 +268,23 @@ Archive::OpenAndLoad(StringRef File, LLVMContext& C,
 }
 
 // Get all the bitcode modules from the archive
-bool
-Archive::getAllModules(std::vector<Module*>& Modules,
-                       std::string* ErrMessage) {
-
-  for (iterator I=begin(), E=end(); I != E; ++I) {
+bool Archive::getAllModules(std::vector<Module*>& Modules,
+                            std::string* ErrMessage) {
+  for (iterator I = begin(), E = end(); I != E; ++I) {
     if (I->isBitcode()) {
       std::string FullMemberName =
           archPath.str() + "(" + I->getPath().str() + ")";
-
       MemoryBufferRef Buffer(StringRef(I->getData(), I->getSize()),
                              FullMemberName);
-
-      ErrorOr<Module *> Result = parseBitcodeFile(Buffer, Context);
-      if (!Result)
+      ErrorOr<Module*> M = parseBitcodeFile(Buffer, Context);
+      if (!M) {
+        if (ErrMessage) {
+          *ErrMessage = M.getError().message();
+        }
         return true;
+      }
 
-      Modules.push_back(Result.get());
+      Modules.push_back(M.get());
     }
   }
   return false;
@@ -336,7 +352,7 @@ Archive::loadSymbolTable(std::string* ErrorMsg) {
 Archive* Archive::OpenAndLoadSymbols(StringRef File,
                                      LLVMContext& C,
                                      std::string* ErrorMessage) {
-  std::unique_ptr<Archive> result(new Archive(File, C));
+  std::unique_ptr<Archive> result ( new Archive(File, C) );
   if (result->mapToMemory(ErrorMessage))
     return NULL;
   if (!result->loadSymbolTable(ErrorMessage))
@@ -378,20 +394,22 @@ Archive::findModuleDefiningSymbol(const std::string& symbol,
   // Now, load the bitcode module to get the Module.
   std::string FullMemberName =
       archPath.str() + "(" + mbr->getPath().str() + ")";
+
   std::unique_ptr<MemoryBuffer> Buffer =
-      MemoryBuffer::getMemBufferCopy(StringRef(mbr->getData(),
-                                               mbr->getSize()),
-                                     FullMemberName.c_str());
-  ErrorOr<Module *> Result =
-      getLazyBitcodeModule(std::move(Buffer), Context);
-  if (!Result) {
-    if (ErrMsg) *ErrMsg = Result.getError().message();
-    return nullptr;
+    MemoryBuffer::getMemBufferCopy(StringRef(mbr->getData(), mbr->getSize()),
+                                   FullMemberName.c_str());
+
+  ErrorOr<Module*> m = getLazyBitcodeModule(std::move(Buffer), Context);
+  if (!m) {
+    if (ErrMsg) {
+      *ErrMsg = m.getError().message();
+    }
+    return 0;
   }
 
-  modules.insert(std::make_pair(fileOffset, std::make_pair(Result.get(), mbr)));
+  modules.insert(std::make_pair(fileOffset, std::make_pair(m.get(), mbr)));
 
-  return Result.get();
+  return m.get();
 }
 
 // Look up multiple symbols in the symbol table and return a set of
@@ -512,15 +530,13 @@ bool Archive::isBitcodeArchive() {
       continue;
 
     std::string FullMemberName =
-      archPath.str() + "(" + I->getPath().str() + ")";
-
+        archPath.str() + "(" + I->getPath().str() + ")";
     MemoryBufferRef Buffer(StringRef(I->getData(), I->getSize()),
                            FullMemberName);
-
-    ErrorOr<Module *> Result = parseBitcodeFile(Buffer, Context);
-    if (!Result)
+    ErrorOr<Module*> M = parseBitcodeFile(Buffer, Context);
+    if (!M)
       return false;  // Couldn't parse bitcode, not a bitcode archive.
-    delete Result.get();
+    delete M.get();
     return true;
   }
 

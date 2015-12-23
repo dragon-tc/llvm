@@ -33,8 +33,6 @@
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Wrap/BitcodeWrapper.h"
 
-#include <memory>
-
 using namespace llvm;
 
 static cl::list<std::string>
@@ -104,9 +102,6 @@ NoUndefined("no-undefined", cl::desc("-z defs"));
 
 static cl::list<std::string>
 ZOptions("z", cl::desc("-z keyword"), cl::value_desc("keyword"));
-
-static cl::opt<bool>
-PIE("pie", cl::desc("position independent executable"));
 
 static cl::list<std::string> CO1("Wl", cl::Prefix,
   cl::desc("Compatibility option: ignored"));
@@ -216,7 +211,7 @@ sys::fs::file_magic Magic;
 }
 
 static bool isDynamicLibrary(StringRef FilePath) {
-  sys::fs::file_magic Magic;
+sys::fs::file_magic Magic;
 
   if (sys::fs::identify_magic(FilePath, Magic))
     return false;
@@ -229,10 +224,8 @@ static bool isBitcodeArchive(StringRef FilePath) {
     return false;
 
   std::string ErrMsg;
-  std::unique_ptr<Archive> AutoArch(
-    Archive::OpenAndLoad(FilePath,
-                         llvm::getGlobalContext(),
-                         &ErrMsg));
+  std::auto_ptr<Archive> AutoArch(
+    Archive::OpenAndLoad(FilePath, llvm::getGlobalContext(), &ErrMsg));
   Archive* arch = AutoArch.get();
 
   if (!arch) {
@@ -242,7 +235,8 @@ static bool isBitcodeArchive(StringRef FilePath) {
   return arch->isBitcodeArchive();
 }
 
-static StringRef IsLibrary(StringRef Name, StringRef Directory) {
+static StringRef IsLibrary(StringRef Name,
+                           StringRef Directory) {
   SmallString<256> FullPath = Directory;
   sys::path::append(FullPath, "lib"+Name);
 
@@ -299,7 +293,7 @@ static std::string getSOName(const std::string& Filename,
 }
 
 static std::string* ProcessArgv(int argc, char **argv,
-				AndroidBitcodeLinker::ABCItemList& Items) {
+                                AndroidBitcodeLinker::ABCItemList& Items) {
   std::string *ArgvString = new std::string;
   raw_string_ostream Output(*ArgvString);
 
@@ -402,15 +396,13 @@ static std::string* ProcessArgv(int argc, char **argv,
   return ArgvString;
 }
 
-static void WrapAndroidBitcode(std::vector<std::string*> &BCStrings,
-                               std::string& LDFlags, raw_ostream &Output) {
+static void WrapAndroidBitcode(std::vector<std::string*> &BCStrings, std::string& LDFlags, raw_ostream &Output) {
   std::vector<BCHeaderField> header_fields;
   std::vector<uint8_t *> field_data;
   size_t variable_header_size = 0;
 
   // shared object or executable
-  uint32_t BitcodeType = (Shared) ? BCHeaderField::BC_SharedObject
-                                  : BCHeaderField::BC_Executable;
+  uint32_t BitcodeType = (Shared) ? BCHeaderField::BC_SharedObject : BCHeaderField::BC_Executable;
   field_data.push_back(new uint8_t[sizeof(uint32_t)]);
   WriteInt32(field_data.back(), 0, BitcodeType);
   BCHeaderField BitcodeTypeField(BCHeaderField::kAndroidBitcodeType,
@@ -466,8 +458,8 @@ static void WrapAndroidBitcode(std::vector<std::string*> &BCStrings,
   }
 }
 
-void GenerateBitcode(std::vector<std::string*> &BCStrings,
-                     std::string& LDFlags, const std::string& FileName) {
+void GenerateBitcode(std::vector<std::string*> &BCStrings, std::string& LDFlags, const std::string& FileName) {
+
   if (Verbose)
     errs() << "Generating Bitcode To " << FileName << '\n';
 
@@ -483,8 +475,9 @@ void GenerateBitcode(std::vector<std::string*> &BCStrings,
   Out.keep();
 }
 
-static void BuildLinkItems(AndroidBitcodeLinker::ABCItemList& Items,
-                           const cl::list<std::string>& Files) {
+static void BuildLinkItems(
+  AndroidBitcodeLinker::ABCItemList& Items,
+  const cl::list<std::string>& Files) {
   cl::list<bool>::const_iterator wholeIt = WholeArchive.begin();
   cl::list<bool>::const_iterator noWholeIt = NoWholeArchive.begin();
   int wholePos = -1, noWholePos = -1;

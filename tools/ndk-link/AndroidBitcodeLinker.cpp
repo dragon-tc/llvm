@@ -58,7 +58,6 @@ std::string* AndroidBitcodeLinker::GenerateBitcode() {
     PMBuilder.Inliner = createFunctionInliningPass();
     PMBuilder.populateLTOPassManager(PM);
   }
-
   // Doing clean up passes
   if (!Config.isDisableOpt())
   {
@@ -98,21 +97,20 @@ AndroidBitcodeLinker::LoadAndroidBitcode(AndroidBitcodeItem &Item) {
   if (!BufferOrErr) {
     Error = "Error reading file '" + FN.str() + "'" + ": " +
             BufferOrErr.getError().message();
-    return nullptr;
+    return NULL;
   }
 
-  std::unique_ptr<MemoryBuffer> buffer = std::move(BufferOrErr.get());
-  BitcodeWrapper *wrapper = new BitcodeWrapper(buffer->getBufferStart(),
-                                               buffer->getBufferSize());
+  std::unique_ptr<MemoryBuffer> &Buffer = BufferOrErr.get();
+  BitcodeWrapper *wrapper = new BitcodeWrapper(Buffer->getBufferStart(),
+                                               Buffer->getBufferSize());
   Item.setWrapper(wrapper);
   assert(Item.getWrapper() != 0);
-  ErrorOr<Module *> Result = parseBitcodeFile(buffer->getMemBufferRef(),
-                                              Config.getContext());
+  ErrorOr<Module*> Result = parseBitcodeFile(Buffer->getMemBufferRef(),
+                                             Config.getContext());
   if (!Result) {
     Error = "Bitcode file '" + FN.str() + "' could not be loaded."
               + Result.getError().message();
     errs() << Error << '\n';
-    return nullptr;
   }
 
   return Result.get();
@@ -212,8 +210,7 @@ AndroidBitcodeLinker::LinkInAndroidBitcode(AndroidBitcodeItem &Item) {
 
       Triple triple(M.get()->getTargetTriple());
 
-      if ((triple.getArch() != Triple::le32 && triple.getArch() != Triple::le64) ||
-          triple.getOS() != Triple::NDK) {
+      if (triple.getArch() != Triple::le32 || triple.getOS() != Triple::NDK) {
         Item.setNative(true);
         return error("Cannot link '" + File.str() + "', triple:" +  M.get()->getTargetTriple());
       }
@@ -435,6 +432,7 @@ const StringRef &Filename = Item.getFile();
         verbose("  Linking in module: " + aModule->getModuleIdentifier());
 
         // Link it in
+        std::string moduleErrorMsg;
         if (linker->linkInModule(aModule))
           return error("Cannot link in module '" +
                        aModule->getModuleIdentifier() + "'");

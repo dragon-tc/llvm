@@ -1,6 +1,6 @@
 LEVEL := ../..
 
-TOOLNAME = ndk-translate
+TOOLNAME = le32-none-ndk-translate
 
 LINK_COMPONENTS := bitreader bitwriter
 

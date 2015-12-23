@@ -16,6 +16,7 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+
 #include <cstdlib>
 #include <memory>
 #include <utility>
@@ -129,11 +130,9 @@ static void StripBitcode(const char *Bitcode, size_t BitcodeSize, std::string &B
   StringRef input_data(Bitcode, BitcodeSize);
   MemoryBufferRef buffer(input_data, "");
 
-  ErrorOr<Module *> Result = parseBitcodeFile(buffer, Context);
-
+  ErrorOr<Module*> Result = parseBitcodeFile(buffer, Context);
   if (!Result) {
     errs() << Result.getError().message() << '\n';
-    return;
   }
 
   std::unique_ptr<Module> M(Result.get());
@@ -193,7 +192,7 @@ int main(int argc, char **argv) {
 
   // Output stripped bitcode
   std::error_code EC;
-  tool_output_file Out(OutputFilename.c_str(), EC, sys::fs::F_None);
+  tool_output_file Out(OutputFilename, EC, sys::fs::F_None);
   if (EC) {
     errs() << EC.message() << '\n';
     return 1;
