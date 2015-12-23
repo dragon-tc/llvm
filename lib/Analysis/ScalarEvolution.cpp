@@ -5080,7 +5080,7 @@ ScalarEvolution::ComputeExitLimitFromICmp(const Loop *L,
     // Compute trip count only if the expression is marked as non-wrapping.
     if (const SCEVAddRecExpr *AddRec = dyn_cast<SCEVAddRecExpr>(LHS)) {
       if (AddRec->getNoWrapFlags(SCEV::FlagNSW)) {
-        ExitLimit EL = HowManyLessThans(LHS, RHS, L, true, IsSubExpr);
+        ExitLimit EL = HowManyLessThans(LHS, RHS, L, true, ControlsExit);
         if (EL.hasAnyInfo()) {
           const SCEV *BTCount = EL.Exact;
           if (const SCEVConstant *CountConst =dyn_cast<SCEVConstant>(BTCount)) {
