@@ -1305,7 +1305,7 @@ bool MachineBlockPlacement::runOnMachineFunction(MachineFunction &F) {
   MLI = &getAnalysis<MachineLoopInfo>();
   TII = F.getSubtarget().getInstrInfo();
   TLI = F.getSubtarget().getTargetLowering();
-  TRI = F.getTarget().getRegisterInfo();
+  TRI = F.getSubtarget().getRegisterInfo();
   assert(BlockToChain.empty());
 
   buildCFGChains(F);

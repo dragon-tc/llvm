@@ -20,6 +20,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/Target/TargetSubtargetInfo.h"
 
 namespace llvm {
 
@@ -110,6 +111,9 @@ public:
     return MBBI;
   }
   
+  /// getRegsUsed - return all registers currently in use in used.
+  void getRegsUsed(BitVector &used, bool includeReserved);
+
   /// isRegUsed - return if a specific register is currently used.
   bool isRegUsed(unsigned Reg, bool includeReserved = true) const;
 
