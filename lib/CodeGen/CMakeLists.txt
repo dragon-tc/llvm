@@ -34,6 +34,7 @@ add_llvm_library(LLVMCodeGen
   IntrinsicLowering.cpp
   LLVMTargetMachine.cpp
   LatencyPriorityQueue.cpp
+  LatencyProfitPriorityQueue.cpp
   LexicalScopes.cpp
   LiveDebugVariables.cpp
   LiveInterval.cpp
