@@ -4277,7 +4277,7 @@ unsigned ARMBaseInstrInfo::getInstrExtraPredCost(const MachineInstr *MI) const {
     case ARM::t2USADA8:
 
       // Send Event (SEV)
-    //case ARM::SEV:
+//    case ARM::SEV:
     case ARM::t2SEV:
       // Secure Mode Call (SMC)
     case ARM::SMC:
@@ -4285,10 +4285,10 @@ unsigned ARMBaseInstrInfo::getInstrExtraPredCost(const MachineInstr *MI) const {
       // Supervisor Call (SVC)
     case ARM::SVC:
       // Wait for Interrupt (WFI)
-    //case ARM::WFI:
+//    case ARM::WFI:
     case ARM::t2WFI:
       // Wait for Event (WFE)
-    //case ARM::WFE:
+//    case ARM::WFE:
     case ARM::t2WFE:
 
       // Move from ARM core register to special register (MSR) privileged fields

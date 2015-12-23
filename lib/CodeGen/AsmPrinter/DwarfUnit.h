@@ -97,18 +97,6 @@ protected:
   /// descriptors to debug information entries using a DIEEntry proxy.
   DenseMap<const MDNode *, DIEEntry *> MDNodeToDIEEntryMap;
 
-  /// Globals - A map of globally visible named entities for this unit.
-  ///
-  StringMap<DIE*> Globals;
-
-  const StringMap<DIE*> &getGlobals()     const { return Globals; }
-
-  /// GlobalNames - A map of globally visible named entities for this unit.
-  StringMap<const DIE *> GlobalNames;
-
-  /// GlobalTypes - A map of globally visible types for this unit.
-  StringMap<const DIE *> GlobalTypes;
-
   /// DIEBlocks - A list of all the DIEBlocks in use.
   std::vector<DIEBlock *> DIEBlocks;
   
@@ -161,26 +149,6 @@ public:
 
   /// hasContent - Return true if this compile unit has something to write out.
   bool hasContent() const { return !UnitDie.getChildren().empty(); }
-
-  /// addGlobal - Add a new global entity to the compile unit.
-  ///
-  void addGlobal(StringRef Name, DIE *Die) { Globals[Name] = Die; }
-
-  /// addRange - Add an address range to the list of ranges for this unit.
-  void addRange(RangeSpan Range);
-
-  /// getRanges - Get the list of ranges for this unit.
-  const SmallVectorImpl<RangeSpan> &getRanges() const { return CURanges; }
-  SmallVectorImpl<RangeSpan> &getRanges() { return CURanges; }
-
-  /// addRangeList - Add an address range list to the list of range lists.
-  void addRangeList(RangeSpanList Ranges) { CURangeLists.push_back(Ranges); }
-
-  /// getRangeLists - Get the vector of range lists.
-  const SmallVectorImpl<RangeSpanList> &getRangeLists() const {
-    return CURangeLists;
-  }
-  SmallVectorImpl<RangeSpanList> &getRangeLists() { return CURangeLists; }
 
   /// getParentContextString - Get a string containing the language specific
   /// context for a global name.

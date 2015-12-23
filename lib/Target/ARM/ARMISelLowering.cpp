@@ -67,11 +67,6 @@ ARMInterworking("arm-interworking", cl::Hidden,
   cl::desc("Enable / disable ARM interworking (for debugging only)"),
   cl::init(true));
 
-static cl::opt<bool>
-EnableANDToUBFXCombine("arm-enable-and-shift-to-ubfx-combine", cl::Hidden,
-                       cl::desc("Enable selective combine of AND to UBFX"),
-                       cl::init(true));
-
 namespace {
   class ARMCCState : public CCState {
   public:
@@ -161,17 +156,8 @@ void ARMTargetLowering::addQRTypeForNEON(MVT VT) {
   addTypeForNEON(VT, MVT::v2f64, MVT::v4i32);
 }
 
-static TargetLoweringObjectFile *createTLOF(const Triple &TT) {
-  if (TT.isOSBinFormatMachO())
-    return new TargetLoweringObjectFileMachO();
-  if (TT.isOSWindows())
-    return new TargetLoweringObjectFileCOFF();
-  return new ARMElfTargetObjectFile();
-}
-
-
-ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
-    : TargetLowering(TM, createTLOF(Triple(TM.getTargetTriple()))) {
+ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM)
+    : TargetLowering(TM) {
   Subtarget = &TM.getSubtarget<ARMSubtarget>();
   RegInfo = TM.getSubtargetImpl()->getRegisterInfo();
   Itins = TM.getSubtargetImpl()->getInstrItineraryData();
@@ -1153,7 +1139,6 @@ const char *ARMTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case ARMISD::VST2LN_UPD:    return "ARMISD::VST2LN_UPD";
   case ARMISD::VST3LN_UPD:    return "ARMISD::VST3LN_UPD";
   case ARMISD::VST4LN_UPD:    return "ARMISD::VST4LN_UPD";
-  case ARMISD::UBFX:          return "ARMISD::UBFX";
   }
 }
 
@@ -1760,7 +1745,6 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
                              DAG.getNode(ARMISD::Wrapper, dl, getPointerTy(),
                                          Callee), MachinePointerInfo::getGOT(),
                              false, false, false, 0);
-
     } else {
       // On ELF targets for PIC code, direct calls should go through the PLT
       unsigned OpFlags = 0;
@@ -2560,7 +2544,6 @@ SDValue ARMTargetLowering::LowerGlobalAddressELF(SDValue Op,
   const GlobalValue *GV = cast<GlobalAddressSDNode>(Op)->getGlobal();
   if (getTargetMachine().getRelocationModel() == Reloc::PIC_) {
     bool UseGOTOFF = GV->hasLocalLinkage() || GV->hasHiddenVisibility();
-
     ARMConstantPoolValue *CPV =
       ARMConstantPoolConstant::Create(GV,
                                       UseGOTOFF ? ARMCP::GOTOFF : ARMCP::GOT);
@@ -5409,10 +5392,6 @@ SDValue ARMTargetLowering::ReconstructShuffle(SDValue Op,
     } else if (SourceVecs[i].getValueType().getVectorNumElements() < NumElts) {
       // It probably isn't worth padding out a smaller vector just to
       // break it down again in a shuffle.
-      return SDValue();
-    }
-
-    if( SourceVecs[i].getValueType().getVectorNumElements() != 2*NumElts ){
       return SDValue();
     }
 
@@ -8338,114 +8317,9 @@ static SDValue PerformMULCombine(SDNode *N,
   return SDValue();
 }
 
-/// getBitField - Returns the number of bits in the bit field designated by the
-/// Mask in the constant node and the number of bits the field is shifted to the
-/// left.
-/// Example:        0000111100
-///                 Return 4, and set LeftShifts to 2
-unsigned getBitField(ConstantSDNode *N, unsigned &LeftShifts) {
-  if (!N || N->getValueType(0) != MVT::i32) return 0;
-  unsigned Mask = (unsigned) N->getZExtValue();
-  // Count trailing zeros.
-  LeftShifts = 0;
-  while (Mask && (Mask & 0x1) == 0) {
-    ++LeftShifts;
-    Mask >>= 1;
-  }
-  // Count bits in bitfield.
-  unsigned NumBits = 0;
-  while (Mask && (Mask & 0x1)) {
-    ++NumBits;
-    Mask >>= 1;
-  }
-  // Not a bit field, there is a zero in between ones.
-  if (Mask) return 0;
-
-  return NumBits;
-}
-
-bool hasOnlyLoadUser(SDNode *N, unsigned MaxDepth = 2) {
-  if (!N->hasOneUse())
-    return false;
-
-  SDNode *User = *N->use_begin();
-
-  if (isa<LoadSDNode>(User))
-    return true;
-
-  if (MaxDepth != 0 && User->getOpcode() == ISD::ADD)
-    return hasOnlyLoadUser(User, --MaxDepth);
-  return false;
-}
-
-static SDValue PerformANDToUBFXCombine(SDNode *N,
-                                       TargetLowering::DAGCombinerInfo &DCI,
-                                       const ARMSubtarget *Subtarget) {
-  if (!EnableANDToUBFXCombine || Subtarget->isThumb() ||
-      Subtarget->isThumb2() || !Subtarget->hasV6T2Ops())
-    return SDValue();
-
-  // Attempt to use UBFX.
-  // We are looking for a SRL of #lsb followed by an AND with all #width least
-  // significant bits set to transforms it to an UBFX Rd, Rn, #lsb, #width.
-  //        SRL Rs, #lsb
-  //           \                [ml comment warning disable]
-  //            \               [ml comment warning disable]
-  //         AND  , #[width as bit mask]
-  // Unfortunately, at the time when we (the target dag combiner) gets to look
-  // at the dag, subsequent shifts have already been merged in, so #lsb and the
-  // width bitmask have already been shifted. We deal with this fact below.
-  // Replacing the and, shift combination by an UBFX can force us to emit an
-  // extra shift. Therefore, we only perform the replacement if the extra shift
-  // can be merged into a load that follows the sequence.
-  SDValue LeftOp = N->getOperand(0);
-  SDValue RightOp = N->getOperand(1);
-  ConstantSDNode *AndMask = 0;
-  SDNode *Srl = 0;
-  unsigned ShiftRightNum = 0;
-
-  // Make sure we can fold the reinstantiated shift into the load.
-  if (!hasOnlyLoadUser(N))
-    return SDValue();
-
-  // Find bit field mask and shift right operand.
-  if (LeftOp->getOpcode() == ISD::SRL) {
-    Srl = LeftOp.getNode();
-    AndMask = dyn_cast<ConstantSDNode>(RightOp.getNode());
-    if (isa<ConstantSDNode>(Srl->getOperand(1)))
-        ShiftRightNum = Srl->getConstantOperandVal(1);
-  } else if (RightOp->getOpcode() == ISD::SRL) {
-    Srl = RightOp.getNode();
-    AndMask = dyn_cast<ConstantSDNode>(LeftOp.getNode());
-    if (isa<ConstantSDNode>(Srl->getOperand(1)))
-        ShiftRightNum = Srl->getConstantOperandVal(1);
-  } else
-    return SDValue();
-
-  // Find the bit field size and possible merged in left shift.
-  unsigned BitFieldWidth, LeftShiftWidth;
-  BitFieldWidth = getBitField(AndMask, LeftShiftWidth);
-  if (!BitFieldWidth)
-    return SDValue();
-
-  // Create the UBFX node.
-  SelectionDAG &DAG = DCI.DAG;
-  SDValue Lsb = DAG.getConstant(ShiftRightNum + LeftShiftWidth, MVT::i32);
-  SDValue Width = DAG.getConstant(BitFieldWidth, MVT::i32);
-  SDValue Ubfx = DAG.getNode(ARMISD::UBFX, SDLoc(N), N->getValueType(0),
-                             Srl->getOperand(0), Lsb, Width);
-  if (LeftShiftWidth)
-    Ubfx = DCI.DAG.getNode(ISD::SHL, SDLoc(N), N->getValueType(0),
-                           Ubfx, DAG.getConstant(LeftShiftWidth, MVT::i32));
-  return Ubfx;
-}
-
 static SDValue PerformANDCombine(SDNode *N,
                                  TargetLowering::DAGCombinerInfo &DCI,
                                  const ARMSubtarget *Subtarget) {
-  SDValue CombinedAND = PerformANDToUBFXCombine(N, DCI, Subtarget);
-  if (CombinedAND != SDValue())
-    return CombinedAND;
 
   // Attempt to use immediate-form VBIC
   BuildVectorSDNode *BVN = dyn_cast<BuildVectorSDNode>(N->getOperand(1));
