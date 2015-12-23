@@ -56,6 +56,10 @@ tools/lld
 tools/llgo
 # Polly, which is tracked independently.
 tools/polly
+# BinUtils, which is tracked independently.
+tools/binutils
+# libffi, which is tracked independently.
+tools/libffi
 # Sphinx build tree, if building in-source dir.
 docs/_build
 
