@@ -122,6 +122,8 @@ void ARMProfitRecognizer::addInstruction(SUnit *SU) {
 
 bool ARMProfitRecognizer::isEfficientInstrMix(const SUnit * SU) {
 
+  // Define DEBUG_TYPE
+#define DEBUG_TYPE "ARMProfitRecognizer"
 
   // no previous instr in the integer pipe to check for mixing rules
   if (!LastMIIntPipe)
@@ -145,6 +147,9 @@ bool ARMProfitRecognizer::isEfficientInstrMix(const SUnit * SU) {
 }
 
 unsigned int ARMProfitRecognizer::getPipeCount(const SUnit * SU) {
+
+  // Define DEBUG_TYPE
+#define DEBUG_TYPE "ARMProfitRecognizer"
 
   MachineInstr *MI = SU->getInstr();
   const MCInstrDesc &CurrMCID = MI->getDesc();
