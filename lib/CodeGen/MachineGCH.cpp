@@ -419,8 +419,8 @@ bool MachineGCH::PerformGCH()
 
 bool MachineGCH::runOnMachineFunction(MachineFunction &MF)
 {
-  TII = MF.getTarget().getInstrInfo();
-  TRI = MF.getTarget().getRegisterInfo();
+  TII = MF.getSubtarget().getInstrInfo();
+  TRI = MF.getSubtarget().getRegisterInfo();
   MRI = &MF.getRegInfo();
   AA = &getAnalysis<AliasAnalysis>();
   DT = &getAnalysis<MachineDominatorTree>();
