@@ -492,6 +492,9 @@ ARM_MC::PipeType ARM_MC::getKrait2PipeType(unsigned Units)
   // VS pipe (Neon/VFP mem and non-mem): uses LSUnit and VS, or uses VS
   // VX pipe (Neon/VFP Execute Pipe): uses VX
 
+  // Define DEBUG_TYPE
+#define DEBUG_TYPE "krait2pipetype"
+
   // Return pipe unknown for empty itineraries.
   if (0 == Units)
     return ARM_MC::PipeType_Unknown;
