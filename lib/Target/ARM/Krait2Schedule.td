@@ -2497,11 +2497,6 @@ class KRT2WriteLMOpsListType<list<WriteSequence> writes> {
   SchedMachineModel SchedModel = ?;
 }
 
-class KRT2WriteLMOpsListType<list<WriteSequence> writes> {
-  list <WriteSequence> Writes = writes;
-  SchedMachineModel SchedModel = ?;
-}
-
 // Krait2 machine model for scheduling and other instruction cost heuristics.
 def Krait2Model : SchedMachineModel {
   let IssueWidth = 4; // 3 micro-ops are dispatched per cycle.
