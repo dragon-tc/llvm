@@ -170,15 +170,12 @@ static IdentifyingPassPtr overridePass(AnalysisID StandardID,
   if (StandardID == &MachineCSEID)
     return applyDisable(TargetID, DisableMachineCSE);
 
-<<<<<<< HEAD
-=======
   if (StandardID == &MachineGCHID)
     return applyDisable(TargetID, DisableMachineGCH);
 
   if (StandardID == &MachineSchedulerID)
     return applyOverride(TargetID, EnableMachineSched, StandardID);
 
->>>>>>> 9954e82... Forward Port: LLVM: add basic krait2 support
   if (StandardID == &TargetPassConfig::PostRAMachineLICMID)
     return applyDisable(TargetID, DisablePostRAMachineLICM);
 
