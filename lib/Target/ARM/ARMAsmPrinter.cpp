@@ -612,10 +612,10 @@ void ARMAsmPrinter::emitAttributes() {
   std::string CPUString = STI.getCPUString();
 
 //CPUString doesn't start with "generic" or "krait" or "krait2"
-  if (CPUString.find("generic") != 0 && CPUString.find("krait") != 0 CPUString.find("krait2") != 0 ) {
+  if (CPUString.find("generic") != 0 && CPUString.find("krait") != 0 && CPUString.find("krait2") != 0 ) {
  // FIXME: remove krait check when GNU tools support krait cpu
-    if (STI.isKrait()) {
-      ATS.emitTextAttribute(ARMBuildAttrs::CPU_name, "cortex-a9");
+    if (STI.isKrait2()) {
+      ATS.emitTextAttribute(ARMBuildAttrs::CPU_name, "cortex-a15");
       // We consider krait as a "cortex-a9" + hwdiv CPU
       // Enable hwdiv through ".arch_extension idiv"
       if (STI.hasDivide() || STI.hasDivideInARMMode())
