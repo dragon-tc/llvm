@@ -218,7 +218,7 @@ SchedulePostRATDList::SchedulePostRATDList(
      ((AntiDepMode == TargetSubtargetInfo::ANTIDEP_CRITICAL) ?
       (AntiDepBreaker *)new CriticalAntiDepBreaker(MF, RCI) : nullptr));
   ProfitRec =
-    TM.getInstrInfo()->CreateTargetPostRAProfitRecognizer(InstrItins);
+    MF.getSubtarget().getInstrInfo()->CreateTargetPostRAProfitRecognizer(InstrItins);
   AvailableQueue.setProfitRec(ProfitRec);
 }
 
