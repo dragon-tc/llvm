@@ -173,9 +173,6 @@ static IdentifyingPassPtr overridePass(AnalysisID StandardID,
   if (StandardID == &MachineGCHID)
     return applyDisable(TargetID, DisableMachineGCH);
 
-  if (StandardID == &MachineSchedulerID)
-    return applyOverride(TargetID, EnableMachineSched, StandardID);
-
   if (StandardID == &TargetPassConfig::PostRAMachineLICMID)
     return applyDisable(TargetID, DisablePostRAMachineLICM);
 
