@@ -2,6 +2,13 @@
 
 cmake_minimum_required(VERSION 2.8.12.2)
 
+# Configure CCache if available
+find_program(CCACHE_FOUND ccache)
+if(CCACHE_FOUND)
+        set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
+        set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
+endif(CCACHE_FOUND)
+
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "No build type selected, default to Debug")
   set(CMAKE_BUILD_TYPE "Debug")
