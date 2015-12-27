@@ -176,6 +176,11 @@ def FeatureStrictAlign : SubtargetFeature<"strict-align",
                                           "Disallow all unaligned memory "
                                           "access">;
 
+// RenderScript-specific support for 64-bit long types on all targets
+def FeatureLong64 : SubtargetFeature<"long64", "UseLong64",
+                                     "true",
+                                     "long type is forced to be 64-bit">;
+
 def FeatureLongCalls : SubtargetFeature<"long-calls", "GenLongCalls", "true",
                                         "Generate calls via indirect call "
                                         "instructions">;
