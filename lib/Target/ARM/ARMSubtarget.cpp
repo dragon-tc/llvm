@@ -173,6 +173,7 @@ void ARMSubtarget::initializeEnvironment() {
   UseNaClTrap = false;
   GenLongCalls = false;
   UnsafeFPMath = false;
+  UseLong64 = false;
 }
 
 void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
