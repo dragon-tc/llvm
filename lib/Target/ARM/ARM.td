@@ -275,6 +275,16 @@ def ProcKrait   : SubtargetFeature<"krait", "ARMProcFamily", "Krait",
                                     FeatureHWDiv,
                                     FeatureHWDivARM]>;
 
+def ProcKrait2   : SubtargetFeature<"krait2", "ARMProcFamily", "Krait2",
+                                   "Qualcomm ARM processors",
+                                   [FeatureNEONForFP,
+                                    FeatureT2XtPk, FeatureMP,
+                                    FeatureAvoidPartialCPSR,
+                                    FeatureTrustZone,
+                                    FeatureVFP4,
+                                    FeatureHWDiv,
+                                    FeatureHWDivARM]>;
+
 //===----------------------------------------------------------------------===//
 // ARM schedules.
 //
