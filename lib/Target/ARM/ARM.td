@@ -275,7 +275,7 @@ def ProcKrait   : SubtargetFeature<"krait", "ARMProcFamily", "Krait",
                                     FeatureHWDiv,
                                     FeatureHWDivARM]>;
 
-def ProcKrait2   : SubtargetFeature<"krait2", "ARMProcFamily", "Krait2",
+def ProcKrait2   : SubtargetFeature<"krait2", "ARMProcFamily", "Krait",
                                    "Qualcomm ARM processors",
                                    [FeatureNEONForFP,
                                     FeatureT2XtPk, FeatureMP,
