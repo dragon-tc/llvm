@@ -196,6 +196,7 @@ struct {
   { "cortex-a15",    ARM::AK_ARMV7A,   false },
   { "cortex-a17",    ARM::AK_ARMV7A,   false },
   { "krait",         ARM::AK_ARMV7A,   false },
+  { "krait2",        ARM::AK_ARMV7A,   false },
   { "cortex-r4",     ARM::AK_ARMV7R,   true },
   { "cortex-r4f",    ARM::AK_ARMV7R,   false },
   { "cortex-r5",     ARM::AK_ARMV7R,   false },
