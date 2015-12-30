@@ -198,6 +198,8 @@ ARM_CPU_NAME("cortex-a17", AK_ARMV7A, FK_NEON_VFPV4, false,
              (AEK_SEC | AEK_MP | AEK_VIRT | AEK_HWDIVARM | AEK_HWDIV))
 ARM_CPU_NAME("krait", AK_ARMV7A, FK_NEON_VFPV4, false,
              (AEK_HWDIVARM | AEK_HWDIV))
+ARM_CPU_NAME("krait2", AK_ARMV7A, FK_NEON_VFPV4, false,
+             (AEK_HWDIVARM | AEK_HWDIV))
 ARM_CPU_NAME("cortex-r4", AK_ARMV7R, FK_NONE, true, AEK_NONE)
 ARM_CPU_NAME("cortex-r4f", AK_ARMV7R, FK_VFPV3_D16, false, AEK_NONE)
 ARM_CPU_NAME("cortex-r5", AK_ARMV7R, FK_VFPV3_D16, false,
