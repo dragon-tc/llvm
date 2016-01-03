@@ -603,20 +603,6 @@ def : ProcessorModel<"cortex-r5",   CortexA8Model,      [ARMv7r, ProcR5,
                                                          FeatureAvoidPartialCPSR,
                                                          FeatureT2XtPk]>;
 
-// FIXME: R7 has currently the same ProcessorModel as A8 and is modelled as R5.
-def : ProcessorModel<"cortex-r7",   CortexA8Model,      [ARMv7r, ProcR7,
-                                                         FeatureHasRAS,
-                                                         FeatureVFP3,
-                                                         FeatureVFPOnlySP,
-                                                         FeatureD16,
-                                                         FeatureFP16,
-                                                         FeatureMP,
-                                                         FeatureSlowFPBrcc,
-                                                         FeatureHWDivARM,
-                                                         FeatureHasSlowFPVMLx,
-                                                         FeatureAvoidPartialCPSR,
-                                                         FeatureT2XtPk]>;
-
 def : ProcNoItin<"cortex-m3",                           [ARMv7m]>;
 def : ProcNoItin<"sc300",                               [ARMv7m]>;
 
