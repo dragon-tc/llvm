@@ -56,9 +56,6 @@ static cl::opt<bool> DisableMachineLICM("disable-machine-licm", cl::Hidden,
     cl::desc("Disable Machine LICM"));
 static cl::opt<bool> DisableMachineCSE("disable-machine-cse", cl::Hidden,
     cl::desc("Disable Machine Common Subexpression Elimination"));
-static cl::opt<cl::boolOrDefault>
-    EnableShrinkWrapOpt("enable-shrink-wrap", cl::Hidden,
-                        cl::desc("enable the shrink-wrapping pass"));
 static cl::opt<cl::boolOrDefault> OptimizeRegAlloc(
     "optimize-regalloc", cl::Hidden,
     cl::desc("Enable optimized register allocation compilation path."));
