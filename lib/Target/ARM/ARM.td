@@ -590,7 +590,7 @@ def : ProcessorModel<"cortex-r4f",  CortexA8Model,
 def : ProcessorModel<"krait2",      Krait2Model,
                                     [ProcKrait, HasV7Ops, FeatureNEON, FeatureVFP4,
                                      FeatureDB, FeatureHasRAS, FeatureAClass,
-                                     FeatureDSPThumb2, FeatureHWDiv]>;
+                                     FeatureDSP, FeatureHWDiv]>;
 
 // FIXME: R5 has currently the same ProcessorModel as A8.
 def : ProcessorModel<"cortex-r5",   CortexA8Model,      [ARMv7r, ProcR5,
