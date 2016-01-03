@@ -562,10 +562,6 @@ namespace llvm {
   /// memory operations.
   extern char &ImplicitNullChecksID;
 
-  /// MachineGCH - This pass performs global GCH (Global Code Hoisting)
-  /// on machine instructions.
-  extern char &MachineGCHID;
-
   /// MachineLICM - This pass performs LICM on machine instructions.
   extern char &MachineLICMID;
 

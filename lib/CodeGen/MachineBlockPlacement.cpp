@@ -1420,7 +1420,7 @@ bool MachineBlockPlacement::isBranchTarget(MachineBasicBlock &MBB) {
   }
 }
 
-
+/*
 /// splitBBAt - Splits given block at a given position
 ///
 MachineBasicBlock *MachineBlockPlacement::splitBBAt(MachineFunction &MF,
@@ -1428,7 +1428,7 @@ MachineBasicBlock *MachineBlockPlacement::splitBBAt(MachineFunction &MF,
       RegScavenger *RS) {
   const BasicBlock *IR_Block = MBB.getBasicBlock();
   MachineBasicBlock *NewBlock = MF.CreateMachineBasicBlock(IR_Block);
-  MachineFunction::iterator MBBI = &MBB;
+  MachineBasicBlock::iterator MBBI = &MBB;
   MF.insert(++MBBI, NewBlock);
 
   NewBlock->transferSuccessors(&MBB);
@@ -1467,7 +1467,7 @@ bool MachineBlockPlacement::splitBB(MachineFunction &MF,
     MIs.push_back(&*I);
   }
   for (MIVector::iterator I = MIs.begin(), E = MIs.end(); I != E; ++I) {
-    MachineInstr *MI = *I;
+    MachineBasicBlock *MI = *I;
     const MCInstrDesc &MCID = MI->getDesc();
     if (MCID.isCall()) {
       MachineBasicBlock::instr_iterator It = MI;
@@ -1482,7 +1482,7 @@ bool MachineBlockPlacement::splitBB(MachineFunction &MF,
   return Changed;
 }
 
-
+*/
 /// alignBranchTargets - Sets proper alignment (i.e. one that is preferred
 /// by the target architecture) for targets of branches.  This also applies
 /// to return points from function calls.  If a call is in the middle of
