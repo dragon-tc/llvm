@@ -2556,6 +2556,9 @@ bool llvm::CannotBeOrderedLessThanZero(const Value *V, unsigned Depth) {
 
   switch (I->getOpcode()) {
   default: break;
+  // Unsigned integers are always nonnegative.
+  case Instruction::UIToFP:
+    return true;
   case Instruction::FMul:
     // x*x is always non-negative or a NaN.
     if (I->getOperand(0) == I->getOperand(1)) 
@@ -2566,6 +2569,9 @@ bool llvm::CannotBeOrderedLessThanZero(const Value *V, unsigned Depth) {
   case Instruction::FRem:
     return CannotBeOrderedLessThanZero(I->getOperand(0), Depth+1) &&
            CannotBeOrderedLessThanZero(I->getOperand(1), Depth+1);
+  case Instruction::Select:
+    return CannotBeOrderedLessThanZero(I->getOperand(1), Depth+1) &&
+           CannotBeOrderedLessThanZero(I->getOperand(2), Depth+1);
   case Instruction::FPExt:
   case Instruction::FPTrunc:
     // Widening/narrowing never change sign.
@@ -2574,6 +2580,12 @@ bool llvm::CannotBeOrderedLessThanZero(const Value *V, unsigned Depth) {
     if (const IntrinsicInst *II = dyn_cast<IntrinsicInst>(I)) 
       switch (II->getIntrinsicID()) {
       default: break;
+      case Intrinsic::maxnum:
+        return CannotBeOrderedLessThanZero(I->getOperand(0), Depth+1) ||
+               CannotBeOrderedLessThanZero(I->getOperand(1), Depth+1);
+      case Intrinsic::minnum:
+        return CannotBeOrderedLessThanZero(I->getOperand(0), Depth+1) &&
+               CannotBeOrderedLessThanZero(I->getOperand(1), Depth+1);
       case Intrinsic::exp:
       case Intrinsic::exp2:
       case Intrinsic::fabs:
@@ -2830,7 +2842,12 @@ Value *llvm::GetPointerBaseWithConstantOffset(Value *Ptr, int64_t &Offset,
                                               const DataLayout &DL) {
   unsigned BitWidth = DL.getPointerTypeSizeInBits(Ptr->getType());
   APInt ByteOffset(BitWidth, 0);
-  while (1) {
+
+  // We walk up the defs but use a visited set to handle unreachable code. In
+  // that case, we stop after accumulating the cycle once (not that it
+  // matters).
+  SmallPtrSet<Value *, 16> Visited;
+  while (Visited.insert(Ptr).second) {
     if (Ptr->getType()->isVectorTy())
       break;
 
@@ -3269,12 +3286,9 @@ static bool isDereferenceableAndAlignedPointer(
   }
 
   // For gc.relocate, look through relocations
-  if (const IntrinsicInst *I = dyn_cast<IntrinsicInst>(V))
-    if (I->getIntrinsicID() == Intrinsic::experimental_gc_relocate) {
-      GCRelocateOperands RelocateInst(I);
-      return isDereferenceableAndAlignedPointer(
-          RelocateInst.getDerivedPtr(), Align, DL, CtxI, DT, TLI, Visited);
-    }
+  if (const GCRelocateInst *RelocateInst = dyn_cast<GCRelocateInst>(V))
+    return isDereferenceableAndAlignedPointer(
+        RelocateInst->getDerivedPtr(), Align, DL, CtxI, DT, TLI, Visited);
 
   if (const AddrSpaceCastInst *ASC = dyn_cast<AddrSpaceCastInst>(V))
     return isDereferenceableAndAlignedPointer(ASC->getOperand(0), Align, DL,
@@ -3474,10 +3488,6 @@ bool llvm::isKnownNonNull(const Value *V, const TargetLibraryInfo *TLI) {
   if (auto CS = ImmutableCallSite(V))
     if (CS.isReturnNonNull())
       return true;
-
-  // operator new never returns null.
-  if (isOperatorNewLikeFn(V, TLI, /*LookThroughBitCast=*/true))
-    return true;
 
   return false;
 }

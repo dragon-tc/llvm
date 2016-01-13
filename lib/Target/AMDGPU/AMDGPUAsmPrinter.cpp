@@ -91,6 +91,25 @@ AMDGPUAsmPrinter::AMDGPUAsmPrinter(TargetMachine &TM,
                                    std::unique_ptr<MCStreamer> Streamer)
     : AsmPrinter(TM, std::move(Streamer)) {}
 
+void AMDGPUAsmPrinter::EmitStartOfAsmFile(Module &M) {
+  if (TM.getTargetTriple().getOS() != Triple::AMDHSA)
+    return;
+
+  // Need to construct an MCSubtargetInfo here in case we have no functions
+  // in the module.
+  std::unique_ptr<MCSubtargetInfo> STI(TM.getTarget().createMCSubtargetInfo(
+        TM.getTargetTriple().str(), TM.getTargetCPU(),
+        TM.getTargetFeatureString()));
+
+  AMDGPUTargetStreamer *TS =
+      static_cast<AMDGPUTargetStreamer *>(OutStreamer->getTargetStreamer());
+
+  TS->EmitDirectiveHSACodeObjectVersion(1, 0);
+  AMDGPU::IsaVersion ISA = AMDGPU::getIsaVersion(STI->getFeatureBits());
+  TS->EmitDirectiveHSACodeObjectISA(ISA.Major, ISA.Minor, ISA.Stepping,
+                                    "AMD", "AMDGPU");
+}
+
 void AMDGPUAsmPrinter::EmitFunctionBodyStart() {
   const AMDGPUSubtarget &STM = MF->getSubtarget<AMDGPUSubtarget>();
   SIProgramInfo KernelInfo;
@@ -148,11 +167,15 @@ void AMDGPUAsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
     TS->EmitAMDGPUHsaProgramScopeGlobal(GV->getName());
   }
 
+  MCSymbolELF *GVSym = cast<MCSymbolELF>(getSymbol(GV));
   const DataLayout &DL = getDataLayout();
+
+  // Emit the size
+  uint64_t Size = DL.getTypeAllocSize(GV->getType()->getElementType());
+  OutStreamer->emitELFSize(GVSym, MCConstantExpr::create(Size, OutContext));
   OutStreamer->PushSection();
   OutStreamer->SwitchSection(
       getObjFileLowering().SectionForGlobal(GV, *Mang, TM));
-  MCSymbol *GVSym = getSymbol(GV);
   const Constant *C = GV->getInitializer();
   OutStreamer->EmitLabel(GVSym);
   EmitGlobalConstant(DL, C);
@@ -178,13 +201,6 @@ bool AMDGPUAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
     if (!STM.isAmdHsaOS()) {
       EmitProgramInfoSI(MF, KernelInfo);
     }
-    // Emit directives
-    AMDGPUTargetStreamer *TS =
-        static_cast<AMDGPUTargetStreamer *>(OutStreamer->getTargetStreamer());
-    TS->EmitDirectiveHSACodeObjectVersion(1, 0);
-    AMDGPU::IsaVersion ISA = STM.getIsaVersion();
-    TS->EmitDirectiveHSACodeObjectISA(ISA.Major, ISA.Minor, ISA.Stepping,
-                                      "AMD", "AMDGPU");
   } else {
     EmitProgramInfoR600(MF);
   }
@@ -417,15 +433,23 @@ void AMDGPUAsmPrinter::getSIProgramInfo(SIProgramInfo &ProgInfo,
     }
   }
 
-  if (VCCUsed || FlatUsed)
-    MaxSGPR += 2;
+  unsigned ExtraSGPRs = 0;
 
-  if (FlatUsed) {
-    MaxSGPR += 2;
-    // 2 additional for VI+.
-    if (STM.getGeneration() >= AMDGPUSubtarget::VOLCANIC_ISLANDS)
-      MaxSGPR += 2;
+  if (VCCUsed)
+    ExtraSGPRs = 2;
+
+  if (STM.getGeneration() < AMDGPUSubtarget::VOLCANIC_ISLANDS) {
+    if (FlatUsed)
+      ExtraSGPRs = 4;
+  } else {
+    if (STM.isXNACKEnabled())
+      ExtraSGPRs = 4;
+
+    if (FlatUsed)
+      ExtraSGPRs = 6;
   }
+
+  MaxSGPR += ExtraSGPRs;
 
   // We found the maximum register index. They start at 0, so add one to get the
   // number of registers.
@@ -619,6 +643,9 @@ void AMDGPUAsmPrinter::EmitAmdKernelCodeT(const MachineFunction &MF,
 
   if (MFI->hasDispatchPtr())
     header.code_properties |= AMD_CODE_PROPERTY_ENABLE_SGPR_DISPATCH_PTR;
+
+  if (STM.isXNACKEnabled())
+    header.code_properties |= AMD_CODE_PROPERTY_IS_XNACK_SUPPORTED;
 
   header.kernarg_segment_byte_size = MFI->ABIArgOffset;
   header.wavefront_sgpr_count = KernelInfo.NumSGPR;
