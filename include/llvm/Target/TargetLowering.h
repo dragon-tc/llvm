@@ -2287,7 +2287,7 @@ public:
   }
 
   /// Return true if the MachineFunction contains a COPY which would imply
-  /// HasOpaqueSPAdjustment.
+  /// HasCopyImplyingStackAdjustment.
   virtual bool hasCopyImplyingStackAdjustment(MachineFunction *MF) const {
     return false;
   }
