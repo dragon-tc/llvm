@@ -333,6 +333,8 @@ def ProcA73     : SubtargetFeature<"a73", "ARMProcFamily", "CortexA73",
 
 def ProcKrait   : SubtargetFeature<"krait", "ARMProcFamily", "Krait",
                                    "Qualcomm ARM processors", []>;
+def ProcKrait2  : SubtargetFeature<"krait2", "ARMProcFamily", "Krait",
+                                   "Qualcomm ARM processors", []>;
 def ProcSwift   : SubtargetFeature<"swift", "ARMProcFamily", "Swift",
                                    "Swift ARM processors", []>;
 
@@ -646,6 +648,17 @@ def : ProcessorModel<"cortex-a17",  CortexA9Model,      [ARMv7a, ProcA17,
 // FIXME: krait has currently the same features as A9 plus VFP4 and hardware
 //        division features.
 def : ProcessorModel<"krait",       CortexA9Model,      [ARMv7a, ProcKrait,
+                                                         FeatureHasRetAddrStack,
+                                                         FeatureMuxedUnits,
+                                                         FeatureCheckVLDnAlign,
+                                                         FeatureVMLxForwarding,
+                                                         FeatureT2XtPk,
+                                                         FeatureFP16,
+                                                         FeatureAvoidPartialCPSR,
+                                                         FeatureVFP4,
+                                                         FeatureHWDiv,
+                                                         FeatureHWDivARM]>;
+def : ProcessorModel<"krait2",       CortexA9Model,      [ARMv7a, ProcKrait,
                                                          FeatureHasRetAddrStack,
                                                          FeatureMuxedUnits,
                                                          FeatureCheckVLDnAlign,
