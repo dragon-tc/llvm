@@ -11,7 +11,6 @@
 #include "X86AsmInstrumentation.h"
 #include "X86AsmParserCommon.h"
 #include "X86Operand.h"
-#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -908,9 +907,15 @@ bool X86AsmParser::ParseRegister(unsigned &RegNo,
     if (RegNo == X86::RIZ ||
         X86MCRegisterClasses[X86::GR64RegClassID].contains(RegNo) ||
         X86II::isX86_64NonExtLowByteReg(RegNo) ||
-        X86II::isX86_64ExtendedReg(RegNo))
+        X86II::isX86_64ExtendedReg(RegNo) ||
+        X86II::is32ExtendedReg(RegNo))
       return Error(StartLoc, "register %"
                    + Tok.getString() + " is only available in 64-bit mode",
+                   SMRange(StartLoc, EndLoc));
+  } else if (!getSTI().getFeatureBits()[X86::FeatureAVX512]) {
+    if (X86II::is32ExtendedReg(RegNo))
+      return Error(StartLoc, "register %"
+                   + Tok.getString() + " is only available with AVX512",
                    SMRange(StartLoc, EndLoc));
   }
 
@@ -1006,9 +1011,7 @@ std::unique_ptr<X86Operand> X86AsmParser::DefaultMemDIOperand(SMLoc Loc) {
 
 bool X86AsmParser::IsSIReg(unsigned Reg) {
   switch (Reg) {
-  default:
-    llvm_unreachable("Only (R|E)SI and (R|E)DI are expected!");
-    return false;
+  default: llvm_unreachable("Only (R|E)SI and (R|E)DI are expected!");
   case X86::RSI:
   case X86::ESI:
   case X86::SI:
@@ -1023,9 +1026,7 @@ bool X86AsmParser::IsSIReg(unsigned Reg) {
 unsigned X86AsmParser::GetSIDIForRegClass(unsigned RegClassID, unsigned Reg,
                                           bool IsSIReg) {
   switch (RegClassID) {
-  default:
-    llvm_unreachable("Unexpected register class");
-    return Reg;
+  default: llvm_unreachable("Unexpected register class");
   case X86::GR64RegClassID:
     return IsSIReg ? X86::RSI : X86::RDI;
   case X86::GR32RegClassID:
@@ -1052,9 +1053,9 @@ bool X86AsmParser::VerifyAndAdjustOperands(OperandVector &OrigOperands,
                                            OperandVector &FinalOperands) {
 
   if (OrigOperands.size() > 1) {
-    // Check if sizes match, OrigOpernads also contains the instruction name
+    // Check if sizes match, OrigOperands also contains the instruction name
     assert(OrigOperands.size() == FinalOperands.size() + 1 &&
-           "Opernand size mismatch");
+           "Operand size mismatch");
 
     SmallVector<std::pair<SMLoc, std::string>, 2> Warnings;
     // Verify types match
@@ -1092,7 +1093,7 @@ bool X86AsmParser::VerifyAndAdjustOperands(OperandVector &OrigOperands,
         else if (X86MCRegisterClasses[X86::GR16RegClassID].contains(OrigReg))
           RegClassID = X86::GR16RegClassID;
         else
-          // Unexpexted register class type
+          // Unexpected register class type
           // Return false and let a normal complaint about bogus operands happen
           return false;
 
@@ -1115,9 +1116,8 @@ bool X86AsmParser::VerifyAndAdjustOperands(OperandVector &OrigOperands,
 
     // Produce warnings only if all the operands passed the adjustment - prevent
     // legal cases like "movsd (%rax), %xmm0" mistakenly produce warnings
-    for (auto WarningMsg = Warnings.begin(); WarningMsg < Warnings.end();
-         ++WarningMsg) {
-      Warning((*WarningMsg).first, (*WarningMsg).second);
+    for (auto &WarningMsg : Warnings) {
+      Warning(WarningMsg.first, WarningMsg.second);
     }
 
     // Remove old operands
@@ -2303,6 +2303,7 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
     Name == "repne" || Name == "repnz" ||
     Name == "rex64" || Name == "data16";
 
+  bool CurlyAsEndOfStatement = false;
   // This does the actual operand parsing.  Don't parse any more if we have a
   // prefix juxtaposed with an operation like "lock incl 4(%rax)", because we
   // just want to parse the "lock" as the first instruction and the "incl" as
@@ -2330,7 +2331,12 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
         break;
      }
 
-    if (getLexer().isNot(AsmToken::EndOfStatement))
+    // In MS inline asm curly braces mark the begining/end of a block, therefore
+    // they should be interepreted as end of statement
+    CurlyAsEndOfStatement =
+        isParsingIntelSyntax() && isParsingInlineAsm() &&
+        (getLexer().is(AsmToken::LCurly) || getLexer().is(AsmToken::RCurly));
+    if (getLexer().isNot(AsmToken::EndOfStatement) && !CurlyAsEndOfStatement)
       return ErrorAndEatStatement(getLexer().getLoc(),
                                   "unexpected token in argument list");
    }
@@ -2339,6 +2345,10 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
   if (getLexer().is(AsmToken::EndOfStatement) ||
       (isPrefix && getLexer().is(AsmToken::Slash)))
     Parser.Lex();
+  else if (CurlyAsEndOfStatement)
+    // Add an actual EndOfStatement before the curly brace
+    Info.AsmRewrites->emplace_back(AOK_EndOfStatement,
+                                   getLexer().getTok().getLoc(), 0);
 
   // This is for gas compatibility and cannot be done in td.
   // Adding "p" for some floating point with no argument.
@@ -2354,10 +2364,11 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
     static_cast<X86Operand &>(*Operands[0]).setTokenValue(Repl);
   }
 
-  // This is a terrible hack to handle "out[bwl]? %al, (%dx)" ->
+  // This is a terrible hack to handle "out[s]?[bwl]? %al, (%dx)" ->
   // "outb %al, %dx".  Out doesn't take a memory form, but this is a widely
   // documented form in various unofficial manuals, so a lot of code uses it.
-  if ((Name == "outb" || Name == "outw" || Name == "outl" || Name == "out") &&
+  if ((Name == "outb" || Name == "outsb" || Name == "outw" || Name == "outsw" ||
+       Name == "outl" || Name == "outsl" || Name == "out" || Name == "outs") &&
       Operands.size() == 3) {
     X86Operand &Op = (X86Operand &)*Operands.back();
     if (Op.isMem() && Op.Mem.SegReg == 0 &&
@@ -2368,8 +2379,9 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
       Operands.back() = X86Operand::CreateReg(Op.Mem.BaseReg, Loc, Loc);
     }
   }
-  // Same hack for "in[bwl]? (%dx), %al" -> "inb %dx, %al".
-  if ((Name == "inb" || Name == "inw" || Name == "inl" || Name == "in") &&
+  // Same hack for "in[s]?[bwl]? (%dx), %al" -> "inb %dx, %al".
+  if ((Name == "inb" || Name == "insb" || Name == "inw" || Name == "insw" ||
+       Name == "inl" || Name == "insl" || Name == "in" || Name == "ins") &&
       Operands.size() == 3) {
     X86Operand &Op = (X86Operand &)*Operands[1];
     if (Op.isMem() && Op.Mem.SegReg == 0 &&
@@ -2517,60 +2529,7 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
 }
 
 bool X86AsmParser::processInstruction(MCInst &Inst, const OperandVector &Ops) {
-  switch (Inst.getOpcode()) {
-  default: return false;
-  case X86::VMOVZPQILo2PQIrr:
-  case X86::VMOVAPDrr:
-  case X86::VMOVAPDYrr:
-  case X86::VMOVAPSrr:
-  case X86::VMOVAPSYrr:
-  case X86::VMOVDQArr:
-  case X86::VMOVDQAYrr:
-  case X86::VMOVDQUrr:
-  case X86::VMOVDQUYrr:
-  case X86::VMOVUPDrr:
-  case X86::VMOVUPDYrr:
-  case X86::VMOVUPSrr:
-  case X86::VMOVUPSYrr: {
-    if (X86II::isX86_64ExtendedReg(Inst.getOperand(0).getReg()) ||
-        !X86II::isX86_64ExtendedReg(Inst.getOperand(1).getReg()))
-      return false;
-
-    unsigned NewOpc;
-    switch (Inst.getOpcode()) {
-    default: llvm_unreachable("Invalid opcode");
-    case X86::VMOVZPQILo2PQIrr: NewOpc = X86::VMOVPQI2QIrr;   break;
-    case X86::VMOVAPDrr:        NewOpc = X86::VMOVAPDrr_REV;  break;
-    case X86::VMOVAPDYrr:       NewOpc = X86::VMOVAPDYrr_REV; break;
-    case X86::VMOVAPSrr:        NewOpc = X86::VMOVAPSrr_REV;  break;
-    case X86::VMOVAPSYrr:       NewOpc = X86::VMOVAPSYrr_REV; break;
-    case X86::VMOVDQArr:        NewOpc = X86::VMOVDQArr_REV;  break;
-    case X86::VMOVDQAYrr:       NewOpc = X86::VMOVDQAYrr_REV; break;
-    case X86::VMOVDQUrr:        NewOpc = X86::VMOVDQUrr_REV;  break;
-    case X86::VMOVDQUYrr:       NewOpc = X86::VMOVDQUYrr_REV; break;
-    case X86::VMOVUPDrr:        NewOpc = X86::VMOVUPDrr_REV;  break;
-    case X86::VMOVUPDYrr:       NewOpc = X86::VMOVUPDYrr_REV; break;
-    case X86::VMOVUPSrr:        NewOpc = X86::VMOVUPSrr_REV;  break;
-    case X86::VMOVUPSYrr:       NewOpc = X86::VMOVUPSYrr_REV; break;
-    }
-    Inst.setOpcode(NewOpc);
-    return true;
-  }
-  case X86::VMOVSDrr:
-  case X86::VMOVSSrr: {
-    if (X86II::isX86_64ExtendedReg(Inst.getOperand(0).getReg()) ||
-        !X86II::isX86_64ExtendedReg(Inst.getOperand(2).getReg()))
-      return false;
-    unsigned NewOpc;
-    switch (Inst.getOpcode()) {
-    default: llvm_unreachable("Invalid opcode");
-    case X86::VMOVSDrr: NewOpc = X86::VMOVSDrr_REV;   break;
-    case X86::VMOVSSrr: NewOpc = X86::VMOVSSrr_REV;   break;
-    }
-    Inst.setOpcode(NewOpc);
-    return true;
-  }
-  }
+  return false;
 }
 
 static const char *getSubtargetFeatureName(uint64_t Val);

@@ -61,6 +61,12 @@ def FeatureFlatAddressSpace : SubtargetFeature<"flat-address-space",
   "Support flat address space"
 >;
 
+def FeatureUnalignedBufferAccess : SubtargetFeature<"unaligned-buffer-access",
+  "UnalignedBufferAccess",
+  "true",
+  "Support unaligned global loads and stores"
+>;
+
 def FeatureXNACK : SubtargetFeature<"xnack",
   "EnableXNACK",
   "true",
@@ -149,6 +155,18 @@ def FeatureCIInsts : SubtargetFeature<"ci-insts",
   "Additional intstructions for CI+"
 >;
 
+def FeatureSMemRealTime : SubtargetFeature<"s-memrealtime",
+  "HasSMemRealTime",
+  "true",
+  "Has s_memrealtime instruction"
+>;
+
+def Feature16BitInsts : SubtargetFeature<"16-bit-insts",
+  "Has16BitInsts",
+  "true",
+  "Has i16/f16 instructions"
+>;
+
 //===------------------------------------------------------------===//
 // Subtarget Features (options and debugging)
 //===------------------------------------------------------------===//
@@ -186,14 +204,6 @@ def FeatureMaxPrivateElementSize4 : FeatureMaxPrivateElementSize<4>;
 def FeatureMaxPrivateElementSize8 : FeatureMaxPrivateElementSize<8>;
 def FeatureMaxPrivateElementSize16 : FeatureMaxPrivateElementSize<16>;
 
-
-def FeatureEnableHugeScratchBuffer : SubtargetFeature<
-  "huge-scratch-buffer",
-  "EnableHugeScratchBuffer",
-  "true",
-  "Enable scratch buffer sizes greater than 128 GB"
->;
-
 def FeatureVGPRSpilling : SubtargetFeature<"vgpr-spilling",
   "EnableVGPRSpilling",
   "true",
@@ -210,12 +220,6 @@ def FeatureDumpCodeLower : SubtargetFeature <"dumpcode",
   "DumpCode",
   "true",
   "Dump MachineInstrs in the CodeEmitter"
->;
-
-def FeatureIRStructurizer : SubtargetFeature <"disable-irstructurizer",
-  "EnableIRStructurizer",
-  "false",
-  "Disable IR Structurizer"
 >;
 
 def FeaturePromoteAlloca : SubtargetFeature <"promote-alloca",
@@ -241,12 +245,6 @@ def FeatureEnableUnsafeDSOffsetFolding : SubtargetFeature <
   "EnableUnsafeDSOffsetFolding",
   "true",
   "Force using DS instruction immediate offsets on SI"
->;
-
-def FeatureIfCvt : SubtargetFeature <"disable-ifcvt",
-  "EnableIfCvt",
-  "false",
-  "Disable the if conversion pass"
 >;
 
 def FeatureEnableSIScheduler : SubtargetFeature<"si-scheduler",
@@ -308,7 +306,34 @@ def FeatureSeaIslands : SubtargetFeatureGeneration<"SEA_ISLANDS",
 def FeatureVolcanicIslands : SubtargetFeatureGeneration<"VOLCANIC_ISLANDS",
   [FeatureFP64, FeatureLocalMemorySize65536,
    FeatureWavefrontSize64, FeatureFlatAddressSpace, FeatureGCN,
-   FeatureGCN3Encoding, FeatureCIInsts]
+   FeatureGCN3Encoding, FeatureCIInsts, Feature16BitInsts,
+   FeatureSMemRealTime
+  ]
+>;
+
+//===----------------------------------------------------------------------===//
+// Debugger related subtarget features.
+//===----------------------------------------------------------------------===//
+
+def FeatureDebuggerInsertNops : SubtargetFeature<
+  "amdgpu-debugger-insert-nops",
+  "DebuggerInsertNops",
+  "true",
+  "Insert one nop instruction for each high level source statement"
+>;
+
+def FeatureDebuggerReserveRegs : SubtargetFeature<
+  "amdgpu-debugger-reserve-regs",
+  "DebuggerReserveRegs",
+  "true",
+  "Reserve registers for debugger usage"
+>;
+
+def FeatureDebuggerEmitPrologue : SubtargetFeature<
+  "amdgpu-debugger-emit-prologue",
+  "DebuggerEmitPrologue",
+  "true",
+  "Emit debugger prologue"
 >;
 
 //===----------------------------------------------------------------------===//

@@ -1,4 +1,7 @@
-; RUN: llc -fixup-byte-word-insts -march=x86-64 < %s | FileCheck %s
+; RUN: llc -fixup-byte-word-insts=1 -march=x86-64 < %s | \
+; RUN: FileCheck -check-prefix CHECK -check-prefix BWON %s
+; RUN: llc -fixup-byte-word-insts=0 -march=x86-64 < %s | \
+; RUN: FileCheck -check-prefix CHECK -check-prefix BWOFF %s
 
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64-v128:128:128-a0:0:64-s0:64:64-f80:128:128-n8:16:32:64-S128"
 target triple = "x86_64-apple-macosx10.8.0"
@@ -8,15 +11,15 @@ target triple = "x86_64-apple-macosx10.8.0"
 ; This has byte loads interspersed with byte stores, in a single
 ; basic-block loop.  The upper portion should be dead, so the movb loads
 ; should have been changed into movzbl instead.
-; TODO: The second movb load doesn't get fixed due to register liveness
-; not being accurate enough.
 ; CHECK-LABEL: foo1
 ; load:
-; CHECK: movzbl
+; BWON:  movzbl
+; BWOFF: movb
 ; store:
 ; CHECK: movb
 ; load:
-; CHECK: movb
+; BWON: movzbl
+; BWOFF: movb
 ; store:
 ; CHECK: movb
 ; CHECK: ret
@@ -55,15 +58,15 @@ a4:                                       ; preds = %4, %.lr.ph
 ; This has word loads interspersed with word stores.
 ; The upper portion should be dead, so the movw loads should have
 ; been changed into movzwl instead.
-; TODO: The second movw load doesn't get fixed due to register liveness
-; not being accurate enough.
 ; CHECK-LABEL: foo2
 ; load:
-; CHECK: movzwl
+; BWON:  movzwl
+; BWOFF: movw
 ; store:
 ; CHECK: movw
 ; load:
-; CHECK: movw
+; BWON:  movzwl
+; BWOFF: movw
 ; store:
 ; CHECK: movw
 ; CHECK: ret
@@ -113,7 +116,8 @@ define void @foo3(i8 *%dst, i8 *%src) {
 ; movw and movzwl are the same size, we should always choose to use
 ; movzwl instead.
 ; CHECK-LABEL: foo4:
-; CHECK: movzwl
+; BWON:  movzwl
+; BWOFF: movw
 ; CHECK: movw
 define void @foo4(i16 *%dst, i16 *%src) {
   %t0 = load i16, i16 *%src, align 2

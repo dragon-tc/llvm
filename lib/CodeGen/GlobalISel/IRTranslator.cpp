@@ -13,6 +13,7 @@
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/CodeGen/GlobalISel/CallLowering.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/IR/Constant.h"
@@ -26,20 +27,23 @@
 using namespace llvm;
 
 char IRTranslator::ID = 0;
+INITIALIZE_PASS(IRTranslator, "irtranslator", "IRTranslator LLVM IR -> MI",
+                false, false);
 
 IRTranslator::IRTranslator() : MachineFunctionPass(ID), MRI(nullptr) {
+  initializeIRTranslatorPass(*PassRegistry::getPassRegistry());
 }
 
-unsigned IRTranslator::getOrCreateVReg(const Value *Val) {
-  unsigned &ValReg = ValToVReg[Val];
+unsigned IRTranslator::getOrCreateVReg(const Value &Val) {
+  unsigned &ValReg = ValToVReg[&Val];
   // Check if this is the first time we see Val.
   if (!ValReg) {
     // Fill ValRegsSequence with the sequence of registers
     // we need to concat together to produce the value.
-    assert(Val->getType()->isSized() &&
+    assert(Val.getType()->isSized() &&
            "Don't know how to create an empty vreg");
-    assert(!Val->getType()->isAggregateType() && "Not yet implemented");
-    unsigned Size = Val->getType()->getPrimitiveSizeInBits();
+    assert(!Val.getType()->isAggregateType() && "Not yet implemented");
+    unsigned Size = Val.getType()->getPrimitiveSizeInBits();
     unsigned VReg = MRI->createGenericVirtualRegister(Size);
     ValReg = VReg;
     assert(!isa<Constant>(Val) && "Not yet implemented");
@@ -47,8 +51,8 @@ unsigned IRTranslator::getOrCreateVReg(const Value *Val) {
   return ValReg;
 }
 
-MachineBasicBlock &IRTranslator::getOrCreateBB(const BasicBlock *BB) {
-  MachineBasicBlock *&MBB = BBToMBB[BB];
+MachineBasicBlock &IRTranslator::getOrCreateBB(const BasicBlock &BB) {
+  MachineBasicBlock *&MBB = BBToMBB[&BB];
   if (!MBB) {
     MachineFunction &MF = MIRBuilder.getMF();
     MBB = MF.CreateMachineBasicBlock();
@@ -57,15 +61,15 @@ MachineBasicBlock &IRTranslator::getOrCreateBB(const BasicBlock *BB) {
   return *MBB;
 }
 
-bool IRTranslator::translateADD(const Instruction &Inst) {
+bool IRTranslator::translateBinaryOp(unsigned Opcode, const Instruction &Inst) {
   // Get or create a virtual register for each value.
   // Unless the value is a Constant => loadimm cst?
   // or inline constant each time?
   // Creation of a virtual register needs to have a size.
-  unsigned Op0 = getOrCreateVReg(Inst.getOperand(0));
-  unsigned Op1 = getOrCreateVReg(Inst.getOperand(1));
-  unsigned Res = getOrCreateVReg(&Inst);
-  MIRBuilder.buildInstr(TargetOpcode::G_ADD, Inst.getType(), Res, Op0, Op1);
+  unsigned Op0 = getOrCreateVReg(*Inst.getOperand(0));
+  unsigned Op1 = getOrCreateVReg(*Inst.getOperand(1));
+  unsigned Res = getOrCreateVReg(Inst);
+  MIRBuilder.buildInstr(Opcode, Inst.getType(), Res, Op0, Op1);
   return true;
 }
 
@@ -75,15 +79,35 @@ bool IRTranslator::translateReturn(const Instruction &Inst) {
   // The target may mess up with the insertion point, but
   // this is not important as a return is the last instruction
   // of the block anyway.
-  return TLI->LowerReturn(MIRBuilder, Ret,
-                          !Ret ? 0 : getOrCreateVReg(Ret));
+  return CLI->lowerReturn(MIRBuilder, Ret, !Ret ? 0 : getOrCreateVReg(*Ret));
+}
+
+bool IRTranslator::translateBr(const Instruction &Inst) {
+  assert(isa<BranchInst>(Inst) && "Branch expected");
+  const BranchInst &BrInst = *cast<BranchInst>(&Inst);
+  if (BrInst.isUnconditional()) {
+    const BasicBlock &BrTgt = *cast<BasicBlock>(BrInst.getOperand(0));
+    MachineBasicBlock &TgtBB = getOrCreateBB(BrTgt);
+    MIRBuilder.buildInstr(TargetOpcode::G_BR, BrTgt.getType(), TgtBB);
+  } else {
+    assert(0 && "Not yet implemented");
+  }
+  // Link successors.
+  MachineBasicBlock &CurBB = MIRBuilder.getMBB();
+  for (const BasicBlock *Succ : BrInst.successors())
+    CurBB.addSuccessor(&getOrCreateBB(*Succ));
+  return true;
 }
 
 bool IRTranslator::translate(const Instruction &Inst) {
   MIRBuilder.setDebugLoc(Inst.getDebugLoc());
   switch(Inst.getOpcode()) {
   case Instruction::Add:
-    return translateADD(Inst);
+    return translateBinaryOp(TargetOpcode::G_ADD, Inst);
+  case Instruction::Or:
+    return translateBinaryOp(TargetOpcode::G_OR, Inst);
+  case Instruction::Br:
+    return translateBr(Inst);
   case Instruction::Ret:
     return translateReturn(Inst);
 
@@ -104,23 +128,25 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &MF) {
   const Function &F = *MF.getFunction();
   if (F.empty())
     return false;
-  TLI = MF.getSubtarget().getTargetLowering();
-  MIRBuilder.setFunction(MF);
+  CLI = MF.getSubtarget().getCallLowering();
+  MIRBuilder.setMF(MF);
   MRI = &MF.getRegInfo();
   // Setup the arguments.
-  MachineBasicBlock &MBB = getOrCreateBB(&F.front());
-  MIRBuilder.setBasicBlock(MBB);
+  MachineBasicBlock &MBB = getOrCreateBB(F.front());
+  MIRBuilder.setMBB(MBB);
   SmallVector<unsigned, 8> VRegArgs;
   for (const Argument &Arg: F.args())
-    VRegArgs.push_back(getOrCreateVReg(&Arg));
-  bool Succeeded = TLI->LowerFormalArguments(MIRBuilder, F.getArgumentList(),
-                                             VRegArgs);
+    VRegArgs.push_back(getOrCreateVReg(Arg));
+  bool Succeeded =
+      CLI->lowerFormalArguments(MIRBuilder, F.getArgumentList(), VRegArgs);
   if (!Succeeded)
     report_fatal_error("Unable to lower arguments");
 
   for (const BasicBlock &BB: F) {
-    MachineBasicBlock &MBB = getOrCreateBB(&BB);
-    MIRBuilder.setBasicBlock(MBB);
+    MachineBasicBlock &MBB = getOrCreateBB(BB);
+    // Set the insertion point of all the following translations to
+    // the end of this basic block.
+    MIRBuilder.setMBB(MBB);
     for (const Instruction &Inst: BB) {
       bool Succeeded = translate(Inst);
       if (!Succeeded) {

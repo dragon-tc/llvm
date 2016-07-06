@@ -3,7 +3,6 @@
 #include "llvm/CodeGen/LiveIntervalAnalysis.h"
 #include "llvm/CodeGen/MIRParser/MIRParser.h"
 #include "llvm/CodeGen/MachineFunction.h"
-#include "llvm/CodeGen/MachineFunctionAnalysis.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Passes.h"
@@ -46,18 +45,16 @@ std::unique_ptr<TargetMachine> createTargetMachine() {
 
   TargetOptions Options;
   return std::unique_ptr<TargetMachine>(
-      T->createTargetMachine("x86_64", "", "", Options, Reloc::Default,
+      T->createTargetMachine("x86_64", "", "", Options, None,
                              CodeModel::Default, CodeGenOpt::Aggressive));
 }
 
-std::unique_ptr<Module> parseMIR(legacy::PassManagerBase &PM,
-    std::unique_ptr<MIRParser> &MIR, const TargetMachine &TM,
-    StringRef MIRCode, const char *FuncName) {
-  LLVMContext &Context = getGlobalContext();
-
+std::unique_ptr<Module> parseMIR(LLVMContext &Context,
+    legacy::PassManagerBase &PM, std::unique_ptr<MIRParser> &MIR,
+    const TargetMachine &TM, StringRef MIRCode, const char *FuncName) {
   SMDiagnostic Diagnostic;
   std::unique_ptr<MemoryBuffer> MBuffer = MemoryBuffer::getMemBuffer(MIRCode);
-  MIR = std::move(createMIRParser(std::move(MBuffer), Context));
+  MIR = createMIRParser(std::move(MBuffer), Context);
   if (!MIR)
     return nullptr;
 
@@ -71,12 +68,9 @@ std::unique_ptr<Module> parseMIR(legacy::PassManagerBase &PM,
   if (!F)
     return nullptr;
 
-  MachineModuleInfo *MMI = new MachineModuleInfo(
-      *TM.getMCAsmInfo(), *TM.getMCRegisterInfo(), nullptr);
-  PM.add(MMI);
-
-  MachineFunctionAnalysis *MFA = new MachineFunctionAnalysis(TM, MIR.get());
-  PM.add(MFA);
+  const LLVMTargetMachine &LLVMTM = static_cast<const LLVMTargetMachine&>(TM);
+  LLVMTM.addMachineModuleInfo(PM);
+  LLVMTM.addMachineFunctionAnalysis(PM, MIR.get());
 
   return M;
 }
@@ -114,8 +108,9 @@ private:
  * Move instruction number \p From in front of instruction number \p To and
  * update affected liveness intervals with LiveIntervalAnalysis::handleMove().
  */
-void Move(MachineFunction &MF, LiveIntervals &LIS, unsigned From, unsigned To) {
-  MachineBasicBlock &MBB = MF.front();
+static void testHandleMove(MachineFunction &MF, LiveIntervals &LIS,
+                           unsigned From, unsigned To, unsigned BlockNum = 0) {
+  MachineBasicBlock &MBB = *MF.getBlockNumbered(BlockNum);
 
   unsigned I = 0;
   MachineInstr *FromInstr = nullptr;
@@ -130,10 +125,11 @@ void Move(MachineFunction &MF, LiveIntervals &LIS, unsigned From, unsigned To) {
   assert(FromInstr != nullptr && ToInstr != nullptr);
 
   MBB.splice(ToInstr->getIterator(), &MBB, FromInstr->getIterator());
-  LIS.handleMove(FromInstr, true);
+  LIS.handleMove(*FromInstr, true);
 }
 
-void DoLiveIntervalTest(StringRef MIRFunc, LiveIntervalTest T) {
+static void liveIntervalTest(StringRef MIRFunc, LiveIntervalTest T) {
+  LLVMContext Context;
   std::unique_ptr<TargetMachine> TM = createTargetMachine();
   // This test is designed for the X86 backend; stop if it is not available.
   if (!TM)
@@ -152,7 +148,8 @@ void DoLiveIntervalTest(StringRef MIRFunc, LiveIntervalTest T) {
 "  bb.0:\n"
   ) + Twine(MIRFunc) + Twine("...\n")).toNullTerminatedStringRef(S);
   std::unique_ptr<MIRParser> MIR;
-  std::unique_ptr<Module> M = parseMIR(PM, MIR, *TM, MIRString, "func");
+  std::unique_ptr<Module> M = parseMIR(Context, PM, MIR, *TM, MIRString,
+                                       "func");
 
   PM.add(new TestPass(T));
 
@@ -166,67 +163,67 @@ INITIALIZE_PASS(TestPass, "testpass", "testpass", false, false)
 
 TEST(LiveIntervalTest, MoveUpDef) {
   // Value defined.
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    NOOP\n"
 "    NOOP\n"
 "    early-clobber %0 = IMPLICIT_DEF\n"
 "    RETQ %0\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 2, 1);
+    testHandleMove(MF, LIS, 2, 1);
   });
 }
 
 TEST(LiveIntervalTest, MoveUpRedef) {
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    %0 = IMPLICIT_DEF\n"
 "    NOOP\n"
 "    %0 = IMPLICIT_DEF implicit %0(tied-def 0)\n"
 "    RETQ %0\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 2, 1);
+    testHandleMove(MF, LIS, 2, 1);
   });
 }
 
 TEST(LiveIntervalTest, MoveUpEarlyDef) {
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    NOOP\n"
 "    NOOP\n"
 "    early-clobber %0 = IMPLICIT_DEF\n"
 "    RETQ %0\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 2, 1);
+    testHandleMove(MF, LIS, 2, 1);
   });
 }
 
 TEST(LiveIntervalTest, MoveUpEarlyRedef) {
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    %0 = IMPLICIT_DEF\n"
 "    NOOP\n"
 "    early-clobber %0 = IMPLICIT_DEF implicit %0(tied-def 0)\n"
 "    RETQ %0\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 2, 1);
+    testHandleMove(MF, LIS, 2, 1);
   });
 }
 
 TEST(LiveIntervalTest, MoveUpKill) {
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    %0 = IMPLICIT_DEF\n"
 "    NOOP\n"
 "    NOOP implicit %0\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 2, 1);
+    testHandleMove(MF, LIS, 2, 1);
   });
 }
 
 TEST(LiveIntervalTest, MoveUpKillFollowing) {
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    %0 = IMPLICIT_DEF\n"
 "    NOOP\n"
 "    NOOP implicit %0\n"
 "    RETQ %0\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 2, 1);
+    testHandleMove(MF, LIS, 2, 1);
   });
 }
 
@@ -235,67 +232,124 @@ TEST(LiveIntervalTest, MoveUpKillFollowing) {
 
 TEST(LiveIntervalTest, MoveDownDef) {
   // Value defined.
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    NOOP\n"
 "    early-clobber %0 = IMPLICIT_DEF\n"
 "    NOOP\n"
 "    RETQ %0\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 1, 2);
+    testHandleMove(MF, LIS, 1, 2);
   });
 }
 
 TEST(LiveIntervalTest, MoveDownRedef) {
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    %0 = IMPLICIT_DEF\n"
 "    %0 = IMPLICIT_DEF implicit %0(tied-def 0)\n"
 "    NOOP\n"
 "    RETQ %0\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 1, 2);
+    testHandleMove(MF, LIS, 1, 2);
   });
 }
 
 TEST(LiveIntervalTest, MoveDownEarlyDef) {
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    NOOP\n"
 "    early-clobber %0 = IMPLICIT_DEF\n"
 "    NOOP\n"
 "    RETQ %0\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 1, 2);
+    testHandleMove(MF, LIS, 1, 2);
   });
 }
 
 TEST(LiveIntervalTest, MoveDownEarlyRedef) {
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    %0 = IMPLICIT_DEF\n"
 "    early-clobber %0 = IMPLICIT_DEF implicit %0(tied-def 0)\n"
 "    NOOP\n"
 "    RETQ %0\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 1, 2);
+    testHandleMove(MF, LIS, 1, 2);
   });
 }
 
 TEST(LiveIntervalTest, MoveDownKill) {
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    %0 = IMPLICIT_DEF\n"
 "    NOOP implicit %0\n"
 "    NOOP\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 1, 2);
+    testHandleMove(MF, LIS, 1, 2);
   });
 }
 
 TEST(LiveIntervalTest, MoveDownKillFollowing) {
-  DoLiveIntervalTest(
+  liveIntervalTest(
 "    %0 = IMPLICIT_DEF\n"
 "    NOOP\n"
 "    NOOP implicit %0\n"
 "    RETQ %0\n",
   [](MachineFunction &MF, LiveIntervals &LIS) {
-    Move(MF, LIS, 1, 2);
+    testHandleMove(MF, LIS, 1, 2);
+  });
+}
+
+TEST(LiveIntervalTest, MoveUndefUse) {
+  liveIntervalTest(
+"    %0 = IMPLICIT_DEF\n"
+"    NOOP implicit undef %0\n"
+"    NOOP implicit %0\n"
+"    NOOP\n",
+  [](MachineFunction &MF, LiveIntervals &LIS) {
+    testHandleMove(MF, LIS, 1, 3);
+  });
+}
+
+TEST(LiveIntervalTest, MoveUpValNos) {
+  // handleMoveUp() had a bug where it would reuse the value number of the
+  // destination segment, even though we have no guarntee that this valno wasn't
+  // used in other segments.
+  liveIntervalTest(
+"    successors: %bb.1, %bb.2\n"
+"    %0 = IMPLICIT_DEF\n"
+"    JG_1 %bb.2, implicit %eflags\n"
+"    JMP_1 %bb.1\n"
+"  bb.2:\n"
+"    NOOP implicit %0\n"
+"  bb.1:\n"
+"    successors: %bb.2\n"
+"    %0 = IMPLICIT_DEF implicit %0(tied-def 0)\n"
+"    %0 = IMPLICIT_DEF implicit %0(tied-def 0)\n"
+"    %0 = IMPLICIT_DEF implicit %0(tied-def 0)\n"
+"    JMP_1 %bb.2\n",
+  [](MachineFunction &MF, LiveIntervals &LIS) {
+    testHandleMove(MF, LIS, 2, 0, 2);
+  });
+}
+
+TEST(LiveIntervalTest, MoveOverUndefUse0) {
+  // findLastUseBefore() used by handleMoveUp() must ignore undef operands.
+  liveIntervalTest(
+"    %0 = IMPLICIT_DEF\n"
+"    NOOP\n"
+"    NOOP implicit undef %0\n"
+"    %0 = IMPLICIT_DEF implicit %0(tied-def 0)\n",
+  [](MachineFunction &MF, LiveIntervals &LIS) {
+    testHandleMove(MF, LIS, 3, 1);
+  });
+}
+
+TEST(LiveIntervalTest, MoveOverUndefUse1) {
+  // findLastUseBefore() used by handleMoveUp() must ignore undef operands.
+  liveIntervalTest(
+"    %rax = IMPLICIT_DEF\n"
+"    NOOP\n"
+"    NOOP implicit undef %rax\n"
+"    %rax = IMPLICIT_DEF implicit %rax(tied-def 0)\n",
+  [](MachineFunction &MF, LiveIntervals &LIS) {
+    testHandleMove(MF, LIS, 3, 1);
   });
 }
 

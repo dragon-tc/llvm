@@ -189,6 +189,10 @@ struct CodeGenProcModel {
   // This list is empty if no ItinRW refers to this Processor.
   RecVec ItinRWDefs;
 
+  // List of unsupported feature.
+  // This list is empty if the Processor has no UnsupportedFeatures.
+  RecVec UnsupportedFeaturesDefs;
+
   // All read/write resources associated with this processor.
   RecVec WriteResDefs;
   RecVec ReadAdvanceDefs;
@@ -210,6 +214,8 @@ struct CodeGenProcModel {
   }
 
   unsigned getProcResourceIdx(Record *PRDef) const;
+
+  bool isUnsupported(const CodeGenInstruction &Inst) const;
 
 #ifndef NDEBUG
   void dump() const;
@@ -240,6 +246,9 @@ class CodeGenSchedModels {
 
   // Any inferred SchedClass has an index greater than NumInstrSchedClassses.
   unsigned NumInstrSchedClasses;
+
+  RecVec ProcResourceDefs;
+  RecVec ProcResGroups;
 
   // Map each instruction to its unique SchedClass index considering the
   // combination of it's itinerary class, SchedRW list, and InstRW records.
@@ -399,7 +408,11 @@ private:
 
   void collectProcItinRW();
 
+  void collectProcUnsupportedFeatures();
+
   void inferSchedClasses();
+
+  void checkCompleteness();
 
   void inferFromRW(ArrayRef<unsigned> OperWrites, ArrayRef<unsigned> OperReads,
                    unsigned FromClassIdx, ArrayRef<unsigned> ProcIndices);

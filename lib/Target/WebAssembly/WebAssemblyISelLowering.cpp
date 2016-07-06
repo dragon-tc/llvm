@@ -26,7 +26,6 @@
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -95,7 +94,7 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
   for (auto T : {MVT::i32, MVT::i64}) {
     // Expand unavailable integer operations.
     for (auto Op :
-         {ISD::BSWAP, ISD::ROTL, ISD::ROTR, ISD::SMUL_LOHI, ISD::UMUL_LOHI,
+         {ISD::BSWAP, ISD::SMUL_LOHI, ISD::UMUL_LOHI,
           ISD::MULHS, ISD::MULHU, ISD::SDIVREM, ISD::UDIVREM, ISD::SHL_PARTS,
           ISD::SRA_PARTS, ISD::SRL_PARTS, ISD::ADDC, ISD::ADDE, ISD::SUBC,
           ISD::SUBE}) {
@@ -114,6 +113,7 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVTPtr, Expand);
 
   setOperationAction(ISD::FrameIndex, MVT::i32, Custom);
+  setOperationAction(ISD::CopyToReg, MVT::Other, Custom);
 
   // Expand these forms; we pattern-match the forms that we can handle in isel.
   for (auto T : {MVT::i32, MVT::i64, MVT::f32, MVT::f64})
@@ -154,9 +154,11 @@ MVT WebAssemblyTargetLowering::getScalarShiftAmountTy(const DataLayout & /*DL*/,
   if (BitWidth > 1 && BitWidth < 8) BitWidth = 8;
 
   if (BitWidth > 64) {
-    BitWidth = 64;
+    // The shift will be lowered to a libcall, and compiler-rt libcalls expect
+    // the count to be an i32.
+    BitWidth = 32;
     assert(BitWidth >= Log2_32_Ceil(VT.getSizeInBits()) &&
-           "64-bit shift counts ought to be enough for anyone");
+           "32-bit shift counts ought to be enough for anyone");
   }
 
   MVT Result = MVT::getIntegerVT(BitWidth);
@@ -241,6 +243,12 @@ bool WebAssemblyTargetLowering::allowsMisalignedMemoryAccesses(
   return true;
 }
 
+bool WebAssemblyTargetLowering::isIntDivCheap(EVT VT, AttributeSet Attr) const {
+  // The current thinking is that wasm engines will perform this optimization,
+  // so we can save on code size.
+  return true;
+}
+
 //===----------------------------------------------------------------------===//
 // WebAssembly Lowering private implementation.
 //===----------------------------------------------------------------------===//
@@ -249,7 +257,7 @@ bool WebAssemblyTargetLowering::allowsMisalignedMemoryAccesses(
 // Lowering Code
 //===----------------------------------------------------------------------===//
 
-static void fail(SDLoc DL, SelectionDAG &DAG, const char *msg) {
+static void fail(const SDLoc &DL, SelectionDAG &DAG, const char *msg) {
   MachineFunction &MF = DAG.getMachineFunction();
   DAG.getContext()->diagnose(
       DiagnosticInfoUnsupported(*MF.getFunction(), msg, DL.getDebugLoc()));
@@ -320,7 +328,7 @@ SDValue WebAssemblyTargetLowering::LowerCall(
       SDValue FINode = DAG.getFrameIndex(FI, getPointerTy(Layout));
       Chain = DAG.getMemcpy(
           Chain, DL, FINode, OutVal, SizeNode, Out.Flags.getByValAlign(),
-          /*isVolatile*/ false, /*AlwaysInline=*/true,
+          /*isVolatile*/ false, /*AlwaysInline=*/false,
           /*isTailCall*/ false, MachinePointerInfo(), MachinePointerInfo());
       OutVal = FINode;
     }
@@ -433,7 +441,7 @@ bool WebAssemblyTargetLowering::CanLowerReturn(
 SDValue WebAssemblyTargetLowering::LowerReturn(
     SDValue Chain, CallingConv::ID CallConv, bool /*IsVarArg*/,
     const SmallVectorImpl<ISD::OutputArg> &Outs,
-    const SmallVectorImpl<SDValue> &OutVals, SDLoc DL,
+    const SmallVectorImpl<SDValue> &OutVals, const SDLoc &DL,
     SelectionDAG &DAG) const {
   assert(Outs.size() <= 1 && "WebAssembly can only return up to one value");
   if (!CallingConvSupported(CallConv))
@@ -461,8 +469,8 @@ SDValue WebAssemblyTargetLowering::LowerReturn(
 
 SDValue WebAssemblyTargetLowering::LowerFormalArguments(
     SDValue Chain, CallingConv::ID CallConv, bool IsVarArg,
-    const SmallVectorImpl<ISD::InputArg> &Ins, SDLoc DL, SelectionDAG &DAG,
-    SmallVectorImpl<SDValue> &InVals) const {
+    const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &DL,
+    SelectionDAG &DAG, SmallVectorImpl<SDValue> &InVals) const {
   MachineFunction &MF = DAG.getMachineFunction();
   auto *MFI = MF.getInfo<WebAssemblyFunctionInfo>();
 
@@ -541,16 +549,59 @@ SDValue WebAssemblyTargetLowering::LowerOperation(SDValue Op,
     case ISD::RETURNADDR: // Probably nothing meaningful can be returned here.
       fail(DL, DAG, "WebAssembly hasn't implemented __builtin_return_address");
       return SDValue();
-    case ISD::FRAMEADDR: // TODO: Make this return the userspace frame address
-      fail(DL, DAG, "WebAssembly hasn't implemented __builtin_frame_address");
-      return SDValue();
+    case ISD::FRAMEADDR:
+      return LowerFRAMEADDR(Op, DAG);
+    case ISD::CopyToReg:
+      return LowerCopyToReg(Op, DAG);
   }
+}
+
+SDValue WebAssemblyTargetLowering::LowerCopyToReg(SDValue Op,
+                                                  SelectionDAG &DAG) const {
+  SDValue Src = Op.getOperand(2);
+  if (isa<FrameIndexSDNode>(Src.getNode())) {
+    // CopyToReg nodes don't support FrameIndex operands. Other targets select
+    // the FI to some LEA-like instruction, but since we don't have that, we
+    // need to insert some kind of instruction that can take an FI operand and
+    // produces a value usable by CopyToReg (i.e. in a vreg). So insert a dummy
+    // copy_local between Op and its FI operand.
+    SDValue Chain = Op.getOperand(0);
+    SDLoc DL(Op);
+    unsigned Reg = cast<RegisterSDNode>(Op.getOperand(1))->getReg();
+    EVT VT = Src.getValueType();
+    SDValue Copy(
+        DAG.getMachineNode(VT == MVT::i32 ? WebAssembly::COPY_LOCAL_I32
+                                          : WebAssembly::COPY_LOCAL_I64,
+                           DL, VT, Src),
+        0);
+    return Op.getNode()->getNumValues() == 1
+               ? DAG.getCopyToReg(Chain, DL, Reg, Copy)
+               : DAG.getCopyToReg(Chain, DL, Reg, Copy, Op.getNumOperands() == 4
+                                                            ? Op.getOperand(3)
+                                                            : SDValue());
+  }
+  return SDValue();
 }
 
 SDValue WebAssemblyTargetLowering::LowerFrameIndex(SDValue Op,
                                                    SelectionDAG &DAG) const {
   int FI = cast<FrameIndexSDNode>(Op)->getIndex();
   return DAG.getTargetFrameIndex(FI, Op.getValueType());
+}
+
+SDValue WebAssemblyTargetLowering::LowerFRAMEADDR(SDValue Op,
+                                                  SelectionDAG &DAG) const {
+  // Non-zero depths are not supported by WebAssembly currently. Use the
+  // legalizer's default expansion, which is to return 0 (what this function is
+  // documented to do).
+  if (Op.getConstantOperandVal(0) > 0)
+    return SDValue();
+
+  DAG.getMachineFunction().getFrameInfo()->setFrameAddressIsTaken(true);
+  EVT VT = Op.getValueType();
+  unsigned FP =
+      Subtarget->getRegisterInfo()->getFrameRegister(DAG.getMachineFunction());
+  return DAG.getCopyFromReg(DAG.getEntryNode(), SDLoc(Op), FP, VT);
 }
 
 SDValue WebAssemblyTargetLowering::LowerGlobalAddress(SDValue Op,
@@ -587,7 +638,7 @@ SDValue WebAssemblyTargetLowering::LowerExternalSymbol(
 SDValue WebAssemblyTargetLowering::LowerJumpTable(SDValue Op,
                                                   SelectionDAG &DAG) const {
   // There's no need for a Wrapper node because we always incorporate a jump
-  // table operand into a TABLESWITCH instruction, rather than ever
+  // table operand into a BR_TABLE instruction, rather than ever
   // materializing it in a register.
   const JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
   return DAG.getTargetJumpTable(JT->getIndex(), Op.getValueType(),
@@ -609,15 +660,15 @@ SDValue WebAssemblyTargetLowering::LowerBR_JT(SDValue Op,
   MachineJumpTableInfo *MJTI = DAG.getMachineFunction().getJumpTableInfo();
   const auto &MBBs = MJTI->getJumpTables()[JT->getIndex()].MBBs;
 
+  // Add an operand for each case.
+  for (auto MBB : MBBs) Ops.push_back(DAG.getBasicBlock(MBB));
+
   // TODO: For now, we just pick something arbitrary for a default case for now.
   // We really want to sniff out the guard and put in the real default case (and
   // delete the guard).
   Ops.push_back(DAG.getBasicBlock(MBBs[0]));
 
-  // Add an operand for each case.
-  for (auto MBB : MBBs) Ops.push_back(DAG.getBasicBlock(MBB));
-
-  return DAG.getNode(WebAssemblyISD::TABLESWITCH, DL, MVT::Other, Ops);
+  return DAG.getNode(WebAssemblyISD::BR_TABLE, DL, MVT::Other, Ops);
 }
 
 SDValue WebAssemblyTargetLowering::LowerVASTART(SDValue Op,

@@ -121,13 +121,6 @@ func NewTargetData(rep string) (td TargetData) {
 	return
 }
 
-// Adds target data information to a pass manager. This does not take ownership
-// of the target data.
-// See the method llvm::PassManagerBase::add.
-func (pm PassManager) Add(td TargetData) {
-	C.LLVMAddTargetData(td.C, pm.C)
-}
-
 // Converts target data to a target layout string. The string must be disposed
 // with LLVMDisposeMessage.
 // See the constructor llvm::TargetData::TargetData.
@@ -259,6 +252,13 @@ func (t Target) CreateTargetMachine(Triple string, CPU string, Features string,
 		C.LLVMRelocMode(Reloc),
 		C.LLVMCodeModel(CodeModel))
 	return
+}
+
+// CreateTargetData returns a new TargetData describing the TargetMachine's
+// data layout. The returned TargetData is owned by the caller, who is
+// responsible for disposing of it by calling the TargetData.Dispose method.
+func (tm TargetMachine) CreateTargetData() TargetData {
+	return TargetData{C.LLVMCreateTargetDataLayout(tm.C)}
 }
 
 // Triple returns the triple describing the machine (arch-vendor-os).

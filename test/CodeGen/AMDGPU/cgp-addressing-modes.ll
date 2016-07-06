@@ -1,9 +1,9 @@
 ; RUN: opt -S -codegenprepare -mtriple=amdgcn-unknown-unknown -mcpu=tahiti < %s | FileCheck -check-prefix=OPT -check-prefix=OPT-SI %s
 ; RUN: opt -S -codegenprepare -mtriple=amdgcn-unknown-unknown -mcpu=bonaire < %s | FileCheck -check-prefix=OPT -check-prefix=OPT-CI %s
 ; RUN: opt -S -codegenprepare -mtriple=amdgcn-unknown-unknown -mcpu=tonga < %s | FileCheck -check-prefix=OPT -check-prefix=OPT-VI %s
-; RUN: llc -march=amdgcn -mcpu=tahiti -mattr=-promote-alloca < %s | FileCheck -check-prefix=GCN -check-prefix=SI %s
-; RUN: llc -march=amdgcn -mcpu=bonaire -mattr=-promote-alloca < %s | FileCheck -check-prefix=GCN -check-prefix=CI %s
-; RUN: llc -march=amdgcn -mcpu=tonga -mattr=-promote-alloca < %s | FileCheck -check-prefix=GCN -check-prefix=VI %s
+; RUN: llc -march=amdgcn -mcpu=tahiti -mattr=-promote-alloca -amdgpu-sroa=0 < %s | FileCheck -check-prefix=GCN -check-prefix=SI %s
+; RUN: llc -march=amdgcn -mcpu=bonaire -mattr=-promote-alloca -amdgpu-sroa=0 < %s | FileCheck -check-prefix=GCN -check-prefix=CI %s
+; RUN: llc -march=amdgcn -mcpu=tonga -mattr=-promote-alloca -amdgpu-sroa=0 < %s | FileCheck -check-prefix=GCN -check-prefix=VI %s
 
 ; OPT-LABEL: @test_sink_global_small_offset_i32(
 ; OPT-CI-NOT: getelementptr i32, i32 addrspace(1)* %in
@@ -40,7 +40,7 @@ done:
 
 ; GCN-LABEL: {{^}}test_sink_global_small_max_i32_ds_offset:
 ; GCN: s_and_saveexec_b64
-; GCN: buffer_load_sbyte {{v[0-9]+}}, {{s\[[0-9]+:[0-9]+\]}}, s{{[0-9]+$}}
+; GCN: buffer_load_sbyte {{v[0-9]+}}, off, {{s\[[0-9]+:[0-9]+\]}}, s{{[0-9]+$}}
 ; GCN: {{^}}BB1_2:
 ; GCN: s_or_b64 exec
 define void @test_sink_global_small_max_i32_ds_offset(i32 addrspace(1)* %out, i8 addrspace(1)* %in) {
@@ -67,7 +67,7 @@ done:
 
 ; GCN-LABEL: {{^}}test_sink_global_small_max_mubuf_offset:
 ; GCN: s_and_saveexec_b64
-; GCN: buffer_load_sbyte {{v[0-9]+}}, {{s\[[0-9]+:[0-9]+\]}}, 0 offset:4095{{$}}
+; GCN: buffer_load_sbyte {{v[0-9]+}}, off, {{s\[[0-9]+:[0-9]+\]}}, 0 offset:4095{{$}}
 ; GCN: {{^}}BB2_2:
 ; GCN: s_or_b64 exec
 define void @test_sink_global_small_max_mubuf_offset(i32 addrspace(1)* %out, i8 addrspace(1)* %in) {
@@ -94,7 +94,7 @@ done:
 
 ; GCN-LABEL: {{^}}test_sink_global_small_max_plus_1_mubuf_offset:
 ; GCN: s_and_saveexec_b64
-; GCN: buffer_load_sbyte {{v[0-9]+}}, {{s\[[0-9]+:[0-9]+\]}}, s{{[0-9]+$}}
+; GCN: buffer_load_sbyte {{v[0-9]+}}, off, {{s\[[0-9]+:[0-9]+\]}}, s{{[0-9]+$}}
 ; GCN: {{^}}BB3_2:
 ; GCN: s_or_b64 exec
 define void @test_sink_global_small_max_plus_1_mubuf_offset(i32 addrspace(1)* %out, i8 addrspace(1)* %in) {

@@ -29,12 +29,18 @@ public:
   bool mustExtend() const;
   void setMustNotExtend(bool Val = true);
   bool mustNotExtend() const;
+  void setS23_2_reloc(bool Val = true);
+  bool s23_2_reloc() const;
+  void setSignMismatch(bool Val = true);
+  bool signMismatch() const;
 
 private:
   HexagonMCExpr(MCExpr const *Expr);
   MCExpr const *Expr;
   bool MustNotExtend;
   bool MustExtend;
+  bool S23_2_reloc;
+  bool SignMismatch;
 };
 } // end namespace llvm
 

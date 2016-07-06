@@ -62,21 +62,31 @@ static bool cheapToScalarize(Value *V, bool isConstant) {
   return false;
 }
 
-// If we have a PHI node with a vector type that has only 2 uses: feed
+// If we have a PHI node with a vector type that is only used to feed
 // itself and be an operand of extractelement at a constant location,
 // try to replace the PHI of the vector type with a PHI of a scalar type.
 Instruction *InstCombiner::scalarizePHI(ExtractElementInst &EI, PHINode *PN) {
-  // Verify that the PHI node has exactly 2 uses. Otherwise return NULL.
-  if (!PN->hasNUses(2))
-    return nullptr;
+  SmallVector<Instruction *, 2> Extracts;
+  // The users we want the PHI to have are:
+  // 1) The EI ExtractElement (we already know this)
+  // 2) Possibly more ExtractElements with the same index.
+  // 3) Another operand, which will feed back into the PHI.
+  Instruction *PHIUser = nullptr;
+  for (auto U : PN->users()) {
+    if (ExtractElementInst *EU = dyn_cast<ExtractElementInst>(U)) {
+      if (EI.getIndexOperand() == EU->getIndexOperand())
+        Extracts.push_back(EU);
+      else
+        return nullptr;
+    } else if (!PHIUser) {
+      PHIUser = cast<Instruction>(U);
+    } else {
+      return nullptr;
+    }
+  }
 
-  // If so, it's known at this point that one operand is PHI and the other is
-  // an extractelement node. Find the PHI user that is not the extractelement
-  // node.
-  auto iu = PN->user_begin();
-  Instruction *PHIUser = dyn_cast<Instruction>(*iu);
-  if (PHIUser == cast<Instruction>(&EI))
-    PHIUser = cast<Instruction>(*(++iu));
+  if (!PHIUser)
+    return nullptr;
 
   // Verify that this PHI user has one use, which is the PHI itself,
   // and that it is a binary operation which is cheap to scalarize.
@@ -106,7 +116,8 @@ Instruction *InstCombiner::scalarizePHI(ExtractElementInst &EI, PHINode *PN) {
                                      B0->getOperand(opId)->getName() + ".Elt"),
           *B0);
       Value *newPHIUser = InsertNewInstWith(
-          BinaryOperator::Create(B0->getOpcode(), scalarPHI, Op), *B0);
+          BinaryOperator::CreateWithCopiedFlags(B0->getOpcode(),
+                                                scalarPHI, Op, B0), *B0);
       scalarPHI->addIncoming(newPHIUser, inBB);
     } else {
       // Scalarize PHI input:
@@ -125,7 +136,11 @@ Instruction *InstCombiner::scalarizePHI(ExtractElementInst &EI, PHINode *PN) {
       scalarPHI->addIncoming(newEI, inBB);
     }
   }
-  return replaceInstUsesWith(EI, scalarPHI);
+
+  for (auto E : Extracts)
+    replaceInstUsesWith(*E, scalarPHI);
+
+  return &EI;
 }
 
 Instruction *InstCombiner::visitExtractElementInst(ExtractElementInst &EI) {
@@ -193,7 +208,8 @@ Instruction *InstCombiner::visitExtractElementInst(ExtractElementInst &EI) {
         Value *newEI1 =
           Builder->CreateExtractElement(BO->getOperand(1), EI.getOperand(1),
                                         EI.getName()+".rhs");
-        return BinaryOperator::Create(BO->getOpcode(), newEI0, newEI1);
+        return BinaryOperator::CreateWithCopiedFlags(BO->getOpcode(),
+                                                     newEI0, newEI1, BO);
       }
     } else if (InsertElementInst *IE = dyn_cast<InsertElementInst>(I)) {
       // Extracting the inserted element?

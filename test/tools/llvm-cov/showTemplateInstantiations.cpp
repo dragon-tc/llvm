@@ -1,25 +1,25 @@
-// RUN: llvm-cov show %S/Inputs/templateInstantiations.covmapping -instr-profile %S/Inputs/templateInstantiations.profdata -filename-equivalence %s | FileCheck -check-prefix=CHECK -check-prefix=ALL %s
-// RUN: llvm-cov show %S/Inputs/templateInstantiations.covmapping -instr-profile %S/Inputs/templateInstantiations.profdata -filename-equivalence -name=_Z4funcIbEiT_ %s | FileCheck -check-prefix=CHECK -check-prefix=FILTER %s
+// RUN: llvm-cov show %S/Inputs/templateInstantiations.covmapping -instr-profile %S/Inputs/templateInstantiations.profdata -filename-equivalence %s | FileCheck -check-prefixes=SHARED,ALL %s
+// RUN: llvm-cov show %S/Inputs/templateInstantiations.covmapping -instr-profile %S/Inputs/templateInstantiations.profdata -filename-equivalence -name=_Z4funcIbEiT_ %s | FileCheck -check-prefixes=SHARED,FILTER %s
 
-// before coverage   // WHOLE-FILE:   | [[@LINE]]|// before
+// before coverage   // ALL:          | [[@LINE]]|// before
                      // FILTER-NOT:   | [[@LINE-1]]|// before
 template<typename T> // ALL:          | [[@LINE]]|template<typename T>
 int func(T x) {      // ALL-NEXT:    2| [[@LINE]]|int func(T x) {
   if(x)              // ALL-NEXT:    2| [[@LINE]]|  if(x)
     return 0;        // ALL-NEXT:    1| [[@LINE]]|    return 0;
-  else               // ALL-NEXT:    1| [[@LINE]]|  else
+  else               // ALL-NEXT:    2| [[@LINE]]|  else
     return 1;        // ALL-NEXT:    1| [[@LINE]]|    return 1;
   int j = 1;         // ALL-NEXT:    0| [[@LINE]]|  int j = 1;
-}                    // ALL-NEXT:    1| [[@LINE]]|}
+}                    // ALL-NEXT:    2| [[@LINE]]|}
 
-                     // CHECK:       {{^ *(\| )?}}_Z4funcIbEiT_:
-                     // CHECK-NEXT:  1| [[@LINE-9]]|int func(T x) {
-                     // CHECK-NEXT:  1| [[@LINE-9]]|  if(x)
-                     // CHECK-NEXT:  1| [[@LINE-9]]|    return 0;
-                     // CHECK-NEXT:  1| [[@LINE-9]]|  else
-                     // CHECK-NEXT:  0| [[@LINE-9]]|    return 1;
-                     // CHECK-NEXT:  0| [[@LINE-9]]|  int j = 1;
-                     // CHECK-NEXT:  1| [[@LINE-9]]|}
+                     // SHARED:       {{^ *(\| )?}}_Z4funcIbEiT_:
+                     // SHARED-NEXT:  1| [[@LINE-9]]|int func(T x) {
+                     // SHARED-NEXT:  1| [[@LINE-9]]|  if(x)
+                     // SHARED-NEXT:  1| [[@LINE-9]]|    return 0;
+                     // SHARED-NEXT:  1| [[@LINE-9]]|  else
+                     // SHARED-NEXT:  0| [[@LINE-9]]|    return 1;
+                     // SHARED-NEXT:  0| [[@LINE-9]]|  int j = 1;
+                     // SHARED-NEXT:  1| [[@LINE-9]]|}
 
                      // ALL:         {{^ *}}| _Z4funcIiEiT_:
                      // FILTER-NOT:  {{^ *(\| )?}} _Z4funcIiEiT_:

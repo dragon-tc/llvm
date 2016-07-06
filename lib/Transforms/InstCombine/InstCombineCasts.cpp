@@ -1400,8 +1400,11 @@ Instruction *InstCombiner::visitFPTrunc(FPTruncInst &CI) {
         Function *Overload = Intrinsic::getDeclaration(
             CI.getModule(), II->getIntrinsicID(), IntrinsicType);
 
+        SmallVector<OperandBundleDef, 1> OpBundles;
+        II->getOperandBundlesAsDefs(OpBundles);
+
         Value *Args[] = { InnerTrunc };
-        return CallInst::Create(Overload, Args, II->getName());
+        return CallInst::Create(Overload, Args, OpBundles, II->getName());
       }
     }
   }
@@ -1810,6 +1813,13 @@ Instruction *InstCombiner::visitBitCast(BitCastInst &CI) {
     if (AllocaInst *AI = dyn_cast<AllocaInst>(Src))
       if (Instruction *V = PromoteCastOfAllocation(CI, *AI))
         return V;
+
+    // When the type pointed to is not sized the cast cannot be
+    // turned into a gep.
+    Type *PointeeType =
+        cast<PointerType>(Src->getType()->getScalarType())->getElementType();
+    if (!PointeeType->isSized())
+      return nullptr;
 
     // If the source and destination are pointers, and this cast is equivalent
     // to a getelementptr X, 0, 0, 0...  turn it into the appropriate gep.

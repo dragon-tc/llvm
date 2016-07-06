@@ -16,7 +16,6 @@
 #include "InstPrinter/WebAssemblyInstPrinter.h"
 #include "WebAssemblyMCAsmInfo.h"
 #include "WebAssemblyTargetStreamer.h"
-#include "llvm/MC/MCCodeGenInfo.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
@@ -38,6 +37,15 @@ using namespace llvm;
 static MCAsmInfo *createMCAsmInfo(const MCRegisterInfo & /*MRI*/,
                                   const Triple &TT) {
   return new WebAssemblyMCAsmInfo(TT);
+}
+
+static void adjustCodeGenOpts(const Triple & /*TT*/, Reloc::Model /*RM*/,
+                              CodeModel::Model &CM) {
+  CodeModel::Model M = (CM == CodeModel::Default || CM == CodeModel::JITDefault)
+                           ? CodeModel::Large
+                           : CM;
+  if (M != CodeModel::Large)
+    report_fatal_error("Non-large code models are not supported yet");
 }
 
 static MCInstrInfo *createMCInstrInfo() {
@@ -98,6 +106,9 @@ extern "C" void LLVMInitializeWebAssemblyTargetMC() {
 
     // Register the MC instruction info.
     TargetRegistry::RegisterMCInstrInfo(*T, createMCInstrInfo);
+
+    // Register the MC codegen info.
+    TargetRegistry::registerMCAdjustCodeGenOpts(*T, adjustCodeGenOpts);
 
     // Register the MC register info.
     TargetRegistry::RegisterMCRegInfo(*T, createMCRegisterInfo);

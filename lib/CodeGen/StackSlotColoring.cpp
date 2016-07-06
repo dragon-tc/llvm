@@ -145,9 +145,9 @@ void StackSlotColoring::ScanForSpillSlotRefs(MachineFunction &MF) {
     MachineBasicBlock *MBB = &*MBBI;
     for (MachineBasicBlock::iterator MII = MBB->begin(), EE = MBB->end();
          MII != EE; ++MII) {
-      MachineInstr *MI = &*MII;
-      for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
-        MachineOperand &MO = MI->getOperand(i);
+      MachineInstr &MI = *MII;
+      for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {
+        MachineOperand &MO = MI.getOperand(i);
         if (!MO.isFI())
           continue;
         int FI = MO.getIndex();
@@ -156,11 +156,12 @@ void StackSlotColoring::ScanForSpillSlotRefs(MachineFunction &MF) {
         if (!LS->hasInterval(FI))
           continue;
         LiveInterval &li = LS->getInterval(FI);
-        if (!MI->isDebugValue())
+        if (!MI.isDebugValue())
           li.weight += LiveIntervals::getSpillWeight(false, true, MBFI, MI);
       }
-      for (MachineInstr::mmo_iterator MMOI = MI->memoperands_begin(),
-           EE = MI->memoperands_end(); MMOI != EE; ++MMOI) {
+      for (MachineInstr::mmo_iterator MMOI = MI.memoperands_begin(),
+                                      EE = MI.memoperands_end();
+           MMOI != EE; ++MMOI) {
         MachineMemOperand *MMO = *MMOI;
         if (const FixedStackPseudoSourceValue *FSV =
             dyn_cast_or_null<FixedStackPseudoSourceValue>(
@@ -385,8 +386,7 @@ bool StackSlotColoring::RemoveDeadStores(MachineBasicBlock* MBB) {
       break;
 
     int FirstSS, SecondSS;
-    if (TII->isStackSlotCopy(I, FirstSS, SecondSS) &&
-        FirstSS == SecondSS &&
+    if (TII->isStackSlotCopy(*I, FirstSS, SecondSS) && FirstSS == SecondSS &&
         FirstSS != -1) {
       ++NumDead;
       changed = true;
@@ -399,8 +399,10 @@ bool StackSlotColoring::RemoveDeadStores(MachineBasicBlock* MBB) {
 
     unsigned LoadReg = 0;
     unsigned StoreReg = 0;
-    if (!(LoadReg = TII->isLoadFromStackSlot(I, FirstSS))) continue;
-    if (!(StoreReg = TII->isStoreToStackSlot(NextMI, SecondSS))) continue;
+    if (!(LoadReg = TII->isLoadFromStackSlot(*I, FirstSS)))
+      continue;
+    if (!(StoreReg = TII->isStoreToStackSlot(*NextMI, SecondSS)))
+      continue;
     if (FirstSS != SecondSS || LoadReg != StoreReg || FirstSS == -1) continue;
 
     ++NumDead;

@@ -14,7 +14,6 @@
 #include "llvm/IR/Function.h"
 #include "LLVMContextImpl.h"
 #include "SymbolTableListTraitsImpl.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/ValueTypes.h"
@@ -89,16 +88,24 @@ bool Argument::hasNonNullAttr() const {
 /// in its containing function.
 bool Argument::hasByValAttr() const {
   if (!getType()->isPointerTy()) return false;
+  return hasAttribute(Attribute::ByVal);
+}
+
+bool Argument::hasSwiftSelfAttr() const {
   return getParent()->getAttributes().
-    hasAttribute(getArgNo()+1, Attribute::ByVal);
+    hasAttribute(getArgNo()+1, Attribute::SwiftSelf);
+}
+
+bool Argument::hasSwiftErrorAttr() const {
+  return getParent()->getAttributes().
+    hasAttribute(getArgNo()+1, Attribute::SwiftError);
 }
 
 /// \brief Return true if this argument has the inalloca attribute on it in
 /// its containing function.
 bool Argument::hasInAllocaAttr() const {
   if (!getType()->isPointerTy()) return false;
-  return getParent()->getAttributes().
-    hasAttribute(getArgNo()+1, Attribute::InAlloca);
+  return hasAttribute(Attribute::InAlloca);
 }
 
 bool Argument::hasByValOrInAllocaAttr() const {
@@ -130,53 +137,46 @@ uint64_t Argument::getDereferenceableOrNullBytes() const {
 /// it in its containing function.
 bool Argument::hasNestAttr() const {
   if (!getType()->isPointerTy()) return false;
-  return getParent()->getAttributes().
-    hasAttribute(getArgNo()+1, Attribute::Nest);
+  return hasAttribute(Attribute::Nest);
 }
 
 /// hasNoAliasAttr - Return true if this argument has the noalias attribute on
 /// it in its containing function.
 bool Argument::hasNoAliasAttr() const {
   if (!getType()->isPointerTy()) return false;
-  return getParent()->getAttributes().
-    hasAttribute(getArgNo()+1, Attribute::NoAlias);
+  return hasAttribute(Attribute::NoAlias);
 }
 
 /// hasNoCaptureAttr - Return true if this argument has the nocapture attribute
 /// on it in its containing function.
 bool Argument::hasNoCaptureAttr() const {
   if (!getType()->isPointerTy()) return false;
-  return getParent()->getAttributes().
-    hasAttribute(getArgNo()+1, Attribute::NoCapture);
+  return hasAttribute(Attribute::NoCapture);
 }
 
 /// hasSRetAttr - Return true if this argument has the sret attribute on
 /// it in its containing function.
 bool Argument::hasStructRetAttr() const {
   if (!getType()->isPointerTy()) return false;
-  return getParent()->getAttributes().
-    hasAttribute(getArgNo()+1, Attribute::StructRet);
+  return hasAttribute(Attribute::StructRet);
 }
 
 /// hasReturnedAttr - Return true if this argument has the returned attribute on
 /// it in its containing function.
 bool Argument::hasReturnedAttr() const {
-  return getParent()->getAttributes().
-    hasAttribute(getArgNo()+1, Attribute::Returned);
+  return hasAttribute(Attribute::Returned);
 }
 
 /// hasZExtAttr - Return true if this argument has the zext attribute on it in
 /// its containing function.
 bool Argument::hasZExtAttr() const {
-  return getParent()->getAttributes().
-    hasAttribute(getArgNo()+1, Attribute::ZExt);
+  return hasAttribute(Attribute::ZExt);
 }
 
 /// hasSExtAttr Return true if this argument has the sext attribute on it in its
 /// containing function.
 bool Argument::hasSExtAttr() const {
-  return getParent()->getAttributes().
-    hasAttribute(getArgNo()+1, Attribute::SExt);
+  return hasAttribute(Attribute::SExt);
 }
 
 /// Return true if this argument has the readonly or readnone attribute on it
@@ -208,16 +208,23 @@ void Argument::removeAttr(AttributeSet AS) {
                                                   getArgNo() + 1, B));
 }
 
+/// hasAttribute - Checks if an argument has a given attribute.
+bool Argument::hasAttribute(Attribute::AttrKind Kind) const {
+  return getParent()->hasAttribute(getArgNo() + 1, Kind);
+}
+
 //===----------------------------------------------------------------------===//
 // Helper Methods in Function
 //===----------------------------------------------------------------------===//
 
 bool Function::isMaterializable() const {
-  return getGlobalObjectSubClassData() & IsMaterializableBit;
+  return getGlobalObjectSubClassData() & (1 << IsMaterializableBit);
 }
 
 void Function::setIsMaterializable(bool V) {
-  setGlobalObjectBit(IsMaterializableBit, V);
+  unsigned Mask = 1 << IsMaterializableBit;
+  setGlobalObjectSubClassData((~Mask & getGlobalObjectSubClassData()) |
+                              (V ? Mask : 0u));
 }
 
 LLVMContext &Function::getContext() const {
@@ -296,6 +303,28 @@ void Function::BuildLazyArguments() const {
   const_cast<Function*>(this)->setValueSubclassData(SDC &= ~(1<<0));
 }
 
+void Function::stealArgumentListFrom(Function &Src) {
+  assert(isDeclaration() && "Expected no references to current arguments");
+
+  // Drop the current arguments, if any, and set the lazy argument bit.
+  if (!hasLazyArguments()) {
+    assert(llvm::all_of(ArgumentList,
+                        [](const Argument &A) { return A.use_empty(); }) &&
+           "Expected arguments to be unused in declaration");
+    ArgumentList.clear();
+    setValueSubclassData(getSubclassDataFromValue() | (1 << 0));
+  }
+
+  // Nothing to steal if Src has lazy arguments.
+  if (Src.hasLazyArguments())
+    return;
+
+  // Steal arguments from Src, and fix the lazy argument bits.
+  ArgumentList.splice(ArgumentList.end(), Src.ArgumentList);
+  setValueSubclassData(getSubclassDataFromValue() & ~(1 << 0));
+  Src.setValueSubclassData(Src.getSubclassDataFromValue() | (1 << 0));
+}
+
 size_t Function::arg_size() const {
   return getFunctionType()->getNumParams();
 }
@@ -318,8 +347,8 @@ void Function::setParent(Module *parent) {
 void Function::dropAllReferences() {
   setIsMaterializable(false);
 
-  for (iterator I = begin(), E = end(); I != E; ++I)
-    I->dropAllReferences();
+  for (BasicBlock &BB : *this)
+    BB.dropAllReferences();
 
   // Delete all basic blocks. They are now unused, except possibly by
   // blockaddresses, but BasicBlock's destructor takes care of those.
@@ -337,21 +366,39 @@ void Function::dropAllReferences() {
   clearMetadata();
 }
 
-void Function::addAttribute(unsigned i, Attribute::AttrKind attr) {
+void Function::addAttribute(unsigned i, Attribute::AttrKind Kind) {
   AttributeSet PAL = getAttributes();
-  PAL = PAL.addAttribute(getContext(), i, attr);
+  PAL = PAL.addAttribute(getContext(), i, Kind);
   setAttributes(PAL);
 }
 
-void Function::addAttributes(unsigned i, AttributeSet attrs) {
+void Function::addAttribute(unsigned i, Attribute Attr) {
   AttributeSet PAL = getAttributes();
-  PAL = PAL.addAttributes(getContext(), i, attrs);
+  PAL = PAL.addAttribute(getContext(), i, Attr);
   setAttributes(PAL);
 }
 
-void Function::removeAttributes(unsigned i, AttributeSet attrs) {
+void Function::addAttributes(unsigned i, AttributeSet Attrs) {
   AttributeSet PAL = getAttributes();
-  PAL = PAL.removeAttributes(getContext(), i, attrs);
+  PAL = PAL.addAttributes(getContext(), i, Attrs);
+  setAttributes(PAL);
+}
+
+void Function::removeAttribute(unsigned i, Attribute::AttrKind Kind) {
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.removeAttribute(getContext(), i, Kind);
+  setAttributes(PAL);
+}
+
+void Function::removeAttribute(unsigned i, StringRef Kind) {
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.removeAttribute(getContext(), i, Kind);
+  setAttributes(PAL);
+}
+
+void Function::removeAttributes(unsigned i, AttributeSet Attrs) {
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.removeAttributes(getContext(), i, Attrs);
   setAttributes(PAL);
 }
 
@@ -372,7 +419,7 @@ const std::string &Function::getGC() const {
   return getContext().getGC(*this);
 }
 
-void Function::setGC(const std::string Str) {
+void Function::setGC(std::string Str) {
   setValueSubclassDataBit(14, !Str.empty());
   getContext().setGC(*this, std::move(Str));
 }
@@ -484,11 +531,9 @@ static std::string getMangledTypeStr(Type* Ty) {
 
 std::string Intrinsic::getName(ID id, ArrayRef<Type*> Tys) {
   assert(id < num_intrinsics && "Invalid intrinsic ID!");
-  if (Tys.empty())
-    return IntrinsicNameTable[id];
   std::string Result(IntrinsicNameTable[id]);
-  for (unsigned i = 0; i < Tys.size(); ++i) {
-    Result += "." + getMangledTypeStr(Tys[i]);
+  for (Type *Ty : Tys) {
+    Result += "." + getMangledTypeStr(Ty);
   }
   return Result;
 }
@@ -875,6 +920,198 @@ Function *Intrinsic::getDeclaration(Module *M, ID id, ArrayRef<Type*> Tys) {
 #include "llvm/IR/Intrinsics.gen"
 #undef GET_LLVM_INTRINSIC_FOR_MS_BUILTIN
 
+bool Intrinsic::matchIntrinsicType(Type *Ty, ArrayRef<Intrinsic::IITDescriptor> &Infos,
+                                   SmallVectorImpl<Type*> &ArgTys) {
+  using namespace Intrinsic;
+
+  // If we ran out of descriptors, there are too many arguments.
+  if (Infos.empty()) return true;
+  IITDescriptor D = Infos.front();
+  Infos = Infos.slice(1);
+
+  switch (D.Kind) {
+    case IITDescriptor::Void: return !Ty->isVoidTy();
+    case IITDescriptor::VarArg: return true;
+    case IITDescriptor::MMX:  return !Ty->isX86_MMXTy();
+    case IITDescriptor::Token: return !Ty->isTokenTy();
+    case IITDescriptor::Metadata: return !Ty->isMetadataTy();
+    case IITDescriptor::Half: return !Ty->isHalfTy();
+    case IITDescriptor::Float: return !Ty->isFloatTy();
+    case IITDescriptor::Double: return !Ty->isDoubleTy();
+    case IITDescriptor::Integer: return !Ty->isIntegerTy(D.Integer_Width);
+    case IITDescriptor::Vector: {
+      VectorType *VT = dyn_cast<VectorType>(Ty);
+      return !VT || VT->getNumElements() != D.Vector_Width ||
+             matchIntrinsicType(VT->getElementType(), Infos, ArgTys);
+    }
+    case IITDescriptor::Pointer: {
+      PointerType *PT = dyn_cast<PointerType>(Ty);
+      return !PT || PT->getAddressSpace() != D.Pointer_AddressSpace ||
+             matchIntrinsicType(PT->getElementType(), Infos, ArgTys);
+    }
+
+    case IITDescriptor::Struct: {
+      StructType *ST = dyn_cast<StructType>(Ty);
+      if (!ST || ST->getNumElements() != D.Struct_NumElements)
+        return true;
+
+      for (unsigned i = 0, e = D.Struct_NumElements; i != e; ++i)
+        if (matchIntrinsicType(ST->getElementType(i), Infos, ArgTys))
+          return true;
+      return false;
+    }
+
+    case IITDescriptor::Argument:
+      // Two cases here - If this is the second occurrence of an argument, verify
+      // that the later instance matches the previous instance.
+      if (D.getArgumentNumber() < ArgTys.size())
+        return Ty != ArgTys[D.getArgumentNumber()];
+
+          // Otherwise, if this is the first instance of an argument, record it and
+          // verify the "Any" kind.
+          assert(D.getArgumentNumber() == ArgTys.size() && "Table consistency error");
+          ArgTys.push_back(Ty);
+
+          switch (D.getArgumentKind()) {
+            case IITDescriptor::AK_Any:        return false; // Success
+            case IITDescriptor::AK_AnyInteger: return !Ty->isIntOrIntVectorTy();
+            case IITDescriptor::AK_AnyFloat:   return !Ty->isFPOrFPVectorTy();
+            case IITDescriptor::AK_AnyVector:  return !isa<VectorType>(Ty);
+            case IITDescriptor::AK_AnyPointer: return !isa<PointerType>(Ty);
+          }
+          llvm_unreachable("all argument kinds not covered");
+
+    case IITDescriptor::ExtendArgument: {
+      // This may only be used when referring to a previous vector argument.
+      if (D.getArgumentNumber() >= ArgTys.size())
+        return true;
+
+      Type *NewTy = ArgTys[D.getArgumentNumber()];
+      if (VectorType *VTy = dyn_cast<VectorType>(NewTy))
+        NewTy = VectorType::getExtendedElementVectorType(VTy);
+      else if (IntegerType *ITy = dyn_cast<IntegerType>(NewTy))
+        NewTy = IntegerType::get(ITy->getContext(), 2 * ITy->getBitWidth());
+      else
+        return true;
+
+      return Ty != NewTy;
+    }
+    case IITDescriptor::TruncArgument: {
+      // This may only be used when referring to a previous vector argument.
+      if (D.getArgumentNumber() >= ArgTys.size())
+        return true;
+
+      Type *NewTy = ArgTys[D.getArgumentNumber()];
+      if (VectorType *VTy = dyn_cast<VectorType>(NewTy))
+        NewTy = VectorType::getTruncatedElementVectorType(VTy);
+      else if (IntegerType *ITy = dyn_cast<IntegerType>(NewTy))
+        NewTy = IntegerType::get(ITy->getContext(), ITy->getBitWidth() / 2);
+      else
+        return true;
+
+      return Ty != NewTy;
+    }
+    case IITDescriptor::HalfVecArgument:
+      // This may only be used when referring to a previous vector argument.
+      return D.getArgumentNumber() >= ArgTys.size() ||
+             !isa<VectorType>(ArgTys[D.getArgumentNumber()]) ||
+             VectorType::getHalfElementsVectorType(
+                     cast<VectorType>(ArgTys[D.getArgumentNumber()])) != Ty;
+    case IITDescriptor::SameVecWidthArgument: {
+      if (D.getArgumentNumber() >= ArgTys.size())
+        return true;
+      VectorType * ReferenceType =
+              dyn_cast<VectorType>(ArgTys[D.getArgumentNumber()]);
+      VectorType *ThisArgType = dyn_cast<VectorType>(Ty);
+      if (!ThisArgType || !ReferenceType ||
+          (ReferenceType->getVectorNumElements() !=
+           ThisArgType->getVectorNumElements()))
+        return true;
+      return matchIntrinsicType(ThisArgType->getVectorElementType(),
+                                Infos, ArgTys);
+    }
+    case IITDescriptor::PtrToArgument: {
+      if (D.getArgumentNumber() >= ArgTys.size())
+        return true;
+      Type * ReferenceType = ArgTys[D.getArgumentNumber()];
+      PointerType *ThisArgType = dyn_cast<PointerType>(Ty);
+      return (!ThisArgType || ThisArgType->getElementType() != ReferenceType);
+    }
+    case IITDescriptor::VecOfPtrsToElt: {
+      if (D.getArgumentNumber() >= ArgTys.size())
+        return true;
+      VectorType * ReferenceType =
+              dyn_cast<VectorType> (ArgTys[D.getArgumentNumber()]);
+      VectorType *ThisArgVecTy = dyn_cast<VectorType>(Ty);
+      if (!ThisArgVecTy || !ReferenceType ||
+          (ReferenceType->getVectorNumElements() !=
+           ThisArgVecTy->getVectorNumElements()))
+        return true;
+      PointerType *ThisArgEltTy =
+              dyn_cast<PointerType>(ThisArgVecTy->getVectorElementType());
+      if (!ThisArgEltTy)
+        return true;
+      return ThisArgEltTy->getElementType() !=
+             ReferenceType->getVectorElementType();
+    }
+  }
+  llvm_unreachable("unhandled");
+}
+
+bool
+Intrinsic::matchIntrinsicVarArg(bool isVarArg,
+                                ArrayRef<Intrinsic::IITDescriptor> &Infos) {
+  // If there are no descriptors left, then it can't be a vararg.
+  if (Infos.empty())
+    return isVarArg;
+
+  // There should be only one descriptor remaining at this point.
+  if (Infos.size() != 1)
+    return true;
+
+  // Check and verify the descriptor.
+  IITDescriptor D = Infos.front();
+  Infos = Infos.slice(1);
+  if (D.Kind == IITDescriptor::VarArg)
+    return !isVarArg;
+
+  return true;
+}
+
+Optional<Function*> Intrinsic::remangleIntrinsicFunction(Function *F) {
+  Intrinsic::ID ID = F->getIntrinsicID();
+  if (!ID)
+    return None;
+
+  FunctionType *FTy = F->getFunctionType();
+  // Accumulate an array of overloaded types for the given intrinsic
+  SmallVector<Type *, 4> ArgTys;
+  {
+    SmallVector<Intrinsic::IITDescriptor, 8> Table;
+    getIntrinsicInfoTableEntries(ID, Table);
+    ArrayRef<Intrinsic::IITDescriptor> TableRef = Table;
+
+    // If we encounter any problems matching the signature with the descriptor
+    // just give up remangling. It's up to verifier to report the discrepancy.
+    if (Intrinsic::matchIntrinsicType(FTy->getReturnType(), TableRef, ArgTys))
+      return None;
+    for (auto Ty : FTy->params())
+      if (Intrinsic::matchIntrinsicType(Ty, TableRef, ArgTys))
+        return None;
+    if (Intrinsic::matchIntrinsicVarArg(FTy->isVarArg(), TableRef))
+      return None;
+  }
+
+  StringRef Name = F->getName();
+  if (Name == Intrinsic::getName(ID, ArgTys))
+    return None;
+
+  auto NewDecl = Intrinsic::getDeclaration(F->getParent(), ID, ArgTys);
+  NewDecl->setCallingConv(F->getCallingConv());
+  assert(NewDecl->getFunctionType() == FTy && "Shouldn't change the signature");
+  return NewDecl;
+}
+
 /// hasAddressTaken - returns true if there are any uses of this function
 /// other than direct calls or invokes to it.
 bool Function::hasAddressTaken(const User* *PutOffender) const {
@@ -882,11 +1119,17 @@ bool Function::hasAddressTaken(const User* *PutOffender) const {
     const User *FU = U.getUser();
     if (isa<BlockAddress>(FU))
       continue;
-    if (!isa<CallInst>(FU) && !isa<InvokeInst>(FU))
-      return PutOffender ? (*PutOffender = FU, true) : true;
+    if (!isa<CallInst>(FU) && !isa<InvokeInst>(FU)) {
+      if (PutOffender)
+        *PutOffender = FU;
+      return true;
+    }
     ImmutableCallSite CS(cast<Instruction>(FU));
-    if (!CS.isCallee(&U))
-      return PutOffender ? (*PutOffender = FU, true) : true;
+    if (!CS.isCallee(&U)) {
+      if (PutOffender)
+        *PutOffender = FU;
+      return true;
+    }
   }
   return false;
 }
@@ -996,28 +1239,4 @@ Optional<uint64_t> Function::getEntryCount() const {
         return CI->getValue().getZExtValue();
       }
   return None;
-}
-
-std::string Function::getGlobalIdentifier(StringRef FuncName,
-                                          GlobalValue::LinkageTypes Linkage,
-                                          StringRef FileName) {
-
-  // Function names may be prefixed with a binary '1' to indicate
-  // that the backend should not modify the symbols due to any platform
-  // naming convention. Do not include that '1' in the PGO profile name.
-  if (FuncName[0] == '\1')
-    FuncName = FuncName.substr(1);
-
-  std::string NewFuncName = FuncName;
-  if (llvm::GlobalValue::isLocalLinkage(Linkage)) {
-    // For local symbols, prepend the main file name to distinguish them.
-    // Do not include the full path in the file name since there's no guarantee
-    // that it will stay the same, e.g., if the files are checked out from
-    // version control in different locations.
-    if (FileName.empty())
-      NewFuncName = NewFuncName.insert(0, "<unknown>:");
-    else
-      NewFuncName = NewFuncName.insert(0, FileName.str() + ":");
-  }
-  return NewFuncName;
 }
