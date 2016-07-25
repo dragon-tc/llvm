@@ -300,7 +300,8 @@ def HasV7Ops    : SubtargetFeature<"v7", "HasV7Ops", "true",
                                     FeatureV7Clrex]>;
 def HasV8Ops    : SubtargetFeature<"v8", "HasV8Ops", "true",
                                    "Support ARM v8 instructions",
-                                   [HasV7Ops, FeatureAcquireRelease]>;
+                                   [HasV7Ops, FeatureAcquireRelease,
+                                    FeatureT2XtPk]>;
 def HasV8_1aOps : SubtargetFeature<"v8.1a", "HasV8_1aOps", "true",
                                    "Support ARM v8.1a instructions",
                                    [HasV8Ops]>;
@@ -395,7 +396,8 @@ def ARMv5tej  : Architecture<"armv5tej",  "ARMv5tej", [HasV5TEOps]>;
 def ARMv6     : Architecture<"armv6",     "ARMv6",    [HasV6Ops]>;
 
 def ARMv6t2   : Architecture<"armv6t2",   "ARMv6t2",  [HasV6T2Ops,
-                                                       FeatureDSP]>;
+                                                       FeatureDSP,
+                                                       FeatureT2XtPk]>;
 
 def ARMv6k    : Architecture<"armv6k",    "ARMv6k",   [HasV6KOps]>;
 
@@ -416,13 +418,15 @@ def ARMv7a    : Architecture<"armv7-a",   "ARMv7a",   [HasV7Ops,
                                                        FeatureNEON,
                                                        FeatureDB,
                                                        FeatureDSP,
-                                                       FeatureAClass]>;
+                                                       FeatureAClass,
+                                                       FeatureT2XtPk]>;
 
 def ARMv7r    : Architecture<"armv7-r",   "ARMv7r",   [HasV7Ops,
                                                        FeatureDB,
                                                        FeatureDSP,
                                                        FeatureHWDiv,
-                                                       FeatureRClass]>;
+                                                       FeatureRClass,
+                                                       FeatureT2XtPk]>;
 
 def ARMv7m    : Architecture<"armv7-m",   "ARMv7m",   [HasV7Ops,
                                                        FeatureThumb2,
@@ -577,7 +581,6 @@ def : ProcessorModel<"cortex-a5",   CortexA8Model,      [ARMv7a, ProcA5,
                                                          FeatureSlowFPBrcc,
                                                          FeatureHasSlowFPVMLx,
                                                          FeatureVMLxForwarding,
-                                                         FeatureT2XtPk,
                                                          FeatureMP,
                                                          FeatureVFP4]>;
 
@@ -588,7 +591,6 @@ def : ProcessorModel<"cortex-a7",   CortexA8Model,      [ARMv7a, ProcA7,
                                                          FeatureHasVMLxHazards,
                                                          FeatureHasSlowFPVMLx,
                                                          FeatureVMLxForwarding,
-                                                         FeatureT2XtPk,
                                                          FeatureMP,
                                                          FeatureVFP4,
                                                          FeatureHWDiv,
@@ -602,15 +604,13 @@ def : ProcessorModel<"cortex-a8",   CortexA8Model,      [ARMv7a, ProcA8,
                                                          FeatureSlowFPBrcc,
                                                          FeatureHasVMLxHazards,
                                                          FeatureHasSlowFPVMLx,
-                                                         FeatureVMLxForwarding,
-                                                         FeatureT2XtPk]>;
+                                                         FeatureVMLxForwarding]>;
 
 def : ProcessorModel<"cortex-a9",   CortexA9Model,      [ARMv7a, ProcA9,
                                                          FeatureHasRetAddrStack,
                                                          FeatureTrustZone,
                                                          FeatureHasVMLxHazards,
                                                          FeatureVMLxForwarding,
-                                                         FeatureT2XtPk,
                                                          FeatureFP16,
                                                          FeatureAvoidPartialCPSR,
                                                          FeatureExpandMLx,
@@ -625,7 +625,6 @@ def : ProcessorModel<"cortex-a12",  CortexA9Model,      [ARMv7a, ProcA12,
                                                          FeatureHasRetAddrStack,
                                                          FeatureTrustZone,
                                                          FeatureVMLxForwarding,
-                                                         FeatureT2XtPk,
                                                          FeatureVFP4,
                                                          FeatureHWDiv,
                                                          FeatureHWDivARM,
@@ -639,7 +638,6 @@ def : ProcessorModel<"cortex-a15",  CortexA9Model,      [ARMv7a, ProcA15,
                                                          FeatureHasRetAddrStack,
                                                          FeatureMuxedUnits,
                                                          FeatureTrustZone,
-                                                         FeatureT2XtPk,
                                                          FeatureVFP4,
                                                          FeatureMP,
                                                          FeatureCheckVLDnAlign,
@@ -654,7 +652,6 @@ def : ProcessorModel<"cortex-a17",  CortexA9Model,      [ARMv7a, ProcA17,
                                                          FeatureTrustZone,
                                                          FeatureMP,
                                                          FeatureVMLxForwarding,
-                                                         FeatureT2XtPk,
                                                          FeatureVFP4,
                                                          FeatureHWDiv,
                                                          FeatureHWDivARM,
@@ -669,7 +666,6 @@ def : ProcessorModel<"krait",       CortexA9Model,      [ARMv7a, ProcKrait,
                                                          FeatureMuxedUnits,
                                                          FeatureCheckVLDnAlign,
                                                          FeatureVMLxForwarding,
-                                                         FeatureT2XtPk,
                                                          FeatureFP16,
                                                          FeatureAvoidPartialCPSR,
                                                          FeatureVFP4,
@@ -690,7 +686,6 @@ def : ProcessorModel<"krait2",       CortexA9Model,      [ARMv7a, ProcKrait,
 def : ProcessorModel<"swift",       SwiftModel,         [ARMv7a, ProcSwift,
                                                          FeatureHasRetAddrStack,
                                                          FeatureNEONForFP,
-                                                         FeatureT2XtPk,
                                                          FeatureVFP4,
                                                          FeatureMP,
                                                          FeatureHWDiv,
@@ -709,8 +704,7 @@ def : ProcessorModel<"swift",       SwiftModel,         [ARMv7a, ProcSwift,
 // FIXME: R4 has currently the same ProcessorModel as A8.
 def : ProcessorModel<"cortex-r4",   CortexA8Model,      [ARMv7r, ProcR4,
                                                          FeatureHasRetAddrStack,
-                                                         FeatureAvoidPartialCPSR,
-                                                         FeatureT2XtPk]>;
+                                                         FeatureAvoidPartialCPSR]>;
 
 // FIXME: R4F has currently the same ProcessorModel as A8.
 def : ProcessorModel<"cortex-r4f",  CortexA8Model,      [ARMv7r, ProcR4,
@@ -719,8 +713,7 @@ def : ProcessorModel<"cortex-r4f",  CortexA8Model,      [ARMv7r, ProcR4,
                                                          FeatureHasSlowFPVMLx,
                                                          FeatureVFP3,
                                                          FeatureD16,
-                                                         FeatureAvoidPartialCPSR,
-                                                         FeatureT2XtPk]>;
+                                                         FeatureAvoidPartialCPSR]>;
 
 // FIXME: R5 has currently the same ProcessorModel as A8.
 def : ProcessorModel<"cortex-r5",   CortexA8Model,      [ARMv7r, ProcR5,
@@ -730,8 +723,7 @@ def : ProcessorModel<"cortex-r5",   CortexA8Model,      [ARMv7r, ProcR5,
                                                          FeatureSlowFPBrcc,
                                                          FeatureHWDivARM,
                                                          FeatureHasSlowFPVMLx,
-                                                         FeatureAvoidPartialCPSR,
-                                                         FeatureT2XtPk]>;
+                                                         FeatureAvoidPartialCPSR]>;
 
 // FIXME: R7 has currently the same ProcessorModel as A8 and is modelled as R5.
 def : ProcessorModel<"cortex-r7",   CortexA8Model,      [ARMv7r, ProcR7,
@@ -743,8 +735,7 @@ def : ProcessorModel<"cortex-r7",   CortexA8Model,      [ARMv7r, ProcR7,
                                                          FeatureSlowFPBrcc,
                                                          FeatureHWDivARM,
                                                          FeatureHasSlowFPVMLx,
-                                                         FeatureAvoidPartialCPSR,
-                                                         FeatureT2XtPk]>;
+                                                         FeatureAvoidPartialCPSR]>;
 
 def : ProcessorModel<"cortex-r8",   CortexA8Model,      [ARMv7r,
                                                          FeatureHasRetAddrStack,
@@ -755,8 +746,7 @@ def : ProcessorModel<"cortex-r8",   CortexA8Model,      [ARMv7r,
                                                          FeatureSlowFPBrcc,
                                                          FeatureHWDivARM,
                                                          FeatureHasSlowFPVMLx,
-                                                         FeatureAvoidPartialCPSR,
-                                                         FeatureT2XtPk]>;
+                                                         FeatureAvoidPartialCPSR]>;
 
 def : ProcNoItin<"cortex-m3",                           [ARMv7m, ProcM3]>;
 def : ProcNoItin<"sc300",                               [ARMv7m, ProcM3]>;
@@ -773,42 +763,36 @@ def : ProcNoItin<"cortex-m7",                           [ARMv7em,
 def : ProcNoItin<"cortex-a32",                           [ARMv8a,
                                                          FeatureHWDiv,
                                                          FeatureHWDivARM,
-                                                         FeatureT2XtPk,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 
 def : ProcNoItin<"cortex-a35",                          [ARMv8a, ProcA35,
                                                          FeatureHWDiv,
                                                          FeatureHWDivARM,
-                                                         FeatureT2XtPk,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 
 def : ProcNoItin<"cortex-a53",                          [ARMv8a, ProcA53,
                                                          FeatureHWDiv,
                                                          FeatureHWDivARM,
-                                                         FeatureT2XtPk,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 
 def : ProcNoItin<"cortex-a57",                          [ARMv8a, ProcA57,
                                                          FeatureHWDiv,
                                                          FeatureHWDivARM,
-                                                         FeatureT2XtPk,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 
 def : ProcNoItin<"cortex-a72",                          [ARMv8a, ProcA72,
                                                          FeatureHWDiv,
                                                          FeatureHWDivARM,
-                                                         FeatureT2XtPk,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 
 def : ProcNoItin<"cortex-a73",                          [ARMv8a, ProcA73,
                                                          FeatureHWDiv,
                                                          FeatureHWDivARM,
-                                                         FeatureT2XtPk,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 
@@ -816,7 +800,6 @@ def : ProcNoItin<"cortex-a73",                          [ARMv8a, ProcA73,
 def : ProcessorModel<"cyclone",     SwiftModel,         [ARMv8a, ProcSwift,
                                                          FeatureHasRetAddrStack,
                                                          FeatureNEONForFP,
-                                                         FeatureT2XtPk,
                                                          FeatureVFP4,
                                                          FeatureMP,
                                                          FeatureHWDiv,
@@ -830,7 +813,6 @@ def : ProcessorModel<"cyclone",     SwiftModel,         [ARMv8a, ProcSwift,
 def : ProcNoItin<"exynos-m1",                           [ARMv8a, ProcExynosM1,
                                                          FeatureHWDiv,
                                                          FeatureHWDivARM,
-                                                         FeatureT2XtPk,
                                                          FeatureCrypto,
                                                          FeatureCRC]>;
 

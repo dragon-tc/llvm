@@ -69,8 +69,7 @@ define <8 x double> @test_x86_fmsub_pd_z(<8 x double> %a0, <8 x double> %a1, <8 
 define double @test_x86_fmsub_213(double %a0, double %a1, double %a2) {
 ; ALL-LABEL: test_x86_fmsub_213:
 ; ALL:       ## BB#0:
-; ALL-NEXT:    vfmsub213sd %xmm2, %xmm0, %xmm1
-; ALL-NEXT:    vmovaps %zmm1, %zmm0
+; ALL-NEXT:    vfmsub213sd %xmm2, %xmm1, %xmm0
 ; ALL-NEXT:    retq
   %x = fmul double %a0, %a1
   %res = fsub double %x, %a2
@@ -80,8 +79,7 @@ define double @test_x86_fmsub_213(double %a0, double %a1, double %a2) {
 define double @test_x86_fmsub_213_m(double %a0, double %a1, double * %a2_ptr) {
 ; ALL-LABEL: test_x86_fmsub_213_m:
 ; ALL:       ## BB#0:
-; ALL-NEXT:    vfmsub213sd (%rdi), %xmm0, %xmm1
-; ALL-NEXT:    vmovaps %zmm1, %zmm0
+; ALL-NEXT:    vfmsub213sd (%rdi), %xmm1, %xmm0
 ; ALL-NEXT:    retq
   %a2 = load double , double *%a2_ptr
   %x = fmul double %a0, %a1
@@ -92,8 +90,7 @@ define double @test_x86_fmsub_213_m(double %a0, double %a1, double * %a2_ptr) {
 define double @test_x86_fmsub_231_m(double %a0, double %a1, double * %a2_ptr) {
 ; ALL-LABEL: test_x86_fmsub_231_m:
 ; ALL:       ## BB#0:
-; ALL-NEXT:    vfmsub231sd (%rdi), %xmm0, %xmm1
-; ALL-NEXT:    vmovaps %zmm1, %zmm0
+; ALL-NEXT:    vfmsub132sd (%rdi), %xmm1, %xmm0
 ; ALL-NEXT:    retq
   %a2 = load double , double *%a2_ptr
   %x = fmul double %a0, %a2

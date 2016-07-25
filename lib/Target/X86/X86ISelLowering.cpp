@@ -3779,6 +3779,14 @@ static bool MayFoldIntoStore(SDValue Op) {
   return Op.hasOneUse() && ISD::isNormalStore(*Op.getNode()->use_begin());
 }
 
+static bool MayFoldIntoZeroExtend(SDValue Op) {
+  if (Op.hasOneUse()) {
+    unsigned Opcode = Op.getNode()->use_begin()->getOpcode();
+    return (ISD::ZERO_EXTEND == Opcode);
+  }
+  return false;
+}
+
 static bool isTargetShuffle(unsigned Opcode) {
   switch(Opcode) {
   default: return false;
@@ -3804,6 +3812,7 @@ static bool isTargetShuffle(unsigned Opcode) {
   case X86ISD::MOVSD:
   case X86ISD::UNPCKL:
   case X86ISD::UNPCKH:
+  case X86ISD::VBROADCAST:
   case X86ISD::VPERMILPI:
   case X86ISD::VPERMILPV:
   case X86ISD::VPERM2X128:
@@ -4920,6 +4929,15 @@ static bool getTargetShuffleMask(SDNode *N, MVT VT, bool AllowSentinelZero,
     DecodeZeroMoveLowMask(VT, Mask);
     IsUnary = true;
     break;
+  case X86ISD::VBROADCAST: {
+    // We only decode broadcasts of same-sized vectors at the moment.
+    if (N->getOperand(0).getValueType() == VT) {
+      DecodeVectorBroadcast(VT, Mask);
+      IsUnary = true;
+      break;
+    }
+    return false;
+  }
   case X86ISD::VPERMILPV: {
     IsUnary = true;
     SDValue MaskNode = N->getOperand(1);
@@ -12363,21 +12381,6 @@ static SDValue LowerEXTRACT_VECTOR_ELT_SSE4(SDValue Op, SelectionDAG &DAG) {
     return DAG.getNode(ISD::TRUNCATE, dl, VT, Assert);
   }
 
-  if (VT.getSizeInBits() == 16) {
-    // If Idx is 0, it's cheaper to do a move instead of a pextrw.
-    if (isNullConstant(Op.getOperand(1)))
-      return DAG.getNode(
-          ISD::TRUNCATE, dl, MVT::i16,
-          DAG.getNode(ISD::EXTRACT_VECTOR_ELT, dl, MVT::i32,
-                      DAG.getBitcast(MVT::v4i32, Op.getOperand(0)),
-                      Op.getOperand(1)));
-    SDValue Extract = DAG.getNode(X86ISD::PEXTRW, dl, MVT::i32,
-                                  Op.getOperand(0), Op.getOperand(1));
-    SDValue Assert  = DAG.getNode(ISD::AssertZext, dl, MVT::i32, Extract,
-                                  DAG.getValueType(VT));
-    return DAG.getNode(ISD::TRUNCATE, dl, VT, Assert);
-  }
-
   if (VT == MVT::f32) {
     // EXTRACTPS outputs to a GPR32 register which will require a movd to copy
     // the result back to FR32 register. It's only worth matching if the
@@ -12403,6 +12406,7 @@ static SDValue LowerEXTRACT_VECTOR_ELT_SSE4(SDValue Op, SelectionDAG &DAG) {
     if (isa<ConstantSDNode>(Op.getOperand(1)))
       return Op;
   }
+
   return SDValue();
 }
 
@@ -12502,25 +12506,30 @@ X86TargetLowering::LowerEXTRACT_VECTOR_ELT(SDValue Op,
 
   assert(VecVT.is128BitVector() && "Unexpected vector length");
 
-  if (Subtarget.hasSSE41())
-    if (SDValue Res = LowerEXTRACT_VECTOR_ELT_SSE4(Op, DAG))
-      return Res;
-
   MVT VT = Op.getSimpleValueType();
-  // TODO: handle v16i8.
+
   if (VT.getSizeInBits() == 16) {
-    if (IdxVal == 0)
+    // If IdxVal is 0, it's cheaper to do a move instead of a pextrw, unless
+    // we're going to zero extend the register or fold the store (SSE41 only).
+    if (IdxVal == 0 && !MayFoldIntoZeroExtend(Op) &&
+        !(Subtarget.hasSSE41() && MayFoldIntoStore(Op)))
       return DAG.getNode(ISD::TRUNCATE, dl, MVT::i16,
                          DAG.getNode(ISD::EXTRACT_VECTOR_ELT, dl, MVT::i32,
                                      DAG.getBitcast(MVT::v4i32, Vec), Idx));
 
     // Transform it so it match pextrw which produces a 32-bit result.
-    MVT EltVT = MVT::i32;
-    SDValue Extract = DAG.getNode(X86ISD::PEXTRW, dl, EltVT, Vec, Idx);
-    SDValue Assert  = DAG.getNode(ISD::AssertZext, dl, EltVT, Extract,
+    SDValue Extract = DAG.getNode(X86ISD::PEXTRW, dl, MVT::i32,
+                                  Op.getOperand(0), Op.getOperand(1));
+    SDValue Assert  = DAG.getNode(ISD::AssertZext, dl, MVT::i32, Extract,
                                   DAG.getValueType(VT));
     return DAG.getNode(ISD::TRUNCATE, dl, VT, Assert);
   }
+
+  if (Subtarget.hasSSE41())
+    if (SDValue Res = LowerEXTRACT_VECTOR_ELT_SSE4(Op, DAG))
+      return Res;
+
+  // TODO: handle v16i8.
 
   if (VT.getSizeInBits() == 32) {
     if (IdxVal == 0)
@@ -12795,6 +12804,10 @@ static SDValue LowerINSERT_SUBVECTOR(SDValue Op, const X86Subtarget &Subtarget,
   // (insert_subvector (insert_subvector undef, (load addr), 0),
   //                   (load addr + 16), Elts/2)
   // --> load32 addr
+  // or a 16-byte broadcast:
+  // (insert_subvector (insert_subvector undef, (load addr), 0),
+  //                   (load addr), Elts/2)
+  // --> X86SubVBroadcast(load16 addr)
   if ((IdxVal == OpVT.getVectorNumElements() / 2) &&
       Vec.getOpcode() == ISD::INSERT_SUBVECTOR &&
       OpVT.is256BitVector() && SubVecVT.is128BitVector()) {
@@ -12813,6 +12826,10 @@ static SDValue LowerINSERT_SUBVECTOR(SDValue Op, const X86Subtarget &Subtarget,
           if (SDValue Ld = EltsFromConsecutiveLoads(OpVT, Ops, dl, DAG, false))
             return Ld;
         }
+
+        // If lower/upper loads are the same then lower to a VBROADCASTF128.
+        if (SubVec2 == peekThroughBitcasts(SubVec))
+          return DAG.getNode(X86ISD::SUBV_BROADCAST, dl, OpVT, SubVec);
       }
     }
   }
@@ -15000,9 +15017,32 @@ unsigned X86TargetLowering::combineRepeatedFPDivisors() const {
   return 2;
 }
 
+/// Create a BT (Bit Test) node - Test bit \p BitNo in \p Src and set condition
+/// according to equal/not-equal condition code \p CC.
+static SDValue getBitTestCondition(SDValue Src, SDValue BitNo, ISD::CondCode CC,
+                                   const SDLoc &dl, SelectionDAG &DAG) {
+  // If Src is i8, promote it to i32 with any_extend.  There is no i8 BT
+  // instruction.  Since the shift amount is in-range-or-undefined, we know
+  // that doing a bittest on the i32 value is ok.  We extend to i32 because
+  // the encoding for the i16 version is larger than the i32 version.
+  // Also promote i16 to i32 for performance / code size reason.
+  if (Src.getValueType() == MVT::i8 || Src.getValueType() == MVT::i16)
+    Src = DAG.getNode(ISD::ANY_EXTEND, dl, MVT::i32, Src);
+
+  // If the operand types disagree, extend the shift amount to match.  Since
+  // BT ignores high bits (like shifts) we can use anyextend.
+  if (Src.getValueType() != BitNo.getValueType())
+    BitNo = DAG.getNode(ISD::ANY_EXTEND, dl, Src.getValueType(), BitNo);
+
+  SDValue BT = DAG.getNode(X86ISD::BT, dl, MVT::i32, Src, BitNo);
+  X86::CondCode Cond = CC == ISD::SETEQ ? X86::COND_AE : X86::COND_B;
+  return DAG.getNode(X86ISD::SETCC, dl, MVT::i8,
+                     DAG.getConstant(Cond, dl, MVT::i8), BT);
+}
+
 /// Result of 'and' is compared against zero. Change to a BT node if possible.
-SDValue X86TargetLowering::LowerToBT(SDValue And, ISD::CondCode CC,
-                                     const SDLoc &dl, SelectionDAG &DAG) const {
+static SDValue LowerAndToBT(SDValue And, ISD::CondCode CC,
+                            const SDLoc &dl, SelectionDAG &DAG) {
   SDValue Op0 = And.getOperand(0);
   SDValue Op1 = And.getOperand(1);
   if (Op0.getOpcode() == ISD::TRUNCATE)
@@ -15045,27 +15085,35 @@ SDValue X86TargetLowering::LowerToBT(SDValue And, ISD::CondCode CC,
     }
   }
 
-  if (LHS.getNode()) {
-    // If LHS is i8, promote it to i32 with any_extend.  There is no i8 BT
-    // instruction.  Since the shift amount is in-range-or-undefined, we know
-    // that doing a bittest on the i32 value is ok.  We extend to i32 because
-    // the encoding for the i16 version is larger than the i32 version.
-    // Also promote i16 to i32 for performance / code size reason.
-    if (LHS.getValueType() == MVT::i8 ||
-        LHS.getValueType() == MVT::i16)
-      LHS = DAG.getNode(ISD::ANY_EXTEND, dl, MVT::i32, LHS);
+  if (LHS.getNode())
+    return getBitTestCondition(LHS, RHS, CC, dl, DAG);
 
-    // If the operand types disagree, extend the shift amount to match.  Since
-    // BT ignores high bits (like shifts) we can use anyextend.
-    if (LHS.getValueType() != RHS.getValueType())
-      RHS = DAG.getNode(ISD::ANY_EXTEND, dl, LHS.getValueType(), RHS);
+  return SDValue();
+}
 
-    SDValue BT = DAG.getNode(X86ISD::BT, dl, MVT::i32, LHS, RHS);
-    X86::CondCode Cond = CC == ISD::SETEQ ? X86::COND_AE : X86::COND_B;
-    return DAG.getNode(X86ISD::SETCC, dl, MVT::i8,
-                       DAG.getConstant(Cond, dl, MVT::i8), BT);
-  }
+// Convert (truncate (srl X, N) to i1) to (bt X, N)
+static SDValue LowerTruncateToBT(SDValue Op, ISD::CondCode CC,
+                                 const SDLoc &dl, SelectionDAG &DAG) {
 
+  assert(Op.getOpcode() == ISD::TRUNCATE && Op.getValueType() == MVT::i1 &&
+         "Expected TRUNCATE to i1 node");
+
+  if (Op.getOperand(0).getOpcode() != ISD::SRL)
+    return SDValue();
+
+  SDValue ShiftRight = Op.getOperand(0);
+  return getBitTestCondition(ShiftRight.getOperand(0), ShiftRight.getOperand(1),
+                             CC, dl, DAG);
+}
+
+/// Result of 'and' or 'trunc to i1' is compared against zero.
+/// Change to a BT node if possible.
+SDValue X86TargetLowering::LowerToBT(SDValue Op, ISD::CondCode CC,
+                                     const SDLoc &dl, SelectionDAG &DAG) const {
+  if (Op.getOpcode() == ISD::AND)
+    return LowerAndToBT(Op, CC, dl, DAG);
+  if (Op.getOpcode() == ISD::TRUNCATE && Op.getValueType() == MVT::i1)
+    return LowerTruncateToBT(Op, CC, dl, DAG);
   return SDValue();
 }
 
@@ -15596,8 +15644,8 @@ SDValue X86TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
   // Lower (X & (1 << N)) == 0 to BT(X, N).
   // Lower ((X >>u N) & 1) != 0 to BT(X, N).
   // Lower ((X >>s N) & 1) != 0 to BT(X, N).
-  if (Op0.getOpcode() == ISD::AND && Op0.hasOneUse() &&
-      isNullConstant(Op1) &&
+  // Lower (trunc (X >> N) to i1) to BT(X, N).
+  if (Op0.hasOneUse() && isNullConstant(Op1) &&
       (CC == ISD::SETEQ || CC == ISD::SETNE)) {
     if (SDValue NewSetCC = LowerToBT(Op0, CC, dl, DAG)) {
       if (VT == MVT::i1) {
@@ -16788,9 +16836,8 @@ SDValue X86TargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
     // Look pass the truncate if the high bits are known zero.
     Cond = getCondAfterTruncWithZeroHighBitsInput(Cond, DAG);
 
-    // We know the result of AND is compared against zero. Try to match
-    // it to BT.
-    if (Cond.getOpcode() == ISD::AND && Cond.hasOneUse()) {
+    // We know the result is compared against zero. Try to match it to BT.
+    if (Cond.hasOneUse()) {
       if (SDValue NewSetCC = LowerToBT(Cond, ISD::SETNE, dl, DAG)) {
         CC = NewSetCC.getOperand(0);
         Cond = NewSetCC.getOperand(1);
@@ -21012,6 +21059,8 @@ static SDValue LowerVectorCTPOPBitmath(SDValue Op, const SDLoc &DL,
       DAG);
 }
 
+// Please ensure that any codegen change from LowerVectorCTPOP is reflected in
+// updated cost models in X86TTIImpl::getIntrinsicInstrCost.
 static SDValue LowerVectorCTPOP(SDValue Op, const X86Subtarget &Subtarget,
                                 SelectionDAG &DAG) {
   MVT VT = Op.getSimpleValueType();
@@ -24208,102 +24257,102 @@ X86TargetLowering::emitFMA3Instr(MachineInstr &MI,
       // Found a matching instruction.
       unsigned NewFMAOpc = 0;
       switch (MI.getOpcode()) {
-      case X86::VFMADDPDr213r:
-        NewFMAOpc = X86::VFMADDPDr231r;
+      case X86::VFMADD213PDr:
+        NewFMAOpc = X86::VFMADD231PDr;
         break;
-      case X86::VFMADDPSr213r:
-        NewFMAOpc = X86::VFMADDPSr231r;
+      case X86::VFMADD213PSr:
+        NewFMAOpc = X86::VFMADD231PSr;
         break;
-      case X86::VFMADDSDr213r:
-        NewFMAOpc = X86::VFMADDSDr231r;
+      case X86::VFMADD213SDr:
+        NewFMAOpc = X86::VFMADD231SDr;
         break;
-      case X86::VFMADDSSr213r:
-        NewFMAOpc = X86::VFMADDSSr231r;
+      case X86::VFMADD213SSr:
+        NewFMAOpc = X86::VFMADD231SSr;
         break;
-      case X86::VFMSUBPDr213r:
-        NewFMAOpc = X86::VFMSUBPDr231r;
+      case X86::VFMSUB213PDr:
+        NewFMAOpc = X86::VFMSUB231PDr;
         break;
-      case X86::VFMSUBPSr213r:
-        NewFMAOpc = X86::VFMSUBPSr231r;
+      case X86::VFMSUB213PSr:
+        NewFMAOpc = X86::VFMSUB231PSr;
         break;
-      case X86::VFMSUBSDr213r:
-        NewFMAOpc = X86::VFMSUBSDr231r;
+      case X86::VFMSUB213SDr:
+        NewFMAOpc = X86::VFMSUB231SDr;
         break;
-      case X86::VFMSUBSSr213r:
-        NewFMAOpc = X86::VFMSUBSSr231r;
+      case X86::VFMSUB213SSr:
+        NewFMAOpc = X86::VFMSUB231SSr;
         break;
-      case X86::VFNMADDPDr213r:
-        NewFMAOpc = X86::VFNMADDPDr231r;
+      case X86::VFNMADD213PDr:
+        NewFMAOpc = X86::VFNMADD231PDr;
         break;
-      case X86::VFNMADDPSr213r:
-        NewFMAOpc = X86::VFNMADDPSr231r;
+      case X86::VFNMADD213PSr:
+        NewFMAOpc = X86::VFNMADD231PSr;
         break;
-      case X86::VFNMADDSDr213r:
-        NewFMAOpc = X86::VFNMADDSDr231r;
+      case X86::VFNMADD213SDr:
+        NewFMAOpc = X86::VFNMADD231SDr;
         break;
-      case X86::VFNMADDSSr213r:
-        NewFMAOpc = X86::VFNMADDSSr231r;
+      case X86::VFNMADD213SSr:
+        NewFMAOpc = X86::VFNMADD231SSr;
         break;
-      case X86::VFNMSUBPDr213r:
-        NewFMAOpc = X86::VFNMSUBPDr231r;
+      case X86::VFNMSUB213PDr:
+        NewFMAOpc = X86::VFNMSUB231PDr;
         break;
-      case X86::VFNMSUBPSr213r:
-        NewFMAOpc = X86::VFNMSUBPSr231r;
+      case X86::VFNMSUB213PSr:
+        NewFMAOpc = X86::VFNMSUB231PSr;
         break;
-      case X86::VFNMSUBSDr213r:
-        NewFMAOpc = X86::VFNMSUBSDr231r;
+      case X86::VFNMSUB213SDr:
+        NewFMAOpc = X86::VFNMSUB231SDr;
         break;
-      case X86::VFNMSUBSSr213r:
-        NewFMAOpc = X86::VFNMSUBSSr231r;
+      case X86::VFNMSUB213SSr:
+        NewFMAOpc = X86::VFNMSUB231SSr;
         break;
-      case X86::VFMADDSUBPDr213r:
-        NewFMAOpc = X86::VFMADDSUBPDr231r;
+      case X86::VFMADDSUB213PDr:
+        NewFMAOpc = X86::VFMADDSUB231PDr;
         break;
-      case X86::VFMADDSUBPSr213r:
-        NewFMAOpc = X86::VFMADDSUBPSr231r;
+      case X86::VFMADDSUB213PSr:
+        NewFMAOpc = X86::VFMADDSUB231PSr;
         break;
-      case X86::VFMSUBADDPDr213r:
-        NewFMAOpc = X86::VFMSUBADDPDr231r;
+      case X86::VFMSUBADD213PDr:
+        NewFMAOpc = X86::VFMSUBADD231PDr;
         break;
-      case X86::VFMSUBADDPSr213r:
-        NewFMAOpc = X86::VFMSUBADDPSr231r;
+      case X86::VFMSUBADD213PSr:
+        NewFMAOpc = X86::VFMSUBADD231PSr;
         break;
 
-      case X86::VFMADDPDr213rY:
-        NewFMAOpc = X86::VFMADDPDr231rY;
+      case X86::VFMADD213PDYr:
+        NewFMAOpc = X86::VFMADD231PDYr;
         break;
-      case X86::VFMADDPSr213rY:
-        NewFMAOpc = X86::VFMADDPSr231rY;
+      case X86::VFMADD213PSYr:
+        NewFMAOpc = X86::VFMADD231PSYr;
         break;
-      case X86::VFMSUBPDr213rY:
-        NewFMAOpc = X86::VFMSUBPDr231rY;
+      case X86::VFMSUB213PDYr:
+        NewFMAOpc = X86::VFMSUB231PDYr;
         break;
-      case X86::VFMSUBPSr213rY:
-        NewFMAOpc = X86::VFMSUBPSr231rY;
+      case X86::VFMSUB213PSYr:
+        NewFMAOpc = X86::VFMSUB231PSYr;
         break;
-      case X86::VFNMADDPDr213rY:
-        NewFMAOpc = X86::VFNMADDPDr231rY;
+      case X86::VFNMADD213PDYr:
+        NewFMAOpc = X86::VFNMADD231PDYr;
         break;
-      case X86::VFNMADDPSr213rY:
-        NewFMAOpc = X86::VFNMADDPSr231rY;
+      case X86::VFNMADD213PSYr:
+        NewFMAOpc = X86::VFNMADD231PSYr;
         break;
-      case X86::VFNMSUBPDr213rY:
-        NewFMAOpc = X86::VFNMSUBPDr231rY;
+      case X86::VFNMSUB213PDYr:
+        NewFMAOpc = X86::VFNMSUB231PDYr;
         break;
-      case X86::VFNMSUBPSr213rY:
-        NewFMAOpc = X86::VFNMSUBPSr231rY;
+      case X86::VFNMSUB213PSYr:
+        NewFMAOpc = X86::VFNMSUB231PSYr;
         break;
-      case X86::VFMADDSUBPDr213rY:
-        NewFMAOpc = X86::VFMADDSUBPDr231rY;
+      case X86::VFMADDSUB213PDYr:
+        NewFMAOpc = X86::VFMADDSUB231PDYr;
         break;
-      case X86::VFMADDSUBPSr213rY:
-        NewFMAOpc = X86::VFMADDSUBPSr231rY;
+      case X86::VFMADDSUB213PSYr:
+        NewFMAOpc = X86::VFMADDSUB231PSYr;
         break;
-      case X86::VFMSUBADDPDr213rY:
-        NewFMAOpc = X86::VFMSUBADDPDr231rY;
+      case X86::VFMSUBADD213PDYr:
+        NewFMAOpc = X86::VFMSUBADD231PDYr;
         break;
-      case X86::VFMSUBADDPSr213rY:
-        NewFMAOpc = X86::VFMSUBADDPSr231rY;
+      case X86::VFMSUBADD213PSYr:
+        NewFMAOpc = X86::VFMSUBADD231PSYr;
         break;
       default:
         llvm_unreachable("Unrecognized FMA variant.");
@@ -24546,38 +24595,38 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   case TargetOpcode::PATCHPOINT:
     return emitPatchPoint(MI, BB);
 
-  case X86::VFMADDPDr213r:
-  case X86::VFMADDPSr213r:
-  case X86::VFMADDSDr213r:
-  case X86::VFMADDSSr213r:
-  case X86::VFMSUBPDr213r:
-  case X86::VFMSUBPSr213r:
-  case X86::VFMSUBSDr213r:
-  case X86::VFMSUBSSr213r:
-  case X86::VFNMADDPDr213r:
-  case X86::VFNMADDPSr213r:
-  case X86::VFNMADDSDr213r:
-  case X86::VFNMADDSSr213r:
-  case X86::VFNMSUBPDr213r:
-  case X86::VFNMSUBPSr213r:
-  case X86::VFNMSUBSDr213r:
-  case X86::VFNMSUBSSr213r:
-  case X86::VFMADDSUBPDr213r:
-  case X86::VFMADDSUBPSr213r:
-  case X86::VFMSUBADDPDr213r:
-  case X86::VFMSUBADDPSr213r:
-  case X86::VFMADDPDr213rY:
-  case X86::VFMADDPSr213rY:
-  case X86::VFMSUBPDr213rY:
-  case X86::VFMSUBPSr213rY:
-  case X86::VFNMADDPDr213rY:
-  case X86::VFNMADDPSr213rY:
-  case X86::VFNMSUBPDr213rY:
-  case X86::VFNMSUBPSr213rY:
-  case X86::VFMADDSUBPDr213rY:
-  case X86::VFMADDSUBPSr213rY:
-  case X86::VFMSUBADDPDr213rY:
-  case X86::VFMSUBADDPSr213rY:
+  case X86::VFMADD213PDr:
+  case X86::VFMADD213PSr:
+  case X86::VFMADD213SDr:
+  case X86::VFMADD213SSr:
+  case X86::VFMSUB213PDr:
+  case X86::VFMSUB213PSr:
+  case X86::VFMSUB213SDr:
+  case X86::VFMSUB213SSr:
+  case X86::VFNMADD213PDr:
+  case X86::VFNMADD213PSr:
+  case X86::VFNMADD213SDr:
+  case X86::VFNMADD213SSr:
+  case X86::VFNMSUB213PDr:
+  case X86::VFNMSUB213PSr:
+  case X86::VFNMSUB213SDr:
+  case X86::VFNMSUB213SSr:
+  case X86::VFMADDSUB213PDr:
+  case X86::VFMADDSUB213PSr:
+  case X86::VFMSUBADD213PDr:
+  case X86::VFMSUBADD213PSr:
+  case X86::VFMADD213PDYr:
+  case X86::VFMADD213PSYr:
+  case X86::VFMSUB213PDYr:
+  case X86::VFMSUB213PSYr:
+  case X86::VFNMADD213PDYr:
+  case X86::VFNMADD213PSYr:
+  case X86::VFNMSUB213PDYr:
+  case X86::VFNMSUB213PSYr:
+  case X86::VFMADDSUB213PDYr:
+  case X86::VFMADDSUB213PSYr:
+  case X86::VFMSUBADD213PDYr:
+  case X86::VFMSUBADD213PSYr:
     return emitFMA3Instr(MI, BB);
   case X86::LCMPXCHG8B_SAVE_EBX:
   case X86::LCMPXCHG16B_SAVE_RBX: {
