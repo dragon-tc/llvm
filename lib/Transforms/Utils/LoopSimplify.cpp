@@ -376,6 +376,21 @@ static Loop *separateNestedLoop(Loop *L, BasicBlock *Preheader,
         }
       }
     }
+    // We also need to check exit blocks of the outer loop - it might be using
+    // values from what now became an inner loop.
+    SmallVector<BasicBlock*, 8> ExitBlocks;
+    NewOuter->getExitBlocks(ExitBlocks);
+    for (BasicBlock *ExitBB: ExitBlocks) {
+      for (Instruction &I : *ExitBB) {
+        for (Value *Op : I.operands()) {
+          Instruction *OpI = dyn_cast<Instruction>(Op);
+          if (!OpI || !L->contains(OpI))
+            continue;
+          WorklistSet.insert(OpI);
+        }
+      }
+    }
+
     SmallVector<Instruction *, 8> Worklist(WorklistSet.begin(),
                                            WorklistSet.end());
     formLCSSAForInstructions(Worklist, *DT, *LI);
@@ -842,7 +857,7 @@ bool LoopSimplify::runOnFunction(Function &F) {
 }
 
 PreservedAnalyses LoopSimplifyPass::run(Function &F,
-                                        AnalysisManager<Function> &AM) {
+                                        FunctionAnalysisManager &AM) {
   bool Changed = false;
   LoopInfo *LI = &AM.getResult<LoopAnalysis>(F);
   DominatorTree *DT = &AM.getResult<DominatorTreeAnalysis>(F);
@@ -853,6 +868,10 @@ PreservedAnalyses LoopSimplifyPass::run(Function &F,
   // are in canonical SSA form, and that the pass itself preserves this form.
   for (LoopInfo::iterator I = LI->begin(), E = LI->end(); I != E; ++I)
     Changed |= simplifyLoop(*I, DT, LI, SE, AC, true /* PreserveLCSSA */);
+
+  // FIXME: We need to invalidate this to avoid PR28400. Is there a better
+  // solution?
+  AM.invalidate<ScalarEvolutionAnalysis>(F);
 
   if (!Changed)
     return PreservedAnalyses::all();
