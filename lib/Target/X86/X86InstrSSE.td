@@ -1028,7 +1028,7 @@ let Predicates = [HasAVX, NoVLX] in {
             (VMOVUPSmr addr:$dst, (v16i8 (EXTRACT_SUBREG VR256:$src,sub_xmm)))>;
 }
 
-let Predicates = [HasAVX, NoVLX_Or_NoBWI] in {
+let Predicates = [HasAVX, NoVLX] in {
   // 128-bit load/store
   def : Pat<(alignedstore (v8i16 VR128:$src), addr:$dst),
             (VMOVAPSmr addr:$dst, VR128:$src)>;
@@ -6409,6 +6409,17 @@ let ExeDomain = GenericDomain in {
               "ss\t{$src3, $src2, $src1, $dst|$dst, $src1, $src2, $src3}")),
       []>, Sched<[WriteFAdd]>;
 
+  // Operation, mem.
+  let mayLoad = 1 in
+  def SSm : SS4AIi8<opcss, MRMSrcMem,
+        (outs FR32:$dst), (ins FR32:$src1, f32mem:$src2, i32u8imm:$src3),
+        !if(Is2Addr,
+            !strconcat(OpcodeStr,
+                "ss\t{$src3, $src2, $dst|$dst, $src2, $src3}"),
+            !strconcat(OpcodeStr,
+                "ss\t{$src3, $src2, $src1, $dst|$dst, $src1, $src2, $src3}")),
+        []>, Sched<[WriteFAddLd, ReadAfterLd]>;
+
   // Intrinsic operation, reg.
   let isCodeGenOnly = 1 in
   def SSr_Int : SS4AIi8<opcss, MRMSrcReg,
@@ -6422,7 +6433,8 @@ let ExeDomain = GenericDomain in {
         Sched<[WriteFAdd]>;
 
   // Intrinsic operation, mem.
-  def SSm : SS4AIi8<opcss, MRMSrcMem,
+  let isCodeGenOnly = 1 in
+  def SSm_Int : SS4AIi8<opcss, MRMSrcMem,
         (outs VR128:$dst), (ins VR128:$src1, ssmem:$src2, i32u8imm:$src3),
         !if(Is2Addr,
             !strconcat(OpcodeStr,
@@ -6444,6 +6456,17 @@ let ExeDomain = GenericDomain in {
                 "sd\t{$src3, $src2, $src1, $dst|$dst, $src1, $src2, $src3}")),
         []>, Sched<[WriteFAdd]>;
 
+  // Operation, mem.
+  let mayLoad = 1 in
+  def SDm : SS4AIi8<opcsd, MRMSrcMem,
+        (outs FR64:$dst), (ins FR64:$src1, f64mem:$src2, i32u8imm:$src3),
+        !if(Is2Addr,
+            !strconcat(OpcodeStr,
+                "sd\t{$src3, $src2, $dst|$dst, $src2, $src3}"),
+            !strconcat(OpcodeStr,
+                "sd\t{$src3, $src2, $src1, $dst|$dst, $src1, $src2, $src3}")),
+        []>, Sched<[WriteFAddLd, ReadAfterLd]>;
+
   // Intrinsic operation, reg.
   let isCodeGenOnly = 1 in
   def SDr_Int : SS4AIi8<opcsd, MRMSrcReg,
@@ -6457,7 +6480,8 @@ let ExeDomain = GenericDomain in {
         Sched<[WriteFAdd]>;
 
   // Intrinsic operation, mem.
-  def SDm : SS4AIi8<opcsd, MRMSrcMem,
+  let isCodeGenOnly = 1 in
+  def SDm_Int : SS4AIi8<opcsd, MRMSrcMem,
         (outs VR128:$dst), (ins VR128:$src1, sdmem:$src2, i32u8imm:$src3),
         !if(Is2Addr,
             !strconcat(OpcodeStr,
@@ -7145,17 +7169,6 @@ let Predicates = [UseAVX] in {
   def : Pat<(v4f64 (X86vzmovl (v4f64 VR256:$src))),
             (VBLENDPDYrri (v4f64 (AVX_SET0)), VR256:$src, (i8 1))>;
   }
-
-  def : Pat<(v8f32 (X86vzmovl (insert_subvector undef,
-                   (v4f32 (scalar_to_vector FR32:$src)), (iPTR 0)))),
-            (SUBREG_TO_REG (i32 0),
-                           (v4f32 (VMOVSSrr (v4f32 (V_SET0)), FR32:$src)),
-                           sub_xmm)>;
-  def : Pat<(v4f64 (X86vzmovl (insert_subvector undef,
-                   (v2f64 (scalar_to_vector FR64:$src)), (iPTR 0)))),
-            (SUBREG_TO_REG (i64 0),
-                           (v2f64 (VMOVSDrr (v2f64 (V_SET0)), FR64:$src)),
-                           sub_xmm)>;
 
   // These will incur an FP/int domain crossing penalty, but it may be the only
   // way without AVX2. Do not add any complexity because we may be able to match
