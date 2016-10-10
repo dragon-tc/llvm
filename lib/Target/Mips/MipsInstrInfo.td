@@ -300,6 +300,9 @@ class INSN_MIPS3_32_NOT_32R6_64R6 {
 // The portions of MIPS-III that were also added to MIPS32
 class INSN_MIPS3_32R2 { list<Predicate> InsnPredicates = [HasMips3_32r2]; }
 
+// The portions of MIPS-IV that were also added to MIPS32.
+class INSN_MIPS4_32 { list <Predicate> InsnPredicates = [HasMips4_32]; }
+
 // The portions of MIPS-IV that were also added to MIPS32 but were removed in
 // MIPS32r6 and MIPS64r6.
 class INSN_MIPS4_32_NOT_32R6_64R6 {
@@ -310,6 +313,11 @@ class INSN_MIPS4_32_NOT_32R6_64R6 {
 // MIPS32r6 and MIPS64r6.
 class INSN_MIPS4_32R2_NOT_32R6_64R6 {
   list<Predicate> InsnPredicates = [HasMips4_32r2, NotMips32r6, NotMips64r6];
+}
+
+// The portions of MIPS-IV that were also added to MIPS32r2.
+class INSN_MIPS4_32R2 {
+  list<Predicate> InsnPredicates = [HasMips4_32r2];
 }
 
 // The portions of MIPS-V that were also added to MIPS32r2 but were removed in
@@ -413,6 +421,15 @@ class ConstantSImmAsmOperandClass<int Bits, list<AsmOperandClass> Supers = [],
   let DiagnosticType = "SImm" # Bits # "_" # Offset;
 }
 
+class SimmLslAsmOperandClass<int Bits, list<AsmOperandClass> Supers = [],
+                                  int Shift = 0> : AsmOperandClass {
+  let Name = "Simm" # Bits # "_Lsl" # Shift;
+  let RenderMethod = "addImmOperands";
+  let PredicateMethod = "isScaledSImm<" # Bits # ", " # Shift # ">";
+  let SuperClasses = Supers;
+  let DiagnosticType = "SImm" # Bits # "_Lsl" # Shift;
+}
+
 class ConstantUImmAsmOperandClass<int Bits, list<AsmOperandClass> Supers = [],
                                   int Offset = 0> : AsmOperandClass {
   let Name = "ConstantUImm" # Bits # "_" # Offset;
@@ -450,6 +467,16 @@ class UImmAsmOperandClass<int Bits, list<AsmOperandClass> Supers = []>
   let DiagnosticType = "UImm" # Bits;
 }
 
+// Generic case - only to support certain assembly pseudo instructions.
+class UImmAnyAsmOperandClass<int Bits, list<AsmOperandClass> Supers = []>
+    : AsmOperandClass {
+  let Name = "ImmAny";
+  let RenderMethod = "addConstantUImmOperands<32>";
+  let PredicateMethod = "isSImm<" # Bits # ">";
+  let SuperClasses = Supers;
+  let DiagnosticType = "ImmAny";
+}
+
 // AsmOperandClasses require a strict ordering which is difficult to manage
 // as a hierarchy. Instead, we use a linear ordering and impose an order that
 // is in some places arbitrary.
@@ -473,8 +500,13 @@ class UImmAsmOperandClass<int Bits, list<AsmOperandClass> Supers = []>
 //     uimm5 < uimm5_64, and uimm5 < vsplat_uimm5
 //   This is entirely arbitrary. We need an ordering and what we pick is
 //   unimportant since only one is possible for a given mnemonic.
+
+def UImm32CoercedAsmOperandClass : UImmAnyAsmOperandClass<33, []> {
+  let Name = "UImm32_Coerced";
+  let DiagnosticType = "UImm32_Coerced";
+}
 def SImm32RelaxedAsmOperandClass
-    : SImmAsmOperandClass<32, []> {
+    : SImmAsmOperandClass<32, [UImm32CoercedAsmOperandClass]> {
   let Name = "SImm32_Relaxed";
   let PredicateMethod = "isAnyImm<32>";
   let DiagnosticType = "SImm32_Relaxed";
@@ -485,12 +517,21 @@ def ConstantUImm26AsmOperandClass
     : ConstantUImmAsmOperandClass<26, [SImm32AsmOperandClass]>;
 def ConstantUImm20AsmOperandClass
     : ConstantUImmAsmOperandClass<20, [ConstantUImm26AsmOperandClass]>;
+def ConstantSImm19Lsl2AsmOperandClass : AsmOperandClass {
+  let Name = "SImm19Lsl2";
+  let RenderMethod = "addImmOperands";
+  let PredicateMethod = "isScaledSImm<19, 2>";
+  let SuperClasses = [ConstantUImm20AsmOperandClass];
+  let DiagnosticType = "SImm19_Lsl2";
+}
 def UImm16RelaxedAsmOperandClass
     : UImmAsmOperandClass<16, [ConstantUImm20AsmOperandClass]> {
   let Name = "UImm16_Relaxed";
   let PredicateMethod = "isAnyImm<16>";
   let DiagnosticType = "UImm16_Relaxed";
 }
+// FIXME: One of these should probably have UImm16AsmOperandClass as the
+//        superclass instead of UImm16RelaxedasmOPerandClass.
 def UImm16AsmOperandClass
     : UImmAsmOperandClass<16, [UImm16RelaxedAsmOperandClass]>;
 def SImm16RelaxedAsmOperandClass
@@ -611,6 +652,9 @@ def ConstantImmzAsmOperandClass : AsmOperandClass {
   let DiagnosticType = "Immz";
 }
 
+def Simm19Lsl2AsmOperand
+    : SimmLslAsmOperandClass<19, [], 2>;
+
 def MipsJumpTargetAsmOperand : AsmOperandClass {
   let Name = "JumpTarget";
   let ParserMethod = "parseJumpTarget";
@@ -645,7 +689,7 @@ def imm64: Operand<i64>;
 def simm19_lsl2 : Operand<i32> {
   let EncoderMethod = "getSimm19Lsl2Encoding";
   let DecoderMethod = "DecodeSimm19Lsl2";
-  let ParserMatchClass = MipsJumpTargetAsmOperand;
+  let ParserMatchClass = Simm19Lsl2AsmOperand;
 }
 
 def simm18_lsl3 : Operand<i32> {
@@ -845,6 +889,10 @@ def simm16_64 : Operand<i64> {
   let ParserMatchClass = !cast<AsmOperandClass>("SImm16AsmOperandClass");
 }
 
+// like simm32 but coerces simm32 to uimm32.
+def uimm32_coerced : Operand<i32> {
+  let ParserMatchClass = !cast<AsmOperandClass>("UImm32CoercedAsmOperandClass");
+}
 // Like simm32 but coerces uimm32 to simm32.
 def simm32_relaxed : Operand<i32> {
   let DecoderMethod = "DecodeSImmWithOffsetAndScale<32>";
@@ -1032,10 +1080,6 @@ def immSExt8  : PatLeaf<(imm), [{ return isInt<8>(N->getSExtValue()); }]>;
 // Node immediate fits as 16-bit sign extended on target immediate.
 // e.g. addi, andi
 def immSExt16  : PatLeaf<(imm), [{ return isInt<16>(N->getSExtValue()); }]>;
-
-// Node immediate fits as 15-bit sign extended on target immediate.
-// e.g. addi, andi
-def immSExt15  : PatLeaf<(imm), [{ return isInt<15>(N->getSExtValue()); }]>;
 
 // Node immediate fits as 7-bit zero extended on target immediate.
 def immZExt7 : PatLeaf<(imm), [{ return isUInt<7>(N->getZExtValue()); }]>;
@@ -2360,11 +2404,12 @@ def : MipsInstAlias<"sync",
 // Assembler Pseudo Instructions
 //===----------------------------------------------------------------------===//
 
-// We use i32imm on li/la to defer range checking to the assembler.
+// We use uimm32_coerced to accept a 33 bit signed number that is rendered into
+// a 32 bit number.
 class LoadImmediate32<string instr_asm, Operand Od, RegisterOperand RO> :
   MipsAsmPseudoInst<(outs RO:$rt), (ins Od:$imm32),
                      !strconcat(instr_asm, "\t$rt, $imm32")> ;
-def LoadImm32 : LoadImmediate32<"li", i32imm, GPR32Opnd>;
+def LoadImm32 : LoadImmediate32<"li", uimm32_coerced, GPR32Opnd>;
 
 class LoadAddressFromReg32<string instr_asm, Operand MemOpnd,
                            RegisterOperand RO> :

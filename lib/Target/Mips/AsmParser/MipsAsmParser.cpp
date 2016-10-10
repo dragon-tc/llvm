@@ -13,6 +13,7 @@
 #include "MipsRegisterInfo.h"
 #include "MipsTargetObjectFile.h"
 #include "MipsTargetStreamer.h"
+#include "MCTargetDesc/MipsBaseInfo.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/MC/MCContext.h"
@@ -292,6 +293,10 @@ class MipsAsmParser : public MCTargetAsmParser {
   bool parseDataDirective(unsigned Size, SMLoc L);
   bool parseDirectiveGpWord();
   bool parseDirectiveGpDWord();
+  bool parseDirectiveDtpRelWord();
+  bool parseDirectiveDtpRelDWord();
+  bool parseDirectiveTpRelWord();
+  bool parseDirectiveTpRelDWord();
   bool parseDirectiveModule();
   bool parseDirectiveModuleFP();
   bool parseFpABIValue(MipsABIFlagsSection::FpABIKind &FpABI,
@@ -919,9 +924,11 @@ public:
     assert(N == 1 && "Invalid number of operands!");
     Inst.addOperand(MCOperand::createReg(getFGR32Reg()));
     // FIXME: We ought to do this for -integrated-as without -via-file-asm too.
+    // FIXME: This should propagate failure up to parseStatement.
     if (!AsmParser.useOddSPReg() && RegIdx.Index & 1)
-      AsmParser.Error(StartLoc, "-mno-odd-spreg prohibits the use of odd FPU "
-                                "registers");
+      AsmParser.getParser().printError(
+          StartLoc, "-mno-odd-spreg prohibits the use of odd FPU "
+                    "registers");
   }
 
   void addFGRH32AsmRegOperands(MCInst &Inst, unsigned N) const {
@@ -988,7 +995,7 @@ public:
   void addConstantUImmOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     uint64_t Imm = getConstantImm() - Offset;
-    Imm &= (1 << Bits) - 1;
+    Imm &= (1ULL << Bits) - 1;
     Imm += Offset;
     Imm += AdjustOffset;
     Inst.addOperand(MCOperand::createImm(Imm));
@@ -1086,7 +1093,8 @@ public:
   bool isRegIdx() const { return Kind == k_RegisterIndex; }
   bool isImm() const override { return Kind == k_Immediate; }
   bool isConstantImm() const {
-    return isImm() && isa<MCConstantExpr>(getImm());
+    int64_t Res;
+    return isImm() && getImm()->evaluateAsAbsolute(Res);
   }
   bool isConstantImmz() const {
     return isConstantImm() && getConstantImm() == 0;
@@ -1162,8 +1170,14 @@ public:
   }
   template <unsigned Bits, unsigned ShiftLeftAmount>
   bool isScaledSImm() const {
-    return isConstantImm() &&
-           isShiftedInt<Bits, ShiftLeftAmount>(getConstantImm());
+    if (isConstantImm() && isShiftedInt<Bits, ShiftLeftAmount>(getConstantImm()))
+      return true;
+    // Operand can also be a symbol or symbol plus offset in case of relocations.
+    if (Kind != k_Immediate)
+      return false;
+    MCValue Res;
+    bool Success = getImm()->evaluateAsRelocatable(Res, nullptr, nullptr);
+    return Success && isShiftedInt<Bits, ShiftLeftAmount>(Res.getConstant());
   }
   bool isRegList16() const {
     if (!isRegList())
@@ -1251,7 +1265,9 @@ public:
 
   int64_t getConstantImm() const {
     const MCExpr *Val = getImm();
-    return static_cast<const MCConstantExpr *>(Val)->getValue();
+    int64_t Value = 0;
+    (void)Val->evaluateAsAbsolute(Value);
+    return Value;
   }
 
   MipsOperand *getMemBase() const {
@@ -1458,7 +1474,7 @@ public:
   /// getStartLoc - Get the location of the first token of this operand.
   SMLoc getStartLoc() const override { return StartLoc; }
   /// getEndLoc - Get the location of the last token of this operand.
-  SMLoc getEndLoc() const override { return EndLoc; }
+  SMLoc getEndLoc() const { return EndLoc; }
 
   virtual ~MipsOperand() {
     switch (Kind) {
@@ -1652,6 +1668,45 @@ bool MipsAsmParser::processInstruction(MCInst &Inst, SMLoc IDLoc,
                             1LL << (inMicroMipsMode() ? 1 : 2)))
         return Error(IDLoc, "branch to misaligned address");
       break;
+    case Mips::BGEC:    case Mips::BGEC_MMR6:
+    case Mips::BLTC:    case Mips::BLTC_MMR6:
+    case Mips::BGEUC:   case Mips::BGEUC_MMR6:
+    case Mips::BLTUC:   case Mips::BLTUC_MMR6:
+    case Mips::BEQC:    case Mips::BEQC_MMR6:
+    case Mips::BNEC:    case Mips::BNEC_MMR6:
+      assert(MCID.getNumOperands() == 3 && "unexpected number of operands");
+      Offset = Inst.getOperand(2);
+      if (!Offset.isImm())
+        break; // We'll deal with this situation later on when applying fixups.
+      if (!isIntN(18, Offset.getImm()))
+        return Error(IDLoc, "branch target out of range");
+      if (OffsetToAlignment(Offset.getImm(), 1LL << 2))
+        return Error(IDLoc, "branch to misaligned address");
+      break;
+    case Mips::BLEZC:   case Mips::BLEZC_MMR6:
+    case Mips::BGEZC:   case Mips::BGEZC_MMR6:
+    case Mips::BGTZC:   case Mips::BGTZC_MMR6:
+    case Mips::BLTZC:   case Mips::BLTZC_MMR6:
+      assert(MCID.getNumOperands() == 2 && "unexpected number of operands");
+      Offset = Inst.getOperand(1);
+      if (!Offset.isImm())
+        break; // We'll deal with this situation later on when applying fixups.
+      if (!isIntN(18, Offset.getImm()))
+        return Error(IDLoc, "branch target out of range");
+      if (OffsetToAlignment(Offset.getImm(), 1LL << 2))
+        return Error(IDLoc, "branch to misaligned address");
+      break;
+    case Mips::BEQZC:   case Mips::BEQZC_MMR6:
+    case Mips::BNEZC:   case Mips::BNEZC_MMR6:
+      assert(MCID.getNumOperands() == 2 && "unexpected number of operands");
+      Offset = Inst.getOperand(1);
+      if (!Offset.isImm())
+        break; // We'll deal with this situation later on when applying fixups.
+      if (!isIntN(23, Offset.getImm()))
+        return Error(IDLoc, "branch target out of range");
+      if (OffsetToAlignment(Offset.getImm(), 1LL << 2))
+        return Error(IDLoc, "branch to misaligned address");
+      break;
     case Mips::BEQZ16_MM:
     case Mips::BEQZC16_MMR6:
     case Mips::BNEZ16_MM:
@@ -1796,7 +1851,8 @@ bool MipsAsmParser::processInstruction(MCInst &Inst, SMLoc IDLoc,
     ExpandedJalSym = true;
   }
 
-  if (MCID.mayLoad() || MCID.mayStore()) {
+  bool IsPCRelativeLoad = (MCID.TSFlags & MipsII::IsPCRelativeLoad) != 0;
+  if ((MCID.mayLoad() || MCID.mayStore()) && !IsPCRelativeLoad) {
     // Check the offset of memory operand, if it is a symbol
     // reference or immediate we may have to expand instructions.
     for (unsigned i = 0; i < MCID.getNumOperands(); i++) {
@@ -1809,7 +1865,7 @@ bool MipsAsmParser::processInstruction(MCInst &Inst, SMLoc IDLoc,
           if (MemOffset < -32768 || MemOffset > 32767) {
             // Offset can't exceed 16bit value.
             expandMemInst(Inst, IDLoc, Out, STI, MCID.mayLoad(), true);
-            return false;
+            return getParser().hasPendingError();
           }
         } else if (Op.isExpr()) {
           const MCExpr *Expr = Op.getExpr();
@@ -1819,11 +1875,11 @@ bool MipsAsmParser::processInstruction(MCInst &Inst, SMLoc IDLoc,
             if (SR->getKind() == MCSymbolRefExpr::VK_None) {
               // Expand symbol.
               expandMemInst(Inst, IDLoc, Out, STI, MCID.mayLoad(), false);
-              return false;
+              return getParser().hasPendingError();
             }
           } else if (!isEvaluated(Expr)) {
             expandMemInst(Inst, IDLoc, Out, STI, MCID.mayLoad(), false);
-            return false;
+            return getParser().hasPendingError();
           }
         }
       }
@@ -2415,6 +2471,7 @@ bool MipsAsmParser::expandLoadAddress(unsigned DstReg, unsigned BaseReg,
     Error(IDLoc, "la used to load 64-bit address");
     // Continue as if we had 'dla' instead.
     Is32BitAddress = false;
+    return true;
   }
 
   // dla requires 64-bit addresses.
@@ -2641,9 +2698,9 @@ bool MipsAsmParser::expandUncondBranchMMPseudo(MCInst &Inst, SMLoc IDLoc,
         Inst.setOpcode(hasMips32r6() ? Mips::BC16_MMR6 : Mips::B16_MM);
     } else {
       if (!isInt<17>(Offset.getImm()))
-        Error(IDLoc, "branch target out of range");
+        return Error(IDLoc, "branch target out of range");
       if (OffsetToAlignment(Offset.getImm(), 1LL << 1))
-        Error(IDLoc, "branch to misaligned address");
+        return Error(IDLoc, "branch to misaligned address");
       Inst.clear();
       Inst.setOpcode(Mips::BEQ_MM);
       Inst.addOperand(MCOperand::createReg(Mips::ZERO));
@@ -3251,8 +3308,7 @@ bool MipsAsmParser::expandUlh(MCInst &Inst, bool Signed, SMLoc IDLoc,
   MipsTargetStreamer &TOut = getTargetStreamer();
 
   if (hasMips32r6() || hasMips64r6()) {
-    Error(IDLoc, "instruction not supported on mips32r6 or mips64r6");
-    return false;
+    return Error(IDLoc, "instruction not supported on mips32r6 or mips64r6");
   }
 
   warnIfNoMacro(IDLoc);
@@ -3329,10 +3385,8 @@ bool MipsAsmParser::expandUlw(MCInst &Inst, SMLoc IDLoc, MCStreamer &Out,
                               const MCSubtargetInfo *STI) {
   MipsTargetStreamer &TOut = getTargetStreamer();
 
-  if (hasMips32r6() || hasMips64r6()) {
-    Error(IDLoc, "instruction not supported on mips32r6 or mips64r6");
-    return false;
-  }
+  if (hasMips32r6() || hasMips64r6())
+    return Error(IDLoc, "instruction not supported on mips32r6 or mips64r6");
 
   const MCOperand &DstRegOp = Inst.getOperand(0);
   assert(DstRegOp.isReg() && "expected register operand kind");
@@ -3808,12 +3862,12 @@ unsigned MipsAsmParser::checkTargetMatchPredicate(MCInst &Inst) {
   // The compact branches that branch iff the signed addition of two registers
   // would overflow must have rs >= rt. That can be handled like beqc/bnec with
   // operand swapping. They do not have restriction of using the zero register.
-  case Mips::BLEZC:
-  case Mips::BGEZC:
-  case Mips::BGTZC:
-  case Mips::BLTZC:
-  case Mips::BEQZC:
-  case Mips::BNEZC:
+  case Mips::BLEZC:   case Mips::BLEZC_MMR6:
+  case Mips::BGEZC:   case Mips::BGEZC_MMR6:
+  case Mips::BGTZC:   case Mips::BGTZC_MMR6:
+  case Mips::BLTZC:   case Mips::BLTZC_MMR6:
+  case Mips::BEQZC:   case Mips::BEQZC_MMR6:
+  case Mips::BNEZC:   case Mips::BNEZC_MMR6:
   case Mips::BLEZC64:
   case Mips::BGEZC64:
   case Mips::BGTZC64:
@@ -3824,12 +3878,12 @@ unsigned MipsAsmParser::checkTargetMatchPredicate(MCInst &Inst) {
         Inst.getOperand(0).getReg() == Mips::ZERO_64)
       return Match_RequiresNoZeroRegister;
     return Match_Success;
-  case Mips::BGEC:
-  case Mips::BLTC:
-  case Mips::BGEUC:
-  case Mips::BLTUC:
-  case Mips::BEQC:
-  case Mips::BNEC:
+  case Mips::BGEC:    case Mips::BGEC_MMR6:
+  case Mips::BLTC:    case Mips::BLTC_MMR6:
+  case Mips::BGEUC:   case Mips::BGEUC_MMR6:
+  case Mips::BLTUC:   case Mips::BLTUC_MMR6:
+  case Mips::BEQC:    case Mips::BEQC_MMR6:
+  case Mips::BNEC:    case Mips::BNEC_MMR6:
   case Mips::BGEC64:
   case Mips::BLTC64:
   case Mips::BGEUC64:
@@ -3987,6 +4041,9 @@ bool MipsAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_SImm16_Relaxed:
     return Error(RefineErrorLoc(IDLoc, Operands, ErrorInfo),
                  "expected 16-bit signed immediate");
+  case Match_SImm19_Lsl2:
+    return Error(RefineErrorLoc(IDLoc, Operands, ErrorInfo),
+                 "expected both 19-bit signed immediate and multiple of 4");
   case Match_UImm20_0:
     return Error(RefineErrorLoc(IDLoc, Operands, ErrorInfo),
                  "expected 20-bit unsigned immediate");
@@ -3997,6 +4054,9 @@ bool MipsAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_SImm32_Relaxed:
     return Error(RefineErrorLoc(IDLoc, Operands, ErrorInfo),
                  "expected 32-bit signed immediate");
+  case Match_UImm32_Coerced:
+    return Error(RefineErrorLoc(IDLoc, Operands, ErrorInfo),
+                 "expected 32-bit immediate");
   case Match_MemSImm9:
     return Error(RefineErrorLoc(IDLoc, Operands, ErrorInfo),
                  "expected memory with 9-bit signed offset");
@@ -4763,12 +4823,10 @@ bool MipsAsmParser::parseParenSuffix(StringRef Name, OperandVector &Operands) {
     Parser.Lex();
     if (parseOperand(Operands, Name)) {
       SMLoc Loc = getLexer().getLoc();
-      Parser.eatToEndOfStatement();
       return Error(Loc, "unexpected token in argument list");
     }
     if (Parser.getTok().isNot(AsmToken::RParen)) {
       SMLoc Loc = getLexer().getLoc();
-      Parser.eatToEndOfStatement();
       return Error(Loc, "unexpected token, expected ')'");
     }
     Operands.push_back(
@@ -4793,12 +4851,10 @@ bool MipsAsmParser::parseBracketSuffix(StringRef Name,
     Parser.Lex();
     if (parseOperand(Operands, Name)) {
       SMLoc Loc = getLexer().getLoc();
-      Parser.eatToEndOfStatement();
       return Error(Loc, "unexpected token in argument list");
     }
     if (Parser.getTok().isNot(AsmToken::RBrac)) {
       SMLoc Loc = getLexer().getLoc();
-      Parser.eatToEndOfStatement();
       return Error(Loc, "unexpected token, expected ']'");
     }
     Operands.push_back(
@@ -4818,7 +4874,6 @@ bool MipsAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
 
   // Check if we have valid mnemonic
   if (!mnemonicIsValid(Name, 0)) {
-    Parser.eatToEndOfStatement();
     return Error(NameLoc, "unknown instruction");
   }
   // First operand in MCInst is instruction mnemonic.
@@ -4829,7 +4884,6 @@ bool MipsAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
     // Read the first operand.
     if (parseOperand(Operands, Name)) {
       SMLoc Loc = getLexer().getLoc();
-      Parser.eatToEndOfStatement();
       return Error(Loc, "unexpected token in argument list");
     }
     if (getLexer().is(AsmToken::LBrac) && parseBracketSuffix(Name, Operands))
@@ -4841,7 +4895,6 @@ bool MipsAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
       // Parse and remember the operand.
       if (parseOperand(Operands, Name)) {
         SMLoc Loc = getLexer().getLoc();
-        Parser.eatToEndOfStatement();
         return Error(Loc, "unexpected token in argument list");
       }
       // Parse bracket and parenthesis suffixes before we iterate
@@ -4855,7 +4908,6 @@ bool MipsAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
   }
   if (getLexer().isNot(AsmToken::EndOfStatement)) {
     SMLoc Loc = getLexer().getLoc();
-    Parser.eatToEndOfStatement();
     return Error(Loc, "unexpected token in argument list");
   }
   Parser.Lex(); // Consume the EndOfStatement.
@@ -4865,9 +4917,7 @@ bool MipsAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
 // FIXME: Given that these have the same name, these should both be
 // consistent on affecting the Parser.
 bool MipsAsmParser::reportParseError(Twine ErrorMsg) {
-  MCAsmParser &Parser = getParser();
   SMLoc Loc = getLexer().getLoc();
-  Parser.eatToEndOfStatement();
   return Error(Loc, ErrorMsg);
 }
 
@@ -5368,7 +5418,6 @@ bool MipsAsmParser::eatComma(StringRef ErrorStr) {
   MCAsmParser &Parser = getParser();
   if (getLexer().isNot(AsmToken::Comma)) {
     SMLoc Loc = getLexer().getLoc();
-    Parser.eatToEndOfStatement();
     return Error(Loc, ErrorStr);
   }
 
@@ -5477,7 +5526,6 @@ bool MipsAsmParser::parseDirectiveCPSetup() {
   MipsOperand &FuncRegOpnd = static_cast<MipsOperand &>(*TmpReg[0]);
   if (!FuncRegOpnd.isGPRAsmReg()) {
     reportParseError(FuncRegOpnd.getStartLoc(), "invalid register");
-    Parser.eatToEndOfStatement();
     return false;
   }
 
@@ -5496,7 +5544,6 @@ bool MipsAsmParser::parseDirectiveCPSetup() {
     if (Parser.parseExpression(OffsetExpr) ||
         !OffsetExpr->evaluateAsAbsolute(OffsetVal)) {
       reportParseError(ExprLoc, "expected save register or stack offset");
-      Parser.eatToEndOfStatement();
       return false;
     }
 
@@ -5506,7 +5553,6 @@ bool MipsAsmParser::parseDirectiveCPSetup() {
     MipsOperand &SaveOpnd = static_cast<MipsOperand &>(*TmpReg[0]);
     if (!SaveOpnd.isGPRAsmReg()) {
       reportParseError(SaveOpnd.getStartLoc(), "invalid register");
-      Parser.eatToEndOfStatement();
       return false;
     }
     Save = SaveOpnd.getGPR32Reg();
@@ -5710,7 +5756,79 @@ bool MipsAsmParser::parseDirectiveGpDWord() {
   getParser().getStreamer().EmitGPRel64Value(Value);
 
   if (getLexer().isNot(AsmToken::EndOfStatement))
-    return Error(getLexer().getLoc(), 
+    return Error(getLexer().getLoc(),
+                "unexpected token, expected end of statement");
+  Parser.Lex(); // Eat EndOfStatement token.
+  return false;
+}
+
+/// parseDirectiveDtpRelWord
+///  ::= .dtprelword tls_sym
+bool MipsAsmParser::parseDirectiveDtpRelWord() {
+  MCAsmParser &Parser = getParser();
+  const MCExpr *Value;
+  // EmitDTPRel32Value requires an expression, so we are using base class
+  // method to evaluate the expression.
+  if (getParser().parseExpression(Value))
+    return true;
+  getParser().getStreamer().EmitDTPRel32Value(Value);
+
+  if (getLexer().isNot(AsmToken::EndOfStatement))
+    return Error(getLexer().getLoc(),
+                "unexpected token, expected end of statement");
+  Parser.Lex(); // Eat EndOfStatement token.
+  return false;
+}
+
+/// parseDirectiveDtpRelDWord
+///  ::= .dtpreldword tls_sym
+bool MipsAsmParser::parseDirectiveDtpRelDWord() {
+  MCAsmParser &Parser = getParser();
+  const MCExpr *Value;
+  // EmitDTPRel64Value requires an expression, so we are using base class
+  // method to evaluate the expression.
+  if (getParser().parseExpression(Value))
+    return true;
+  getParser().getStreamer().EmitDTPRel64Value(Value);
+
+  if (getLexer().isNot(AsmToken::EndOfStatement))
+    return Error(getLexer().getLoc(),
+                "unexpected token, expected end of statement");
+  Parser.Lex(); // Eat EndOfStatement token.
+  return false;
+}
+
+/// parseDirectiveTpRelWord
+///  ::= .tprelword tls_sym
+bool MipsAsmParser::parseDirectiveTpRelWord() {
+  MCAsmParser &Parser = getParser();
+  const MCExpr *Value;
+  // EmitTPRel32Value requires an expression, so we are using base class
+  // method to evaluate the expression.
+  if (getParser().parseExpression(Value))
+    return true;
+  getParser().getStreamer().EmitTPRel32Value(Value);
+
+  if (getLexer().isNot(AsmToken::EndOfStatement))
+    return Error(getLexer().getLoc(),
+                "unexpected token, expected end of statement");
+  Parser.Lex(); // Eat EndOfStatement token.
+  return false;
+}
+
+/// parseDirectiveTpRelDWord
+///  ::= .tpreldword tls_sym
+bool MipsAsmParser::parseDirectiveTpRelDWord() {
+  MCAsmParser &Parser = getParser();
+  const MCExpr *Value;
+  // EmitTPRel64Value requires an expression, so we are using base class
+  // method to evaluate the expression.
+  if (getParser().parseExpression(Value))
+    return true;
+  getParser().getStreamer().EmitTPRel64Value(Value);
+
+  if (getLexer().isNot(AsmToken::EndOfStatement))
+    return Error(getLexer().getLoc(),
                 "unexpected token, expected end of statement");
   Parser.Lex(); // Eat EndOfStatement token.
   return false;
@@ -5722,9 +5840,8 @@ bool MipsAsmParser::parseDirectiveOption() {
   AsmToken Tok = Parser.getTok();
   // At the moment only identifiers are supported.
   if (Tok.isNot(AsmToken::Identifier)) {
-    Error(Parser.getTok().getLoc(), "unexpected token, expected identifier");
-    Parser.eatToEndOfStatement();
-    return false;
+    return Error(Parser.getTok().getLoc(),
+                 "unexpected token, expected identifier");
   }
 
   StringRef Option = Tok.getIdentifier();
@@ -5736,9 +5853,8 @@ bool MipsAsmParser::parseDirectiveOption() {
     getTargetStreamer().emitDirectiveOptionPic0();
     Parser.Lex();
     if (Parser.getTok().isNot(AsmToken::EndOfStatement)) {
-      Error(Parser.getTok().getLoc(),
-            "unexpected token, expected end of statement");
-      Parser.eatToEndOfStatement();
+      return Error(Parser.getTok().getLoc(),
+                   "unexpected token, expected end of statement");
     }
     return false;
   }
@@ -5750,9 +5866,8 @@ bool MipsAsmParser::parseDirectiveOption() {
     getTargetStreamer().emitDirectiveOptionPic2();
     Parser.Lex();
     if (Parser.getTok().isNot(AsmToken::EndOfStatement)) {
-      Error(Parser.getTok().getLoc(),
-            "unexpected token, expected end of statement");
-      Parser.eatToEndOfStatement();
+      return Error(Parser.getTok().getLoc(),
+                   "unexpected token, expected end of statement");
     }
     return false;
   }
@@ -5843,8 +5958,7 @@ bool MipsAsmParser::parseDirectiveModule() {
     return false; // parseDirectiveModule has finished successfully.
   } else if (Option == "nooddspreg") {
     if (!isABI_O32()) {
-      Error(L, "'.module nooddspreg' requires the O32 ABI");
-      return false;
+      return Error(L, "'.module nooddspreg' requires the O32 ABI");
     }
 
     setModuleFeatureBits(Mips::FeatureNoOddSPReg, "nooddspreg");
@@ -6265,6 +6379,26 @@ bool MipsAsmParser::ParseDirective(AsmToken DirectiveID) {
     return false;
   }
 
+  if (IDVal == ".dtprelword") {
+    parseDirectiveDtpRelWord();
+    return false;
+  }
+
+  if (IDVal == ".dtpreldword") {
+    parseDirectiveDtpRelDWord();
+    return false;
+  }
+
+  if (IDVal == ".tprelword") {
+    parseDirectiveTpRelWord();
+    return false;
+  }
+
+  if (IDVal == ".tpreldword") {
+    parseDirectiveTpRelDWord();
+    return false;
+  }
+
   if (IDVal == ".word") {
     parseDataDirective(4, DirectiveID.getLoc());
     return false;
@@ -6285,8 +6419,6 @@ bool MipsAsmParser::ParseDirective(AsmToken DirectiveID) {
     if (Parser.getTok().isNot(AsmToken::EndOfStatement)) {
       Error(Parser.getTok().getLoc(), 
             "unexpected token, expected end of statement");
-      // Clear line
-      Parser.eatToEndOfStatement();
     }
     return false;
   }
@@ -6337,10 +6469,10 @@ bool MipsAsmParser::parseInternalDirectiveReallowModule() {
 }
 
 extern "C" void LLVMInitializeMipsAsmParser() {
-  RegisterMCAsmParser<MipsAsmParser> X(TheMipsTarget);
-  RegisterMCAsmParser<MipsAsmParser> Y(TheMipselTarget);
-  RegisterMCAsmParser<MipsAsmParser> A(TheMips64Target);
-  RegisterMCAsmParser<MipsAsmParser> B(TheMips64elTarget);
+  RegisterMCAsmParser<MipsAsmParser> X(getTheMipsTarget());
+  RegisterMCAsmParser<MipsAsmParser> Y(getTheMipselTarget());
+  RegisterMCAsmParser<MipsAsmParser> A(getTheMips64Target());
+  RegisterMCAsmParser<MipsAsmParser> B(getTheMips64elTarget());
 }
 
 #define GET_REGISTER_MATCHER

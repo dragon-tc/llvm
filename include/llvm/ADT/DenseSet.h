@@ -135,6 +135,9 @@ public:
   const_iterator end() const { return ConstIterator(TheMap.end()); }
 
   iterator find(const ValueT &V) { return Iterator(TheMap.find(V)); }
+  const_iterator find(const ValueT &V) const {
+    return ConstIterator(TheMap.find(V));
+  }
 
   /// Alternative version of find() which allows a different, and possibly less
   /// expensive, key type.
@@ -168,12 +171,11 @@ public:
   template <typename LookupKeyT>
   std::pair<iterator, bool> insert_as(const ValueT &V,
                                       const LookupKeyT &LookupKey) {
-    return insert_as(ValueT(V), LookupKey);
+    return TheMap.insert_as({V, detail::DenseSetEmpty()}, LookupKey);
   }
   template <typename LookupKeyT>
   std::pair<iterator, bool> insert_as(ValueT &&V, const LookupKeyT &LookupKey) {
-    detail::DenseSetEmpty Empty;
-    return TheMap.insert_as(std::make_pair(std::move(V), Empty), LookupKey);
+    return TheMap.insert_as({std::move(V), detail::DenseSetEmpty()}, LookupKey);
   }
 
   // Range insertion of values.

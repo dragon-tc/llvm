@@ -2859,13 +2859,14 @@ bool InstCombiner::run() {
 
     // In general, it is possible for computeKnownBits to determine all bits in
     // a value even when the operands are not all constants.
-    if (ExpensiveCombines && !I->use_empty() && I->getType()->isIntegerTy()) {
-      unsigned BitWidth = I->getType()->getScalarSizeInBits();
+    Type *Ty = I->getType();
+    if (ExpensiveCombines && !I->use_empty() && Ty->isIntOrIntVectorTy()) {
+      unsigned BitWidth = Ty->getScalarSizeInBits();
       APInt KnownZero(BitWidth, 0);
       APInt KnownOne(BitWidth, 0);
       computeKnownBits(I, KnownZero, KnownOne, /*Depth*/0, I);
       if ((KnownZero | KnownOne).isAllOnesValue()) {
-        Constant *C = ConstantInt::get(I->getContext(), KnownOne);
+        Constant *C = ConstantInt::get(Ty, KnownOne);
         DEBUG(dbgs() << "IC: ConstFold (all bits known) to: " << *C <<
                         " from: " << *I << '\n');
 
@@ -2903,7 +2904,7 @@ bool InstCombiner::run() {
         // If the user is one of our immediate successors, and if that successor
         // only has us as a predecessors (we'd have to split the critical edge
         // otherwise), we can keep going.
-        if (UserIsSuccessor && UserParent->getSinglePredecessor()) {
+        if (UserIsSuccessor && UserParent->getUniquePredecessor()) {
           // Okay, the CFG is simple enough, try to sink this instruction.
           if (TryToSinkInstruction(I, UserParent)) {
             DEBUG(dbgs() << "IC: Sink: " << *I << '\n');

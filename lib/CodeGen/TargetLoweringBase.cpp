@@ -44,6 +44,10 @@ static cl::opt<bool> JumpIsExpensiveOverride(
     cl::desc("Do not create extra branches to split comparison logic."),
     cl::Hidden);
 
+static cl::opt<unsigned> MaximumJumpTableSize
+  ("max-jump-table", cl::init(0), cl::Hidden,
+   cl::desc("Set maximum number of jump table entries; zero for no limit."));
+
 // Although this default value is arbitrary, it is not random. It is assumed
 // that a condition that evaluates the same way by a higher percentage than this
 // is best represented as control flow. Therefore, the default value N should be
@@ -488,12 +492,10 @@ static void InitLibcallNames(const char **Names, const Triple &TT) {
   Names[RTLIB::DEOPTIMIZE] = "__llvm_deoptimize";
 }
 
-/// InitLibcallCallingConvs - Set default libcall CallingConvs.
-///
+/// Set default libcall CallingConvs.
 static void InitLibcallCallingConvs(CallingConv::ID *CCs) {
-  for (int i = 0; i < RTLIB::UNKNOWN_LIBCALL; ++i) {
-    CCs[i] = CallingConv::C;
-  }
+  for (int LC = 0; LC < RTLIB::UNKNOWN_LIBCALL; ++LC)
+    CCs[LC] = CallingConv::C;
 }
 
 /// getFPEXT - Return the FPEXT_*_* value for the given types, or
@@ -804,7 +806,6 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm) : TM(tm) {
     = MaxStoresPerMemmoveOptSize = 4;
   UseUnderscoreSetJmp = false;
   UseUnderscoreLongJmp = false;
-  SelectIsExpensive = false;
   HasMultipleConditionRegisters = false;
   HasExtractBitsInsn = false;
   JumpIsExpensive = JumpIsExpensiveOverride;
@@ -836,6 +837,7 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm) : TM(tm) {
   InitLibcallNames(LibcallRoutineNames, TM.getTargetTriple());
   InitCmpLibcallCCs(CmpLibcallCCs);
   InitLibcallCallingConvs(LibcallCallingConvs);
+  ReciprocalEstimates.set("all", false, 0);
 }
 
 void TargetLoweringBase::initActions() {
@@ -955,15 +957,11 @@ EVT TargetLoweringBase::getShiftAmountTy(EVT LHSTy,
   return getScalarShiftAmountTy(DL, LHSTy);
 }
 
-/// canOpTrap - Returns true if the operation can trap for the value type.
-/// VT must be a legal type.
 bool TargetLoweringBase::canOpTrap(unsigned Op, EVT VT) const {
   assert(isTypeLegal(VT));
   switch (Op) {
   default:
     return false;
-  case ISD::FDIV:
-  case ISD::FREM:
   case ISD::SDIV:
   case ISD::UDIV:
   case ISD::SREM:
@@ -1401,7 +1399,7 @@ void TargetLoweringBase::computeRegisterProperties(
         MVT SVT = (MVT::SimpleValueType) nVT;
         // Promote vectors of integers to vectors with the same number
         // of elements, with a wider element type.
-        if (SVT.getVectorElementType().getSizeInBits() > EltVT.getSizeInBits() &&
+        if (SVT.getScalarSizeInBits() > EltVT.getSizeInBits() &&
             SVT.getVectorNumElements() == NElts && isTypeLegal(SVT)) {
           TransformToType[i] = SVT;
           RegisterTypeForVT[i] = SVT;
@@ -1485,6 +1483,22 @@ EVT TargetLoweringBase::getSetCCResultType(const DataLayout &DL, LLVMContext &,
 
 MVT::SimpleValueType TargetLoweringBase::getCmpLibcallReturnType() const {
   return MVT::i32; // return the default value
+}
+
+TargetRecip
+TargetLoweringBase::getTargetRecipForFunc(MachineFunction &MF) const {
+  const Function *F = MF.getFunction();
+  StringRef RecipAttrName = "reciprocal-estimates";
+  if (!F->hasFnAttribute(RecipAttrName))
+    return ReciprocalEstimates;
+
+  // Make a copy of the target's default reciprocal codegen settings.
+  TargetRecip Recips = ReciprocalEstimates;
+
+  // Override any settings that are customized for this function.
+  StringRef RecipString = F->getFnAttribute(RecipAttrName).getValueAsString();
+  Recips.set(RecipString);
+  return Recips;
 }
 
 /// getVectorTypeBreakdown - Vector types are broken down into some number of
@@ -1817,9 +1831,7 @@ Value *TargetLoweringBase::getIRStackGuard(IRBuilder<> &IRB) const {
   if (getTargetMachine().getTargetTriple().isOSOpenBSD()) {
     Module &M = *IRB.GetInsertBlock()->getParent()->getParent();
     PointerType *PtrTy = Type::getInt8PtrTy(M.getContext());
-    auto Guard = cast<GlobalValue>(M.getOrInsertGlobal("__guard_local", PtrTy));
-    Guard->setVisibility(GlobalValue::HiddenVisibility);
-    return Guard;
+    return M.getOrInsertGlobal("__guard_local", PtrTy);
   }
   return nullptr;
 }
@@ -1838,4 +1850,12 @@ Value *TargetLoweringBase::getSDagStackGuard(const Module &M) const {
 
 Value *TargetLoweringBase::getSSPStackGuardCheck(const Module &M) const {
   return nullptr;
+}
+
+unsigned TargetLoweringBase::getMaximumJumpTableSize() const {
+  return MaximumJumpTableSize;
+}
+
+void TargetLoweringBase::setMaximumJumpTableSize(unsigned Val) {
+  MaximumJumpTableSize = Val;
 }

@@ -199,8 +199,6 @@ protected:
     return CurrentWinFrameInfo;
   }
 
-  virtual void EmitWindowsUnwindTables();
-
   virtual void EmitRawTextImpl(StringRef String);
 
 public:
@@ -277,8 +275,6 @@ public:
   /// \brief Add explicit comment T. T is required to be a valid
   /// comment in the output and does not need to be escaped.
   virtual void addExplicitComment(const Twine &T);
-  /// \brief Emit added explicit comments.
-  virtual void emitExplicitComments();
 
   /// AddBlankLine - Emit a blank line to a .s file to pretty it up.
   virtual void AddBlankLine() {}
@@ -569,6 +565,34 @@ public:
   void EmitSymbolValue(const MCSymbol *Sym, unsigned Size,
                        bool IsSectionRelative = false);
 
+  /// \brief Emit the expression \p Value into the output as a dtprel
+  /// (64-bit DTP relative) value.
+  ///
+  /// This is used to implement assembler directives such as .dtpreldword on
+  /// targets that support them.
+  virtual void EmitDTPRel64Value(const MCExpr *Value);
+
+  /// \brief Emit the expression \p Value into the output as a dtprel
+  /// (32-bit DTP relative) value.
+  ///
+  /// This is used to implement assembler directives such as .dtprelword on
+  /// targets that support them.
+  virtual void EmitDTPRel32Value(const MCExpr *Value);
+
+  /// \brief Emit the expression \p Value into the output as a tprel
+  /// (64-bit TP relative) value.
+  ///
+  /// This is used to implement assembler directives such as .tpreldword on
+  /// targets that support them.
+  virtual void EmitTPRel64Value(const MCExpr *Value);
+
+  /// \brief Emit the expression \p Value into the output as a tprel
+  /// (32-bit TP relative) value.
+  ///
+  /// This is used to implement assembler directives such as .tprelword on
+  /// targets that support them.
+  virtual void EmitTPRel32Value(const MCExpr *Value);
+
   /// \brief Emit the expression \p Value into the output as a gprel64 (64-bit
   /// GP relative) value.
   ///
@@ -681,14 +705,24 @@ public:
                                      StringRef FileName);
 
   /// \brief Associate a filename with a specified logical file number.  This
-  /// implements the '.cv_file 4 "foo.c"' assembler directive.
-  virtual unsigned EmitCVFileDirective(unsigned FileNo, StringRef Filename);
+  /// implements the '.cv_file 4 "foo.c"' assembler directive. Returns true on
+  /// success.
+  virtual bool EmitCVFileDirective(unsigned FileNo, StringRef Filename);
+
+  /// \brief Introduces a function id for use with .cv_loc.
+  virtual bool EmitCVFuncIdDirective(unsigned FunctionId);
+
+  /// \brief Introduces an inline call site id for use with .cv_loc. Includes
+  /// extra information for inline line table generation.
+  virtual bool EmitCVInlineSiteIdDirective(unsigned FunctionId, unsigned IAFunc,
+                                           unsigned IAFile, unsigned IALine,
+                                           unsigned IACol, SMLoc Loc);
 
   /// \brief This implements the CodeView '.cv_loc' assembler directive.
   virtual void EmitCVLocDirective(unsigned FunctionId, unsigned FileNo,
                                   unsigned Line, unsigned Column,
                                   bool PrologueEnd, bool IsStmt,
-                                  StringRef FileName);
+                                  StringRef FileName, SMLoc Loc);
 
   /// \brief This implements the CodeView '.cv_linetable' assembler directive.
   virtual void EmitCVLinetableDirective(unsigned FunctionId,
@@ -697,10 +731,11 @@ public:
 
   /// \brief This implements the CodeView '.cv_inline_linetable' assembler
   /// directive.
-  virtual void EmitCVInlineLinetableDirective(
-      unsigned PrimaryFunctionId, unsigned SourceFileId, unsigned SourceLineNum,
-      const MCSymbol *FnStartSym, const MCSymbol *FnEndSym,
-      ArrayRef<unsigned> SecondaryFunctionIds);
+  virtual void EmitCVInlineLinetableDirective(unsigned PrimaryFunctionId,
+                                              unsigned SourceFileId,
+                                              unsigned SourceLineNum,
+                                              const MCSymbol *FnStartSym,
+                                              const MCSymbol *FnEndSym);
 
   /// \brief This implements the CodeView '.cv_def_range' assembler
   /// directive.

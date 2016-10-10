@@ -13,16 +13,25 @@
 #include "AMDKernelCodeT.h"
 #include "llvm/IR/CallingConv.h"
 
+#define GET_INSTRINFO_OPERAND_ENUM
+#include "AMDGPUGenInstrInfo.inc"
+#undef GET_INSTRINFO_OPERAND_ENUM
+
 namespace llvm {
 
 class FeatureBitset;
 class Function;
 class GlobalValue;
 class MCContext;
+class MCInstrDesc;
+class MCRegisterInfo;
 class MCSection;
 class MCSubtargetInfo;
 
 namespace AMDGPU {
+
+LLVM_READONLY
+int16_t getNamedOperandIdx(uint16_t Opcode, uint16_t NamedIdx);
 
 struct IsaVersion {
   unsigned Major;
@@ -45,9 +54,46 @@ bool isGroupSegment(const GlobalValue *GV);
 bool isGlobalSegment(const GlobalValue *GV);
 bool isReadOnlySegment(const GlobalValue *GV);
 
+/// \returns Integer value requested using \p F's \p Name attribute.
+///
+/// \returns \p Default if attribute is not present.
+///
+/// \returns \p Default and emits error if requested value cannot be converted
+/// to integer.
 int getIntegerAttribute(const Function &F, StringRef Name, int Default);
 
-unsigned getMaximumWorkGroupSize(const Function &F);
+/// \returns A pair of integer values requested using \p F's \p Name attribute
+/// in "first[,second]" format ("second" is optional unless \p OnlyFirstRequired
+/// is false).
+///
+/// \returns \p Default if attribute is not present.
+///
+/// \returns \p Default and emits error if one of the requested values cannot be
+/// converted to integer, or \p OnlyFirstRequired is false and "second" value is
+/// not present.
+std::pair<int, int> getIntegerPairAttribute(const Function &F,
+                                            StringRef Name,
+                                            std::pair<int, int> Default,
+                                            bool OnlyFirstRequired = false);
+
+/// \returns VMCNT bit mask for given isa \p Version.
+unsigned getVmcntMask(IsaVersion Version);
+
+/// \returns VMCNT bit shift for given isa \p Version.
+unsigned getVmcntShift(IsaVersion Version);
+
+/// \returns EXPCNT bit mask for given isa \p Version.
+unsigned getExpcntMask(IsaVersion Version);
+
+/// \returns EXPCNT bit shift for given isa \p Version.
+unsigned getExpcntShift(IsaVersion Version);
+
+/// \returns LGKMCNT bit mask for given isa \p Version.
+unsigned getLgkmcntMask(IsaVersion Version);
+
+/// \returns LGKMCNT bit shift for given isa \p Version.
+unsigned getLgkmcntShift(IsaVersion Version);
+
 unsigned getInitialPSInputAddr(const Function &F);
 
 bool isShader(CallingConv::ID cc);
@@ -60,6 +106,23 @@ bool isVI(const MCSubtargetInfo &STI);
 /// If \p Reg is a pseudo reg, return the correct hardware register given
 /// \p STI otherwise return \p Reg.
 unsigned getMCReg(unsigned Reg, const MCSubtargetInfo &STI);
+
+/// \brief Can this operand also contain immediate values?
+bool isSISrcOperand(const MCInstrDesc &Desc, unsigned OpNo);
+
+/// \brief Is this floating-point operand?
+bool isSISrcFPOperand(const MCInstrDesc &Desc, unsigned OpNo);
+
+/// \brief Does this opearnd support only inlinable literals?
+bool isSISrcInlinableOperand(const MCInstrDesc &Desc, unsigned OpNo);
+
+/// \brief Get size of register operand
+unsigned getRegOperandSize(const MCRegisterInfo *MRI, const MCInstrDesc &Desc,
+                           unsigned OpNo);
+
+/// \brief Is this literal inlinable
+bool isInlinableLiteral64(int64_t Literal, bool IsVI);
+bool isInlinableLiteral32(int32_t Literal, bool IsVI);
 
 } // end namespace AMDGPU
 } // end namespace llvm

@@ -71,6 +71,8 @@ public:
 
   virtual ~TargetSubtargetInfo();
 
+  virtual bool isXRaySupported() const { return false; }
+
   // Interfaces to the major aspects of target machine information:
   //
   // -- Instruction opcode and operand information
@@ -218,6 +220,8 @@ public:
   }
 
   /// Enable tracking of subregister liveness in register allocator.
+  /// Please use MachineRegisterInfo::subRegLivenessEnabled() instead where
+  /// possible.
   virtual bool enableSubRegLiveness() const { return false; }
 };
 

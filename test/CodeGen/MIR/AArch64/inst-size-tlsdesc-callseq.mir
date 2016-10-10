@@ -1,4 +1,4 @@
-# RUN: llc -mtriple=aarch64-unknown -run-pass aarch64-branch-relax -aarch64-tbz-offset-bits=4 %s -o - | FileCheck %s
+# RUN: llc -mtriple=aarch64-unknown -run-pass branch-relaxation -aarch64-tbz-offset-bits=4 %s -o - | FileCheck %s
 --- |
   ; ModuleID = 'test.ll'
   source_filename = "test.ll"
@@ -33,11 +33,7 @@
 name:            test_tlsdesc_callseq_length
 alignment:       2
 exposesReturnsTwice: false
-hasInlineAsm:    false
-allVRegsAllocated: true
-isSSA:           false
 tracksRegLiveness: false
-tracksSubRegLiveness: false
 liveins:
   - { reg: '%w0' }
 frameInfo:

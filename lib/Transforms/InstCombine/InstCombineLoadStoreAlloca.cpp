@@ -465,6 +465,10 @@ static Instruction *combineLoadToOperationType(InstCombiner &IC, LoadInst &LI) {
   if (LI.use_empty())
     return nullptr;
 
+  // swifterror values can't be bitcasted.
+  if (LI.getPointerOperand()->isSwiftError())
+    return nullptr;
+
   Type *Ty = LI.getType();
   const DataLayout &DL = IC.getDataLayout();
 
@@ -578,6 +582,13 @@ static Instruction *unpackLoadToAggregate(InstCombiner &IC, LoadInst &LI) {
       return IC.replaceInstUsesWith(LI, IC.Builder->CreateInsertValue(
         UndefValue::get(T), NewLoad, 0, Name));
     }
+
+    // Bail out if the array is too large. Ideally we would like to optimize
+    // arrays of arbitrary size but this has a terrible impact on compile time.
+    // The threshold here is chosen arbitrarily, maybe needs a little bit of
+    // tuning.
+    if (NumElements > 1024)
+      return nullptr;
 
     const DataLayout &DL = IC.getDataLayout();
     auto EltSize = DL.getTypeAllocSize(ET);
@@ -997,6 +1008,10 @@ static bool combineStoreToValueType(InstCombiner &IC, StoreInst &SI) {
   if (!SI.isUnordered())
     return false;
 
+  // swifterror values can't be bitcasted.
+  if (SI.getPointerOperand()->isSwiftError())
+    return false;
+
   Value *V = SI.getValueOperand();
 
   // Fold away bit casts of the stored value by storing the original type.
@@ -1079,6 +1094,13 @@ static bool unpackStoreToAggregate(InstCombiner &IC, StoreInst &SI) {
       combineStoreToNewValue(IC, SI, V);
       return true;
     }
+
+    // Bail out if the array is too large. Ideally we would like to optimize
+    // arrays of arbitrary size but this has a terrible impact on compile time.
+    // The threshold here is chosen arbitrarily, maybe needs a little bit of
+    // tuning.
+    if (NumElements > 1024)
+      return false;
 
     const DataLayout &DL = IC.getDataLayout();
     auto EltSize = DL.getTypeAllocSize(AT->getElementType());

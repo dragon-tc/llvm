@@ -216,7 +216,7 @@ public:
                         !Subtarget->inMicroMipsMode() && Subtarget->hasMips32();
     TargetSupported =
         ISASupported && TM.isPositionIndependent() && getABI().IsO32();
-    UnsupportedFPMode = Subtarget->isFP64bit();
+    UnsupportedFPMode = Subtarget->isFP64bit() || Subtarget->useSoftFloat();
   }
 
   unsigned fastMaterializeAlloca(const AllocaInst *AI) override;
@@ -976,9 +976,13 @@ bool MipsFastISel::selectFPExt(const Instruction *I) {
 bool MipsFastISel::selectSelect(const Instruction *I) {
   assert(isa<SelectInst>(I) && "Expected a select instruction.");
 
+  DEBUG(dbgs() << "selectSelect\n");
+
   MVT VT;
-  if (!isTypeSupported(I->getType(), VT))
+  if (!isTypeSupported(I->getType(), VT) || UnsupportedFPMode) {
+    DEBUG(dbgs() << ".. .. gave up (!isTypeSupported || UnsupportedFPMode)\n");
     return false;
+  }
 
   unsigned CondMovOpc;
   const TargetRegisterClass *RC;
@@ -1361,6 +1365,10 @@ bool MipsFastISel::fastLowerArguments() {
       break;
 
     case MVT::f32:
+      if (UnsupportedFPMode) {
+        DEBUG(dbgs() << ".. .. gave up (UnsupportedFPMode)\n");
+        return false;
+      }
       if (NextFGR32 == FGR32ArgRegs.end()) {
         DEBUG(dbgs() << ".. .. gave up (ran out of FGR32 arguments)\n");
         return false;
@@ -1376,6 +1384,10 @@ bool MipsFastISel::fastLowerArguments() {
       break;
 
     case MVT::f64:
+      if (UnsupportedFPMode) {
+        DEBUG(dbgs() << ".. .. gave up (UnsupportedFPMode)\n");
+        return false;
+      }
       if (NextAFGR64 == AFGR64ArgRegs.end()) {
         DEBUG(dbgs() << ".. .. gave up (ran out of AFGR64 arguments)\n");
         return false;
@@ -1617,6 +1629,8 @@ bool MipsFastISel::selectRet(const Instruction *I) {
   const Function &F = *I->getParent()->getParent();
   const ReturnInst *Ret = cast<ReturnInst>(I);
 
+  DEBUG(dbgs() << "selectRet\n");
+
   if (!FuncInfo.CanLowerReturn)
     return false;
 
@@ -1676,6 +1690,12 @@ bool MipsFastISel::selectRet(const Instruction *I) {
     MVT RVVT = RVEVT.getSimpleVT();
     if (RVVT == MVT::f128)
       return false;
+
+    // Do not handle FGR64 returns for now.
+    if (RVVT == MVT::f64 && UnsupportedFPMode) {
+      DEBUG(dbgs() << ".. .. gave up (UnsupportedFPMode\n");
+      return false;
+    }
 
     MVT DestVT = VA.getValVT();
     // Special handling for extended integers.

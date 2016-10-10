@@ -255,7 +255,6 @@ inline RNSuccIterator<NodeRef, BlockT, RegionT> succ_end(NodeRef Node) {
 
 #define RegionNodeGraphTraits(NodeT, BlockT, RegionT)                          \
   template <> struct GraphTraits<NodeT *> {                                    \
-    typedef NodeT NodeType;                                                    \
     typedef NodeT *NodeRef;                                                    \
     typedef RNSuccIterator<NodeRef, BlockT, RegionT> ChildIteratorType;        \
     static NodeRef getEntryNode(NodeRef N) { return N; }                       \
@@ -267,7 +266,6 @@ inline RNSuccIterator<NodeRef, BlockT, RegionT> succ_end(NodeRef Node) {
     }                                                                          \
   };                                                                           \
   template <> struct GraphTraits<FlatIt<NodeT *>> {                            \
-    typedef NodeT NodeType;                                                    \
     typedef NodeT *NodeRef;                                                    \
     typedef RNSuccIterator<FlatIt<NodeRef>, BlockT, RegionT>                   \
         ChildIteratorType;                                                     \
@@ -296,7 +294,7 @@ inline RNSuccIterator<NodeRef, BlockT, RegionT> succ_end(NodeRef Node) {
   template <>                                                                  \
   struct GraphTraits<FlatIt<RegionT *>>                                        \
       : public GraphTraits<FlatIt<NodeT *>> {                                  \
-    typedef df_iterator<NodeRef, SmallPtrSet<NodeRef, 8>, false,               \
+    typedef df_iterator<NodeRef, df_iterator_default_set<NodeRef>, false,      \
                         GraphTraits<FlatIt<NodeRef>>>                          \
         nodes_iterator;                                                        \
     static NodeRef getEntryNode(RegionT *R) {                                  \
@@ -318,7 +316,7 @@ RegionGraphTraits(const Region, const RegionNode);
 
 template <> struct GraphTraits<RegionInfo*>
   : public GraphTraits<FlatIt<RegionNode*> > {
-  typedef df_iterator<NodeRef, SmallPtrSet<NodeRef, 8>, false,
+  typedef df_iterator<NodeRef, df_iterator_default_set<NodeRef>, false,
                       GraphTraits<FlatIt<NodeRef>>>
       nodes_iterator;
 
@@ -335,7 +333,7 @@ template <> struct GraphTraits<RegionInfo*>
 
 template <> struct GraphTraits<RegionInfoPass*>
   : public GraphTraits<RegionInfo *> {
-  typedef df_iterator<NodeRef, SmallPtrSet<NodeRef, 8>, false,
+  typedef df_iterator<NodeRef, df_iterator_default_set<NodeRef>, false,
                       GraphTraits<FlatIt<NodeRef>>>
       nodes_iterator;
 

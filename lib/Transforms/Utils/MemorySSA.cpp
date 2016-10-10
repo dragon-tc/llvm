@@ -490,9 +490,6 @@ class ClobberWalker {
     // First. Also note that First and Last are inclusive.
     MemoryAccess *First;
     MemoryAccess *Last;
-    // N.B. Blocker is currently basically unused. The goal is to use it to make
-    // cache invalidation better, but we're not there yet.
-    MemoryAccess *Blocker;
     Optional<ListIndex> Previous;
 
     DefPath(const MemoryLocation &Loc, MemoryAccess *First, MemoryAccess *Last,
@@ -834,8 +831,7 @@ class ClobberWalker {
 
       // FIXME: This is broken, because the Blocker may be reported to be
       // liveOnEntry, and we'll happily wait for that to disappear (read: never)
-      // For the moment, this is fine, since we do basically nothing with
-      // blocker info.
+      // For the moment, this is fine, since we do nothing with blocker info.
       if (Optional<TerminatedPath> Blocker = getBlockingAccess(
               Target, PausedSearches, NewPaused, TerminatedPaths)) {
         // Cache our work on the blocking node, since we know that's correct.
@@ -850,7 +846,6 @@ class ClobberWalker {
 
         DefPath &CurNode = *Iter;
         assert(CurNode.Last == Current);
-        CurNode.Blocker = Blocker->Clobber;
 
         // Two things:
         // A. We can't reliably cache all of NewPaused back. Consider a case
@@ -1123,21 +1118,13 @@ MemoryAccess *MemorySSA::renameBlock(BasicBlock *BB,
   if (It != PerBlockAccesses.end()) {
     AccessList *Accesses = It->second.get();
     for (MemoryAccess &L : *Accesses) {
-      switch (L.getValueID()) {
-      case Value::MemoryUseVal:
-        cast<MemoryUse>(&L)->setDefiningAccess(IncomingVal);
-        break;
-      case Value::MemoryDefVal:
-        // We can't legally optimize defs, because we only allow single
-        // memory phis/uses on operations, and if we optimize these, we can
-        // end up with multiple reaching defs. Uses do not have this
-        // problem, since they do not produce a value
-        cast<MemoryDef>(&L)->setDefiningAccess(IncomingVal);
+      if (MemoryUseOrDef *MUD = dyn_cast<MemoryUseOrDef>(&L)) {
+        if (MUD->getDefiningAccess() == nullptr)
+          MUD->setDefiningAccess(IncomingVal);
+        if (isa<MemoryDef>(&L))
+          IncomingVal = &L;
+      } else {
         IncomingVal = &L;
-        break;
-      case Value::MemoryPhiVal:
-        IncomingVal = &L;
-        break;
       }
     }
   }
@@ -1361,7 +1348,7 @@ void MemorySSA::OptimizeUses::optimizeUsesInBlock(
       // branch of the dominator tree first. This will guarantee this resets on
       // the smallest set of blocks.
       if (LocInfo.LowerBoundBlock && LocInfo.LowerBoundBlock != BB &&
-          !DT->dominates(LocInfo.LowerBoundBlock, BB)){
+          !DT->dominates(LocInfo.LowerBoundBlock, BB)) {
         // Reset the lower bound of things to check.
         // TODO: Some day we should be able to reset to last kill, rather than
         // 0.
@@ -1467,6 +1454,25 @@ void MemorySSA::OptimizeUses::optimizeUses() {
                         LocStackInfo);
 }
 
+void MemorySSA::placePHINodes(
+    const SmallPtrSetImpl<BasicBlock *> &DefiningBlocks) {
+  // Determine where our MemoryPhi's should go
+  ForwardIDFCalculator IDFs(*DT);
+  IDFs.setDefiningBlocks(DefiningBlocks);
+  SmallVector<BasicBlock *, 32> IDFBlocks;
+  IDFs.calculate(IDFBlocks);
+
+  // Now place MemoryPhi nodes.
+  for (auto &BB : IDFBlocks) {
+    // Insert phi node
+    AccessList *Accesses = getOrCreateAccessList(BB);
+    MemoryPhi *Phi = new MemoryPhi(BB->getContext(), BB, NextID++);
+    ValueToMemoryAccess[BB] = Phi;
+    // Phi's always are placed at the front of the block.
+    Accesses->push_front(Phi);
+  }
+}
+
 void MemorySSA::buildMemorySSA() {
   // We create an access to represent "live on entry", for things like
   // arguments or users of globals, where the memory they use is defined before
@@ -1503,56 +1509,7 @@ void MemorySSA::buildMemorySSA() {
     if (Accesses)
       DefUseBlocks.insert(&B);
   }
-
-  // Compute live-in.
-  // Live in is normally defined as "all the blocks on the path from each def to
-  // each of it's uses".
-  // MemoryDef's are implicit uses of previous state, so they are also uses.
-  // This means we don't really have def-only instructions.  The only
-  // MemoryDef's that are not really uses are those that are of the LiveOnEntry
-  // variable (because LiveOnEntry can reach anywhere, and every def is a
-  // must-kill of LiveOnEntry).
-  // In theory, you could precisely compute live-in by using alias-analysis to
-  // disambiguate defs and uses to see which really pair up with which.
-  // In practice, this would be really expensive and difficult. So we simply
-  // assume all defs are also uses that need to be kept live.
-  // Because of this, the end result of this live-in computation will be "the
-  // entire set of basic blocks that reach any use".
-
-  SmallPtrSet<BasicBlock *, 32> LiveInBlocks;
-  SmallVector<BasicBlock *, 64> LiveInBlockWorklist(DefUseBlocks.begin(),
-                                                    DefUseBlocks.end());
-  // Now that we have a set of blocks where a value is live-in, recursively add
-  // predecessors until we find the full region the value is live.
-  while (!LiveInBlockWorklist.empty()) {
-    BasicBlock *BB = LiveInBlockWorklist.pop_back_val();
-
-    // The block really is live in here, insert it into the set.  If already in
-    // the set, then it has already been processed.
-    if (!LiveInBlocks.insert(BB).second)
-      continue;
-
-    // Since the value is live into BB, it is either defined in a predecessor or
-    // live into it to.
-    LiveInBlockWorklist.append(pred_begin(BB), pred_end(BB));
-  }
-
-  // Determine where our MemoryPhi's should go
-  ForwardIDFCalculator IDFs(*DT);
-  IDFs.setDefiningBlocks(DefiningBlocks);
-  IDFs.setLiveInBlocks(LiveInBlocks);
-  SmallVector<BasicBlock *, 32> IDFBlocks;
-  IDFs.calculate(IDFBlocks);
-
-  // Now place MemoryPhi nodes.
-  for (auto &BB : IDFBlocks) {
-    // Insert phi node
-    AccessList *Accesses = getOrCreateAccessList(BB);
-    MemoryPhi *Phi = new MemoryPhi(BB->getContext(), BB, NextID++);
-    ValueToMemoryAccess[BB] = Phi;
-    // Phi's always are placed at the front of the block.
-    Accesses->push_front(Phi);
-  }
+  placePHINodes(DefiningBlocks);
 
   // Now do regular SSA renaming on the MemoryDef/MemoryUse. Visited will get
   // filled in with all blocks.
@@ -2077,8 +2034,8 @@ bool MemorySSAPrinterLegacyPass::runOnFunction(Function &F) {
 
 char MemorySSAAnalysis::PassID;
 
-MemorySSAAnalysis::Result
-MemorySSAAnalysis::run(Function &F, FunctionAnalysisManager &AM) {
+MemorySSAAnalysis::Result MemorySSAAnalysis::run(Function &F,
+                                                 FunctionAnalysisManager &AM) {
   auto &DT = AM.getResult<DominatorTreeAnalysis>(F);
   auto &AA = AM.getResult<AAManager>(F);
   return MemorySSAAnalysis::Result(make_unique<MemorySSA>(F, &AA, &DT));

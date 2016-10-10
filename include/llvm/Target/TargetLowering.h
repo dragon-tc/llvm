@@ -61,6 +61,7 @@ namespace llvm {
   class MCSymbol;
   template<typename T> class SmallVectorImpl;
   class DataLayout;
+  struct TargetRecip;
   class TargetRegisterClass;
   class TargetLibraryInfo;
   class TargetLoweringObjectFile;
@@ -189,9 +190,6 @@ public:
   virtual MVT getVectorIdxTy(const DataLayout &DL) const {
     return getPointerTy(DL);
   }
-
-  /// Return true if the select operation is expensive for this target.
-  bool isSelectExpensive() const { return SelectIsExpensive; }
 
   virtual bool isSelectSupported(SelectSupportKind /*kind*/) const {
     return true;
@@ -332,6 +330,12 @@ public:
   /// if the target has IEEE-754-compliant fabs/fneg operations for the input
   /// type.
   virtual bool hasBitPreservingFPLogic(EVT VT) const {
+    return false;
+  }
+
+  /// \brief Return true if it is cheaper to split the store of a merged int val
+  /// from a pair of smaller values into multiple stores.
+  virtual bool isMultiStoresCheaperThanBitsMerge(SDValue Lo, SDValue Hi) const {
     return false;
   }
 
@@ -535,6 +539,12 @@ public:
     }
   }
 
+  /// Return the reciprocal estimate code generation preferences for this target
+  /// after potentially overriding settings using the function's attributes.
+  /// FIXME: Like all unsafe-math target settings, this should really be an
+  /// instruction-level attribute/metadata/FMF.
+  TargetRecip getTargetRecipForFunc(MachineFunction &MF) const;
+
   /// Vector types are broken down into some number of legal first class types.
   /// For example, EVT::v8f32 maps to 2 EVT::v4f32 with Altivec or SSE1, or 8
   /// promoted EVT::f64 values with the X86 FP stack.  Similarly, EVT::v2i64
@@ -592,7 +602,7 @@ public:
   /// Returns true if the operation can trap for the value type.
   ///
   /// VT must be a legal type. By default, we optimistically assume most
-  /// operations don't trap except for divide and remainder.
+  /// operations don't trap except for integer divide and remainder.
   virtual bool canOpTrap(unsigned Op, EVT VT) const;
 
   /// Similar to isShuffleMaskLegal. This is used by Targets can use this to
@@ -1016,11 +1026,14 @@ public:
     return UseUnderscoreLongJmp;
   }
 
-  /// Return integer threshold on number of blocks to use jump tables rather
-  /// than if sequence.
-  int getMinimumJumpTableEntries() const {
+  /// Return lower limit for number of blocks in a jump table.
+  unsigned getMinimumJumpTableEntries() const {
     return MinimumJumpTableEntries;
   }
+
+  /// Return upper limit for number of entries in a jump table.
+  /// Zero if no limit.
+  unsigned getMaximumJumpTableSize() const;
 
   /// If a physical register, this specifies the register that
   /// llvm.savestack/llvm.restorestack should save and restore.
@@ -1347,22 +1360,19 @@ protected:
     UseUnderscoreLongJmp = Val;
   }
 
-  /// Indicate the number of blocks to generate jump tables rather than if
-  /// sequence.
-  void setMinimumJumpTableEntries(int Val) {
+  /// Indicate the minimum number of blocks to generate jump tables.
+  void setMinimumJumpTableEntries(unsigned Val) {
     MinimumJumpTableEntries = Val;
   }
+
+  /// Indicate the maximum number of entries in jump tables.
+  /// Set to zero to generate unlimited jump tables.
+  void setMaximumJumpTableSize(unsigned);
 
   /// If set to a physical register, this specifies the register that
   /// llvm.savestack/llvm.restorestack should save and restore.
   void setStackPointerRegisterToSaveRestore(unsigned R) {
     StackPointerRegisterToSaveRestore = R;
-  }
-
-  /// Tells the code generator not to expand operations into sequences that use
-  /// the select operations if possible.
-  void setSelectIsExpensive(bool isExpensive = true) {
-    SelectIsExpensive = isExpensive;
   }
 
   /// Tells the code generator that the target has multiple (allocatable)
@@ -1403,19 +1413,7 @@ protected:
   /// that class natively.
   void addRegisterClass(MVT VT, const TargetRegisterClass *RC) {
     assert((unsigned)VT.SimpleTy < array_lengthof(RegClassForVT));
-    AvailableRegClasses.push_back(std::make_pair(VT, RC));
     RegClassForVT[VT.SimpleTy] = RC;
-  }
-
-  /// Remove all register classes.
-  void clearRegisterClasses() {
-    std::fill(std::begin(RegClassForVT), std::end(RegClassForVT), nullptr);
-
-    AvailableRegClasses.clear();
-  }
-
-  /// \brief Remove all operation actions.
-  void clearOperationActions() {
   }
 
   /// Return the largest legal super-reg register class of the register class
@@ -1745,11 +1743,6 @@ public:
   /// In other words, unless the target performs a post-isel load combining,
   /// this information should not be provided because it will generate more
   /// loads.
-  virtual bool hasPairedLoad(Type * /*LoadedType*/,
-                             unsigned & /*RequiredAligment*/) const {
-    return false;
-  }
-
   virtual bool hasPairedLoad(EVT /*LoadedType*/,
                              unsigned & /*RequiredAligment*/) const {
     return false;
@@ -1898,10 +1891,6 @@ public:
 
 private:
   const TargetMachine &TM;
-
-  /// Tells the code generator not to expand operations into sequences that use
-  /// the select operations if possible.
-  bool SelectIsExpensive;
 
   /// Tells the code generator that the target has multiple (allocatable)
   /// condition registers that can be used to store the results of comparisons
@@ -2058,7 +2047,6 @@ private:
   LegalizeKind getTypeConversion(LLVMContext &Context, EVT VT) const;
 
 private:
-  std::vector<std::pair<MVT, const TargetRegisterClass*> > AvailableRegClasses;
 
   /// Targets can specify ISD nodes that they would like PerformDAGCombine
   /// callbacks for by calling setTargetDAGCombine(), which sets a bit in this
@@ -2166,6 +2154,7 @@ protected:
   /// sequence of memory operands that is recognized by PrologEpilogInserter.
   MachineBasicBlock *emitPatchPoint(MachineInstr &MI,
                                     MachineBasicBlock *MBB) const;
+  TargetRecip ReciprocalEstimates;
 };
 
 /// This class defines information used to lower LLVM code to legal SelectionDAG
@@ -2336,7 +2325,6 @@ public:
     bool isCalledByLegalizer() const { return CalledByLegalizer; }
 
     void AddToWorklist(SDNode *N);
-    void RemoveFromWorklist(SDNode *N);
     SDValue CombineTo(SDNode *N, ArrayRef<SDValue> To, bool AddTo = true);
     SDValue CombineTo(SDNode *N, SDValue Res, bool AddTo = true);
     SDValue CombineTo(SDNode *N, SDValue Res0, SDValue Res1, bool AddTo = true);

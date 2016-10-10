@@ -26,6 +26,8 @@
 
 namespace llvm {
 
+class MachineRegisterInfo;
+
 class MachineLegalizePass : public MachineFunctionPass {
 public:
   static char ID;
@@ -39,9 +41,9 @@ public:
   // Ctor, nothing fancy.
   MachineLegalizePass();
 
-  const char *getPassName() const override {
-    return "MachineLegalizePass";
-  }
+  StringRef getPassName() const override { return "MachineLegalizePass"; }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 
   MachineFunctionProperties getRequiredProperties() const override {
     return MachineFunctionProperties().set(
@@ -52,6 +54,9 @@ public:
     return MachineFunctionProperties().set(
         MachineFunctionProperties::Property::Legalized);
   }
+
+  bool combineExtracts(MachineInstr &MI, MachineRegisterInfo &MRI,
+                       const TargetInstrInfo &TII);
 
   bool runOnMachineFunction(MachineFunction &MF) override;
 };

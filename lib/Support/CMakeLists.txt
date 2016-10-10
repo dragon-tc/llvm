@@ -40,7 +40,7 @@ add_llvm_library(LLVMSupport
   COM.cpp
   CommandLine.cpp
   Compression.cpp
-  ConvertUTF.c
+  ConvertUTF.cpp
   ConvertUTFWrapper.cpp
   CrashRecoveryContext.cpp
   DataExtractor.cpp
@@ -106,6 +106,7 @@ add_llvm_library(LLVMSupport
   regexec.c
   regfree.c
   regstrlcpy.c
+  xxhash.cpp
 
 # System
   Atomic.cpp
@@ -130,6 +131,7 @@ add_llvm_library(LLVMSupport
   ADDITIONAL_HEADER_DIRS
   Unix
   Windows
+  ${LLVM_MAIN_INCLUDE_DIR}/llvm/ADT
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/Support
 
   LINK_LIBS ${system_libs}

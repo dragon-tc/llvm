@@ -57,9 +57,11 @@ void MachineFunctionInitializer::anchor() {}
 static const char *getPropertyName(MachineFunctionProperties::Property Prop) {
   typedef MachineFunctionProperties::Property P;
   switch(Prop) {
-  case P::AllVRegsAllocated: return "AllVRegsAllocated";
+  case P::FailedISel: return "FailedISel";
   case P::IsSSA: return "IsSSA";
   case P::Legalized: return "Legalized";
+  case P::NoPHIs: return "NoPHIs";
+  case P::NoVRegs: return "NoVRegs";
   case P::RegBankSelected: return "RegBankSelected";
   case P::Selected: return "Selected";
   case P::TracksLiveness: return "TracksLiveness";
@@ -84,7 +86,7 @@ void MachineFunctionProperties::print(raw_ostream &OS) const {
 // Out-of-line virtual method.
 MachineFunctionInfo::~MachineFunctionInfo() {}
 
-void ilist_traits<MachineBasicBlock>::deleteNode(MachineBasicBlock *MBB) {
+void ilist_alloc_traits<MachineBasicBlock>::deleteNode(MachineBasicBlock *MBB) {
   MBB->getParent()->DeleteMachineBasicBlock(MBB);
 }
 
@@ -99,6 +101,11 @@ MachineFunction::MachineFunction(const Function *F, const TargetMachine &TM,
                                  unsigned FunctionNum, MachineModuleInfo &mmi)
     : Fn(F), Target(TM), STI(TM.getSubtargetImpl(*F)), Ctx(mmi.getContext()),
       MMI(mmi) {
+  FunctionNumber = FunctionNum;
+  init();
+}
+
+void MachineFunction::init() {
   // Assume the function starts in SSA form with correct liveness.
   Properties.set(MachineFunctionProperties::Property::IsSSA);
   Properties.set(MachineFunctionProperties::Property::TracksLiveness);
@@ -111,11 +118,11 @@ MachineFunction::MachineFunction(const Function *F, const TargetMachine &TM,
   // We can realign the stack if the target supports it and the user hasn't
   // explicitly asked us not to.
   bool CanRealignSP = STI->getFrameLowering()->isStackRealignable() &&
-                      !F->hasFnAttribute("no-realign-stack");
+                      !Fn->hasFnAttribute("no-realign-stack");
   FrameInfo = new (Allocator) MachineFrameInfo(
       getFnStackAlignment(STI, Fn), /*StackRealignable=*/CanRealignSP,
       /*ForceRealign=*/CanRealignSP &&
-          F->hasFnAttribute(Attribute::StackAlignment));
+          Fn->hasFnAttribute(Attribute::StackAlignment));
 
   if (Fn->hasFnAttribute(Attribute::StackAlignment))
     FrameInfo->ensureMaxAlignment(Fn->getFnStackAlignment());
@@ -132,15 +139,14 @@ MachineFunction::MachineFunction(const Function *F, const TargetMachine &TM,
   if (AlignAllFunctions)
     Alignment = AlignAllFunctions;
 
-  FunctionNumber = FunctionNum;
   JumpTableInfo = nullptr;
 
   if (isFuncletEHPersonality(classifyEHPersonality(
-          F->hasPersonalityFn() ? F->getPersonalityFn() : nullptr))) {
+          Fn->hasPersonalityFn() ? Fn->getPersonalityFn() : nullptr))) {
     WinEHInfo = new (Allocator) WinEHFuncInfo();
   }
 
-  assert(TM.isCompatibleDataLayout(getDataLayout()) &&
+  assert(Target.isCompatibleDataLayout(getDataLayout()) &&
          "Can't create a MachineFunction using a Module with a "
          "Target-incompatible DataLayout attached\n");
 
@@ -148,6 +154,11 @@ MachineFunction::MachineFunction(const Function *F, const TargetMachine &TM,
 }
 
 MachineFunction::~MachineFunction() {
+  clear();
+}
+
+void MachineFunction::clear() {
+  Properties.reset();
   // Don't call destructors on MachineInstr and MachineOperand. All of their
   // memory comes from the BumpPtrAllocator which is about to be purged.
   //
@@ -406,6 +417,7 @@ StringRef MachineFunction::getName() const {
 void MachineFunction::print(raw_ostream &OS, const SlotIndexes *Indexes) const {
   OS << "# Machine code for function " << getName() << ": ";
   getProperties().print(OS);
+  OS << '\n';
 
   // Print Frame Information
   FrameInfo->print(*this, OS);
@@ -532,8 +544,8 @@ MCSymbol *MachineFunction::getJTISymbol(unsigned JTI, MCContext &Ctx,
   assert(JumpTableInfo && "No jump tables");
   assert(JTI < JumpTableInfo->getJumpTables().size() && "Invalid JTI!");
 
-  const char *Prefix = isLinkerPrivate ? DL.getLinkerPrivateGlobalPrefix()
-                                       : DL.getPrivateGlobalPrefix();
+  StringRef Prefix = isLinkerPrivate ? DL.getLinkerPrivateGlobalPrefix()
+                                     : DL.getPrivateGlobalPrefix();
   SmallString<60> Name;
   raw_svector_ostream(Name)
     << Prefix << "JTI" << getFunctionNumber() << '_' << JTI;
@@ -631,11 +643,11 @@ int MachineFrameInfo::CreateFixedObject(uint64_t Size, int64_t SPOffset,
 /// Create a spill slot at a fixed location on the stack.
 /// Returns an index with a negative value.
 int MachineFrameInfo::CreateFixedSpillStackObject(uint64_t Size,
-                                                  int64_t SPOffset) {
+                                                  int64_t SPOffset,
+                                                  bool Immutable) {
   unsigned Align = MinAlign(SPOffset, ForcedRealign ? 1 : StackAlignment);
   Align = clampStackAlignment(!StackRealignable, Align, StackAlignment);
-  Objects.insert(Objects.begin(), StackObject(Size, Align, SPOffset,
-                                              /*Immutable*/ true,
+  Objects.insert(Objects.begin(), StackObject(Size, Align, SPOffset, Immutable,
                                               /*isSS*/ true,
                                               /*Alloca*/ nullptr,
                                               /*isAliased*/ false));
@@ -887,13 +899,20 @@ MachineConstantPoolEntry::getSectionKind(const DataLayout *DL) const {
 }
 
 MachineConstantPool::~MachineConstantPool() {
+  // A constant may be a member of both Constants and MachineCPVsSharingEntries,
+  // so keep track of which we've deleted to avoid double deletions.
+  DenseSet<MachineConstantPoolValue*> Deleted;
   for (unsigned i = 0, e = Constants.size(); i != e; ++i)
-    if (Constants[i].isMachineConstantPoolEntry())
+    if (Constants[i].isMachineConstantPoolEntry()) {
+      Deleted.insert(Constants[i].Val.MachineCPVal);
       delete Constants[i].Val.MachineCPVal;
+    }
   for (DenseSet<MachineConstantPoolValue*>::iterator I =
        MachineCPVsSharingEntries.begin(), E = MachineCPVsSharingEntries.end();
-       I != E; ++I)
-    delete *I;
+       I != E; ++I) {
+    if (Deleted.count(*I) == 0)
+      delete *I;
+  }
 }
 
 /// Test whether the given two constants can be allocated the same constant pool
