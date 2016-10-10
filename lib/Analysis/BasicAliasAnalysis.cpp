@@ -569,8 +569,6 @@ FunctionModRefBehavior BasicAAResult::getModRefBehavior(ImmutableCallSite CS) {
   // than that.
   if (CS.onlyReadsMemory())
     Min = FMRB_OnlyReadsMemory;
-  else if (CS.doesNotReadMemory())
-    Min = FMRB_DoesNotReadMemory;
 
   if (CS.onlyAccessesArgMemory())
     Min = FunctionModRefBehavior(Min & FMRB_OnlyAccessesArgumentPointees);
@@ -598,8 +596,6 @@ FunctionModRefBehavior BasicAAResult::getModRefBehavior(const Function *F) {
   // If the function declares it only reads memory, go with that.
   if (F->onlyReadsMemory())
     Min = FMRB_OnlyReadsMemory;
-  else if (F->doesNotReadMemory())
-    Min = FMRB_DoesNotReadMemory;
 
   if (F->onlyAccessesArgMemory())
     Min = FunctionModRefBehavior(Min & FMRB_OnlyAccessesArgumentPointees);
@@ -607,18 +603,32 @@ FunctionModRefBehavior BasicAAResult::getModRefBehavior(const Function *F) {
   return Min;
 }
 
-/// Returns true if this is a writeonly (i.e Mod only) parameter.
+/// Returns true if this is a writeonly (i.e Mod only) parameter.  Currently,
+/// we don't have a writeonly attribute, so this only knows about builtin
+/// intrinsics and target library functions.  We could consider adding a
+/// writeonly attribute in the future and moving all of these facts to either
+/// Intrinsics.td or InferFunctionAttr.cpp
 static bool isWriteOnlyParam(ImmutableCallSite CS, unsigned ArgIdx,
                              const TargetLibraryInfo &TLI) {
-  if (CS.paramHasAttr(ArgIdx + 1, Attribute::WriteOnly))
-    return true;
+  if (const IntrinsicInst *II = dyn_cast<IntrinsicInst>(CS.getInstruction()))
+    switch (II->getIntrinsicID()) {
+    default:
+      break;
+    case Intrinsic::memset:
+    case Intrinsic::memcpy:
+    case Intrinsic::memmove:
+      // We don't currently have a writeonly attribute.  All other properties
+      // of these intrinsics are nicely described via attributes in
+      // Intrinsics.td and handled generically.
+      if (ArgIdx == 0)
+        return true;
+    }
 
   // We can bound the aliasing properties of memset_pattern16 just as we can
   // for memcpy/memset.  This is particularly important because the
   // LoopIdiomRecognizer likes to turn loops into calls to memset_pattern16
-  // whenever possible.
-  // FIXME Consider handling this in InferFunctionAttr.cpp together with other
-  // attributes.
+  // whenever possible.  Note that all but the missing writeonly attribute are
+  // handled via InferFunctionAttr.
   LibFunc::Func F;
   if (CS.getCalledFunction() && TLI.getLibFunc(*CS.getCalledFunction(), F) &&
       F == LibFunc::memset_pattern16 && TLI.has(F))
@@ -635,7 +645,8 @@ static bool isWriteOnlyParam(ImmutableCallSite CS, unsigned ArgIdx,
 ModRefInfo BasicAAResult::getArgModRefInfo(ImmutableCallSite CS,
                                            unsigned ArgIdx) {
 
-  // Checking for known builtin intrinsics and target library functions.
+  // Emulate the missing writeonly attribute by checking for known builtin
+  // intrinsics and target library functions.
   if (isWriteOnlyParam(CS, ArgIdx, TLI))
     return MRI_Mod;
 

@@ -1469,8 +1469,6 @@ static Attribute::AttrKind getAttrFromCode(uint64_t Code) {
     return Attribute::SwiftSelf;
   case bitc::ATTR_KIND_UW_TABLE:
     return Attribute::UWTable;
-  case bitc::ATTR_KIND_WRITEONLY:
-    return Attribute::WriteOnly;
   case bitc::ATTR_KIND_Z_EXT:
     return Attribute::ZExt;
   }

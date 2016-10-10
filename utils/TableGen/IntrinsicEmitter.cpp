@@ -575,12 +575,6 @@ void IntrinsicEmitter::EmitAttributes(const CodeGenIntrinsicTable &Ints,
             OS << "Attribute::ReadOnly";
             addComma = true;
             break;
-          case CodeGenIntrinsic::WriteOnly:
-            if (addComma)
-              OS << ",";
-            OS << "Attribute::WriteOnly";
-            addComma = true;
-            break;
           case CodeGenIntrinsic::ReadNone:
             if (addComma)
               OS << ",";
@@ -644,21 +638,12 @@ void IntrinsicEmitter::EmitAttributes(const CodeGenIntrinsicTable &Ints,
         OS << "Attribute::ReadOnly";
         break;
       case CodeGenIntrinsic::WriteArgMem:
-        if (addComma)
-          OS << ",";
-        OS << "Attribute::WriteOnly,";
-        OS << "Attribute::ArgMemOnly";
-        break;
-      case CodeGenIntrinsic::WriteMem:
-        if (addComma)
-          OS << ",";
-        OS << "Attribute::WriteOnly";
-        break;
       case CodeGenIntrinsic::ReadWriteArgMem:
         if (addComma)
           OS << ",";
         OS << "Attribute::ArgMemOnly";
         break;
+      case CodeGenIntrinsic::WriteMem:
       case CodeGenIntrinsic::ReadWriteMem:
         break;
       }
