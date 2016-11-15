@@ -93,6 +93,8 @@ void SetSigIntHandler();
 void SetSigTermHandler();
 std::string Base64(const Unit &U);
 int ExecuteCommand(const std::string &Command);
+bool ExecuteCommandAndReadOutput(const std::string &Command, std::string *Out);
+
 size_t GetPeakRSSMb();
 
 // Private copy of SHA1 implementation.
@@ -110,6 +112,17 @@ bool IsASCII(const uint8_t *Data, size_t Size);
 int NumberOfCpuCores();
 int GetPid();
 void SleepSeconds(int Seconds);
+
+
+struct ScopedDoingMyOwnMemmem {
+  ScopedDoingMyOwnMemmem();
+  ~ScopedDoingMyOwnMemmem();
+};
+
+inline uint8_t  Bswap(uint8_t x)  { return x; }
+inline uint16_t Bswap(uint16_t x) { return __builtin_bswap16(x); }
+inline uint32_t Bswap(uint32_t x) { return __builtin_bswap32(x); }
+inline uint64_t Bswap(uint64_t x) { return __builtin_bswap64(x); }
 
 }  // namespace fuzzer
 #endif  // LLVM_FUZZER_DEFS_H

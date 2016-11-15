@@ -647,14 +647,14 @@ void CallAnalyzer::updateThreshold(CallSite CS, Function &Callee) {
   // when it would increase the threshold and the caller does not need to
   // minimize its size.
   bool InlineHint = Callee.hasFnAttribute(Attribute::InlineHint) ||
-                    PSI->isHotFunction(&Callee);
+                    PSI->isFunctionEntryHot(&Callee);
   if (InlineHint && !Caller->optForMinSize())
     Threshold = MaxIfValid(Threshold, Params.HintThreshold);
 
   if (HotCallsite && !Caller->optForMinSize())
     Threshold = MaxIfValid(Threshold, Params.HotCallSiteThreshold);
 
-  bool ColdCallee = PSI->isColdFunction(&Callee);
+  bool ColdCallee = PSI->isFunctionEntryCold(&Callee);
   // For cold callees, use the ColdThreshold knob if it is available and reduces
   // the threshold.
   if (ColdCallee)
@@ -1255,7 +1255,9 @@ bool CallAnalyzer::analyzeCall(CallSite CS) {
       Cost -= InlineConstants::InstrCost;
     }
   }
-
+  // The call instruction also disappears after inlining.
+  Cost -= InlineConstants::InstrCost + InlineConstants::CallPenalty;
+  
   // If there is only one call of the function, and it has internal linkage,
   // the cost of inlining it drops dramatically.
   bool OnlyOneCallAndLocalLinkage =

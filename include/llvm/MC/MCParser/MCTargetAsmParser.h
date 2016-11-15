@@ -82,6 +82,12 @@ struct ParseInstructionInfo {
     : AsmRewrites(rewrites) {}
 };
 
+enum OperandMatchResultTy {
+  MatchOperand_Success,  // operand matched successfully
+  MatchOperand_NoMatch,  // operand did not match
+  MatchOperand_ParseFail // operand matched but had errors
+};
+
 /// MCTargetAsmParser - Generic interface to target specific assembly parsers.
 class MCTargetAsmParser : public MCAsmParserExtension {
 public:
@@ -208,6 +214,9 @@ public:
   virtual unsigned checkTargetMatchPredicate(MCInst &Inst) {
     return Match_Success;
   }
+
+  virtual void convertToMapAndConstraints(unsigned Kind,
+                                          const OperandVector &Operands) = 0;
 
   // Return whether this parser uses assignment statements with equals tokens
   virtual bool equalIsAsmAssignment() { return true; };

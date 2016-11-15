@@ -13,14 +13,14 @@
 #include "AArch64.h"
 #include "AArch64CallLowering.h"
 #include "AArch64InstructionSelector.h"
-#include "AArch64MachineLegalizer.h"
+#include "AArch64LegalizerInfo.h"
 #include "AArch64RegisterBankInfo.h"
 #include "AArch64TargetMachine.h"
 #include "AArch64TargetObjectFile.h"
 #include "AArch64TargetTransformInfo.h"
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
-#include "llvm/CodeGen/GlobalISel/MachineLegalizePass.h"
+#include "llvm/CodeGen/GlobalISel/Legalizer.h"
 #include "llvm/CodeGen/GlobalISel/RegBankSelect.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/RegAllocRegistry.h"
@@ -159,7 +159,11 @@ static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
 }
 
 // Helper function to build a DataLayout string
-static std::string computeDataLayout(const Triple &TT, bool LittleEndian) {
+static std::string computeDataLayout(const Triple &TT,
+                                     const MCTargetOptions &Options,
+                                     bool LittleEndian) {
+  if (Options.getABIName() == "ilp32")
+    return "e-m:e-p:32:32-i8:8-i16:16-i64:64-S128";
   if (TT.isOSBinFormatMachO())
     return "e-m:o-i64:64-i128:128-n32:64-S128";
   if (LittleEndian)
@@ -188,8 +192,10 @@ AArch64TargetMachine::AArch64TargetMachine(
     CodeModel::Model CM, CodeGenOpt::Level OL, bool LittleEndian)
     // This nested ternary is horrible, but DL needs to be properly
     // initialized before TLInfo is constructed.
-    : LLVMTargetMachine(T, computeDataLayout(TT, LittleEndian), TT, CPU, FS,
-                        Options, getEffectiveRelocModel(TT, RM), CM, OL),
+    : LLVMTargetMachine(T, computeDataLayout(TT, Options.MCOptions,
+                                             LittleEndian),
+                        TT, CPU, FS, Options,
+			getEffectiveRelocModel(TT, RM), CM, OL),
       TLOF(createTLOF(getTargetTriple())),
       isLittle(LittleEndian) {
   initAsmInfo();
@@ -202,7 +208,7 @@ namespace {
 struct AArch64GISelActualAccessor : public GISelAccessor {
   std::unique_ptr<CallLowering> CallLoweringInfo;
   std::unique_ptr<InstructionSelector> InstSelector;
-  std::unique_ptr<MachineLegalizer> Legalizer;
+  std::unique_ptr<LegalizerInfo> Legalizer;
   std::unique_ptr<RegisterBankInfo> RegBankInfo;
   const CallLowering *getCallLowering() const override {
     return CallLoweringInfo.get();
@@ -210,7 +216,7 @@ struct AArch64GISelActualAccessor : public GISelAccessor {
   const InstructionSelector *getInstructionSelector() const override {
     return InstSelector.get();
   }
-  const class MachineLegalizer *getMachineLegalizer() const override {
+  const class LegalizerInfo *getLegalizerInfo() const override {
     return Legalizer.get();
   }
   const RegisterBankInfo *getRegBankInfo() const override {
@@ -241,20 +247,20 @@ AArch64TargetMachine::getSubtargetImpl(const Function &F) const {
     I = llvm::make_unique<AArch64Subtarget>(TargetTriple, CPU, FS, *this,
                                             isLittle);
 #ifndef LLVM_BUILD_GLOBAL_ISEL
-   GISelAccessor *GISel = new GISelAccessor();
+    GISelAccessor *GISel = new GISelAccessor();
 #else
     AArch64GISelActualAccessor *GISel =
         new AArch64GISelActualAccessor();
     GISel->CallLoweringInfo.reset(
         new AArch64CallLowering(*I->getTargetLowering()));
-    GISel->Legalizer.reset(new AArch64MachineLegalizer());
+    GISel->Legalizer.reset(new AArch64LegalizerInfo());
 
     auto *RBI = new AArch64RegisterBankInfo(*I->getRegisterInfo());
 
     // FIXME: At this point, we can't rely on Subtarget having RBI.
     // It's awkward to mix passing RBI and the Subtarget; should we pass
     // TII/TRI as well?
-    GISel->InstSelector.reset(new AArch64InstructionSelector(*I, *RBI));
+    GISel->InstSelector.reset(new AArch64InstructionSelector(*this, *I, *RBI));
 
     GISel->RegBankInfo.reset(RBI);
 #endif
@@ -399,7 +405,7 @@ bool AArch64PassConfig::addIRTranslator() {
   return false;
 }
 bool AArch64PassConfig::addLegalizeMachineIR() {
-  addPass(new MachineLegalizePass());
+  addPass(new Legalizer());
   return false;
 }
 bool AArch64PassConfig::addRegBankSelect() {

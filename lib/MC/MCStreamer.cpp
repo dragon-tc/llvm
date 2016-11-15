@@ -72,6 +72,7 @@ raw_ostream &MCStreamer::GetCommentOS() {
 void MCStreamer::emitRawComment(const Twine &T, bool TabPrefix) {}
 
 void MCStreamer::addExplicitComment(const Twine &T) {}
+void MCStreamer::emitExplicitComments() {}
 
 void MCStreamer::generateCompactUnwindEncodings(MCAsmBackend *MAB) {
   for (auto &FI : DwarfFrameInfos)
@@ -291,7 +292,7 @@ void MCStreamer::AssignFragment(MCSymbol *Symbol, MCFragment *Fragment) {
 
 void MCStreamer::EmitLabel(MCSymbol *Symbol) {
   assert(!Symbol->isVariable() && "Cannot emit a variable symbol!");
-  assert(getCurrentSection().first && "Cannot emit before setting section!");
+  assert(getCurrentSectionOnly() && "Cannot emit before setting section!");
   assert(!Symbol->getFragment() && "Unexpected fragment on symbol data!");
   Symbol->setFragment(&getCurrentSectionOnly()->getDummyFragment());
 
@@ -710,6 +711,9 @@ void MCStreamer::EmitRawTextImpl(StringRef String) {
 void MCStreamer::EmitRawText(const Twine &T) {
   SmallString<128> Str;
   EmitRawTextImpl(T.toStringRef(Str));
+}
+
+void MCStreamer::EmitWindowsUnwindTables() {
 }
 
 void MCStreamer::Finish() {

@@ -12,7 +12,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ProfileSummary.h"
@@ -63,10 +65,10 @@ void ProfileSummaryInfo::computeSummary() {
   Summary.reset(ProfileSummary::getFromMD(SummaryMD));
 }
 
-/// Returns true if the function is a hot function. If it returns false, it
-/// either means it is not hot or it is unknown whether F is hot or not (for
+/// Returns true if the function's entry is hot. If it returns false, it
+/// either means it is not hot or it is unknown whether it is hot or not (for
 /// example, no profile data is available).
-bool ProfileSummaryInfo::isHotFunction(const Function *F) {
+bool ProfileSummaryInfo::isFunctionEntryHot(const Function *F) {
   computeSummary();
   if (!F || !Summary)
     return false;
@@ -74,15 +76,13 @@ bool ProfileSummaryInfo::isHotFunction(const Function *F) {
   // FIXME: The heuristic used below for determining hotness is based on
   // preliminary SPEC tuning for inliner. This will eventually be a
   // convenience method that calls isHotCount.
-  return (FunctionCount &&
-          FunctionCount.getValue() >=
-              (uint64_t)(0.3 * (double)Summary->getMaxFunctionCount()));
+  return FunctionCount && isHotCount(FunctionCount.getValue());
 }
 
-/// Returns true if the function is a cold function. If it returns false, it
-/// either means it is not cold or it is unknown whether F is cold or not (for
+/// Returns true if the function's entry is a cold. If it returns false, it
+/// either means it is not cold or it is unknown whether it is cold or not (for
 /// example, no profile data is available).
-bool ProfileSummaryInfo::isColdFunction(const Function *F) {
+bool ProfileSummaryInfo::isFunctionEntryCold(const Function *F) {
   computeSummary();
   if (!F)
     return false;
@@ -95,9 +95,7 @@ bool ProfileSummaryInfo::isColdFunction(const Function *F) {
   // FIXME: The heuristic used below for determining coldness is based on
   // preliminary SPEC tuning for inliner. This will eventually be a
   // convenience method that calls isHotCount.
-  return (FunctionCount &&
-          FunctionCount.getValue() <=
-              (uint64_t)(0.01 * (double)Summary->getMaxFunctionCount()));
+  return FunctionCount && isColdCount(FunctionCount.getValue());
 }
 
 /// Compute the hot and cold thresholds.
@@ -125,6 +123,24 @@ bool ProfileSummaryInfo::isColdCount(uint64_t C) {
   return ColdCountThreshold && C <= ColdCountThreshold.getValue();
 }
 
+bool ProfileSummaryInfo::isHotBB(const BasicBlock *B, BlockFrequencyInfo *BFI) {
+  auto Count = BFI->getBlockProfileCount(B);
+  if (Count && isHotCount(*Count))
+    return true;
+  // Use extractProfTotalWeight to get BB count.
+  // For Sample PGO, BFI may not provide accurate BB count due to errors
+  // magnified during sample count propagation. This serves as a backup plan
+  // to ensure all hot BB will not be missed.
+  // The query currently has false positives as branch instruction cloning does
+  // not update/scale branch weights. Unlike false negatives, this will not cause
+  // performance problem.
+  uint64_t TotalCount;
+  if (B->getTerminator()->extractProfTotalWeight(TotalCount) &&
+      isHotCount(TotalCount))
+    return true;
+  return false;
+}
+
 INITIALIZE_PASS(ProfileSummaryInfoWrapperPass, "profile-summary-info",
                 "Profile summary info", false, true)
 
@@ -149,8 +165,6 @@ ProfileSummaryInfo ProfileSummaryAnalysis::run(Module &M,
   return ProfileSummaryInfo(M);
 }
 
-// FIXME: This only tests isHotFunction and isColdFunction and not the
-// isHotCount and isColdCount calls.
 PreservedAnalyses ProfileSummaryPrinterPass::run(Module &M,
                                                  ModuleAnalysisManager &AM) {
   ProfileSummaryInfo &PSI = AM.getResult<ProfileSummaryAnalysis>(M);
@@ -158,10 +172,10 @@ PreservedAnalyses ProfileSummaryPrinterPass::run(Module &M,
   OS << "Functions in " << M.getName() << " with hot/cold annotations: \n";
   for (auto &F : M) {
     OS << F.getName();
-    if (PSI.isHotFunction(&F))
-      OS << " :hot ";
-    else if (PSI.isColdFunction(&F))
-      OS << " :cold ";
+    if (PSI.isFunctionEntryHot(&F))
+      OS << " :hot entry ";
+    else if (PSI.isFunctionEntryCold(&F))
+      OS << " :cold entry ";
     OS << "\n";
   }
   return PreservedAnalyses::all();
