@@ -1057,6 +1057,10 @@ public:
   /// Zero if no limit.
   unsigned getMaximumJumpTableSize() const;
 
+  virtual bool isJumpTableRelative() const {
+    return TM.isPositionIndependent();
+  }
+
   /// If a physical register, this specifies the register that
   /// llvm.savestack/llvm.restorestack should save and restore.
   unsigned getStackPointerRegisterToSaveRestore() const {
@@ -2101,7 +2105,7 @@ protected:
   virtual bool isExtFreeImpl(const Instruction *I) const { return false; }
 
   /// Depth that GatherAllAliases should should continue looking for chain
-  /// dependencies when trying to find a more preferrable chain. As an
+  /// dependencies when trying to find a more preferable chain. As an
   /// approximation, this should be more than the number of consecutive stores
   /// expected to be merged.
   unsigned GatherAllAliasesMaxDepth;
