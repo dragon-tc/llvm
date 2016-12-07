@@ -104,7 +104,7 @@ void RegisterInfoEmitter::runEnums(raw_ostream &OS,
   OS << "namespace llvm {\n\n";
 
   OS << "class MCRegisterClass;\n"
-     << "extern const MCRegisterClass " << Namespace
+     << "extern const MCRegisterClass " << Target.getName()
      << "MCRegisterClasses[];\n\n";
 
   if (!Namespace.empty())
@@ -1361,7 +1361,7 @@ RegisterInfoEmitter::runTargetDesc(raw_ostream &OS, CodeGenTarget &Target,
   OS << "};\n";      // End of register descriptors...
 
 
-  std::string ClassName = Target.getName() + "GenRegisterInfo";
+  std::string ClassName = Target.getName().str() + "GenRegisterInfo";
 
   auto SubRegIndicesSize =
       std::distance(SubRegIndices.begin(), SubRegIndices.end());
