@@ -58,6 +58,8 @@ tools/lld
 tools/llgo
 # Polly, which is tracked independently.
 tools/polly
+# avrlit, which is tracked independently.
+tools/avrlit
 # BinUtils, which is tracked independently.
 tools/binutils
 # libffi, which is tracked independently.
