@@ -967,5 +967,138 @@ TEST(DWARFDebugInfo, TestDWARF32Version4Addr8Addresses) {
   TestAddresses<4, AddrType>();
 }
 
+TEST(DWARFDebugInfo, TestRelations) {
+  // Test the DWARF APIs related to accessing the DW_AT_low_pc and
+  // DW_AT_high_pc.
+  uint16_t Version = 4;
+  
+  const uint8_t AddrSize = sizeof(void *);
+  initLLVMIfNeeded();
+  Triple Triple = getHostTripleForAddrSize(AddrSize);
+  auto ExpectedDG = dwarfgen::Generator::create(Triple, Version);
+  if (HandleExpectedError(ExpectedDG))
+    return;
+  dwarfgen::Generator *DG = ExpectedDG.get().get();
+  dwarfgen::CompileUnit &CU = DG->addCompileUnit();
+  
+  enum class Tag: uint16_t  {
+    A = dwarf::DW_TAG_lo_user,
+    B,
+    C,
+    C1,
+    C2,
+    D,
+    D1
+  };
+
+  // Scope to allow us to re-use the same DIE names
+  {
+    // Create DWARF tree that looks like:
+    //
+    // CU
+    //   A
+    //     B
+    //     C
+    //       C1
+    //       C2
+    //     D
+    //       D1
+    dwarfgen::DIE CUDie = CU.getUnitDIE();
+    dwarfgen::DIE A = CUDie.addChild((dwarf::Tag)Tag::A);
+    A.addChild((dwarf::Tag)Tag::B);
+    dwarfgen::DIE C = A.addChild((dwarf::Tag)Tag::C);
+    dwarfgen::DIE D = A.addChild((dwarf::Tag)Tag::D);
+    C.addChild((dwarf::Tag)Tag::C1);
+    C.addChild((dwarf::Tag)Tag::C2);
+    D.addChild((dwarf::Tag)Tag::D1);
+  }
+
+  MemoryBufferRef FileBuffer(DG->generate(), "dwarf");
+  auto Obj = object::ObjectFile::createObjectFile(FileBuffer);
+  EXPECT_TRUE((bool)Obj);
+  DWARFContextInMemory DwarfContext(*Obj.get());
+  
+  // Verify the number of compile units is correct.
+  uint32_t NumCUs = DwarfContext.getNumCompileUnits();
+  EXPECT_EQ(NumCUs, 1u);
+  DWARFCompileUnit *U = DwarfContext.getCompileUnitAtIndex(0);
+  
+  // Get the compile unit DIE is valid.
+  auto CUDie = U->getUnitDIE(false);
+  EXPECT_TRUE(CUDie.isValid());
+  // CUDie.dump(llvm::outs(), UINT32_MAX);
+  
+  // The compile unit doesn't have a parent or a sibling.
+  auto ParentDie = CUDie.getParent();
+  EXPECT_FALSE(ParentDie.isValid());
+  auto SiblingDie = CUDie.getSibling();
+  EXPECT_FALSE(SiblingDie.isValid());
+  
+  // Get the children of the compile unit
+  auto A = CUDie.getFirstChild();
+  auto B = A.getFirstChild();
+  auto C = B.getSibling();
+  auto D = C.getSibling();
+  auto Null = D.getSibling();
+  
+  // Verify NULL Die is NULL and has no children or siblings
+  EXPECT_TRUE(Null.isNULL());
+  EXPECT_FALSE(Null.getSibling().isValid());
+  EXPECT_FALSE(Null.getFirstChild().isValid());
+  
+  // Verify all children of the compile unit DIE are correct.
+  EXPECT_EQ(A.getTag(), (dwarf::Tag)Tag::A);
+  EXPECT_EQ(B.getTag(), (dwarf::Tag)Tag::B);
+  EXPECT_EQ(C.getTag(), (dwarf::Tag)Tag::C);
+  EXPECT_EQ(D.getTag(), (dwarf::Tag)Tag::D);
+
+  // Verify who has children
+  EXPECT_TRUE(A.hasChildren());
+  EXPECT_FALSE(B.hasChildren());
+  EXPECT_TRUE(C.hasChildren());
+  EXPECT_TRUE(D.hasChildren());
+
+  // Make sure the parent of all the children of the compile unit are the
+  // compile unit.
+  EXPECT_EQ(A.getParent(), CUDie);
+  
+  // Make sure the parent of all the children of A are the A.
+  // B is the first child in A, so we need to verify we can get the previous
+  // DIE as the parent.
+  EXPECT_EQ(B.getParent(), A);
+  // C is the second child in A, so we need to make sure we can backup across
+  // other DIE (B) at the same level to get the correct parent.
+  EXPECT_EQ(C.getParent(), A);
+  // D is the third child of A. We need to verify we can backup across other DIE
+  // (B and C) including DIE that have children (D) to get the correct parent.
+  EXPECT_EQ(D.getParent(), A);
+
+  // Verify that a DIE with no children returns an invalid DWARFDie.
+  EXPECT_FALSE(B.getFirstChild().isValid());
+
+  // Verify the children of the B DIE
+  auto C1 = C.getFirstChild();
+  auto C2 = C1.getSibling();
+  EXPECT_TRUE(C2.getSibling().isNULL());
+  
+  // Verify all children of the B DIE correctly valid or invalid.
+  EXPECT_EQ(C1.getTag(), (dwarf::Tag)Tag::C1);
+  EXPECT_EQ(C2.getTag(), (dwarf::Tag)Tag::C2);
+
+  // Make sure the parent of all the children of the B are the B.
+  EXPECT_EQ(C1.getParent(), C);
+  EXPECT_EQ(C2.getParent(), C);
+}
+
+TEST(DWARFDebugInfo, TestDWARFDie) {
+
+  // Make sure a default constructed DWARFDie doesn't have any parent, sibling
+  // or child;
+  DWARFDie DefaultDie;
+  EXPECT_FALSE(DefaultDie.getParent().isValid());
+  EXPECT_FALSE(DefaultDie.getFirstChild().isValid());
+  EXPECT_FALSE(DefaultDie.getSibling().isValid());
+}
+
 
 } // end anonymous namespace

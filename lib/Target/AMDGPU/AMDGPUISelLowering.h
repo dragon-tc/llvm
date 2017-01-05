@@ -313,6 +313,7 @@ enum NodeType : unsigned {
   /// Pointer to the start of the shader's constant data.
   CONST_DATA_PTR,
   SENDMSG,
+  SENDMSGHALT,
   INTERP_MOV,
   INTERP_P1,
   INTERP_P2,
@@ -325,6 +326,8 @@ enum NodeType : unsigned {
   ATOMIC_CMP_SWAP,
   ATOMIC_INC,
   ATOMIC_DEC,
+  BUFFER_LOAD,
+  BUFFER_LOAD_FORMAT,
   LAST_AMDGPU_ISD_NUMBER
 };
 
