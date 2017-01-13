@@ -443,6 +443,22 @@ def AVX512_512_SETALLONES : I<0, Pseudo, (outs VR512:$dst), (ins), "",
                [(set VR512:$dst, (v16i32 immAllOnesV))]>;
 }
 
+// Alias instructions that allow VPTERNLOG to be used with a mask to create
+// a mix of all ones and all zeros elements. This is done this way to force
+// the same register to be used as input for all three sources.
+let isPseudo = 1, Predicates = [HasAVX512] in {
+def AVX512_512_SEXT_MASK_32 : I<0, Pseudo, (outs VR512:$dst),
+                                (ins VK16WM:$mask), "",
+                           [(set VR512:$dst, (vselect (v16i1 VK16WM:$mask),
+                                                      (v16i32 immAllOnesV),
+                                                      (v16i32 immAllZerosV)))]>;
+def AVX512_512_SEXT_MASK_64 : I<0, Pseudo, (outs VR512:$dst),
+                                (ins VK8WM:$mask), "",
+                [(set VR512:$dst, (vselect (v8i1 VK8WM:$mask),
+                                           (bc_v8i64 (v16i32 immAllOnesV)),
+                                           (bc_v8i64 (v16i32 immAllZerosV))))]>;
+}
+
 let isReMaterializable = 1, isAsCheapAsAMove = 1, canFoldAsLoad = 1,
     isPseudo = 1, Predicates = [HasVLX], SchedRW = [WriteZero] in {
 def AVX512_128_SET0 : I<0, Pseudo, (outs VR128X:$dst), (ins), "",
@@ -1572,21 +1588,6 @@ defm VPBLENDMB : blendmask_bw <0x66, "vpblendmb", avx512vl_i8_info>;
 defm VPBLENDMW : blendmask_bw <0x66, "vpblendmw", avx512vl_i16_info>, VEX_W;
 
 
-let Predicates = [HasAVX512, NoVLX] in {
-def : Pat<(v8f32 (vselect (v8i1 VK8WM:$mask), (v8f32 VR256X:$src1),
-                            (v8f32 VR256X:$src2))),
-            (EXTRACT_SUBREG
-              (v16f32 (VBLENDMPSZrrk (COPY_TO_REGCLASS VK8WM:$mask, VK16WM),
-            (v16f32 (INSERT_SUBREG (IMPLICIT_DEF), VR256X:$src2, sub_ymm)),
-            (v16f32 (INSERT_SUBREG (IMPLICIT_DEF), VR256X:$src1, sub_ymm)))), sub_ymm)>;
-
-def : Pat<(v8i32 (vselect (v8i1 VK8WM:$mask), (v8i32 VR256X:$src1),
-                            (v8i32 VR256X:$src2))),
-            (EXTRACT_SUBREG
-                (v16i32 (VPBLENDMDZrrk (COPY_TO_REGCLASS VK8WM:$mask, VK16WM),
-            (v16i32 (INSERT_SUBREG (IMPLICIT_DEF), VR256X:$src2, sub_ymm)),
-            (v16i32 (INSERT_SUBREG (IMPLICIT_DEF), VR256X:$src1, sub_ymm)))), sub_ymm)>;
-}
 //===----------------------------------------------------------------------===//
 // Compare Instructions
 //===----------------------------------------------------------------------===//
@@ -2961,6 +2962,30 @@ def : Pat<(v16i32 (vselect (xor VK16:$mask, (v16i1 immAllOnesV)),
                            (v16i32 immAllZerosV),
                            (v16i32 VR512:$src))),
                   (VMOVDQA32Zrrkz VK16WM:$mask, VR512:$src)>;
+
+// Patterns for handling v8i1 selects of 256-bit vectors when VLX isn't
+// available. Use a 512-bit operation and extract.
+let Predicates = [HasAVX512, NoVLX] in {
+def : Pat<(v8f32 (vselect (v8i1 VK8WM:$mask), (v8f32 VR256X:$src1),
+                          (v8f32 VR256X:$src0))),
+          (EXTRACT_SUBREG
+           (v16f32
+            (VMOVAPSZrrk
+             (v16f32 (INSERT_SUBREG (IMPLICIT_DEF), VR256X:$src0, sub_ymm)),
+             (COPY_TO_REGCLASS VK8WM:$mask, VK16WM),
+             (v16f32 (INSERT_SUBREG (IMPLICIT_DEF), VR256X:$src1, sub_ymm)))),
+           sub_ymm)>;
+
+def : Pat<(v8i32 (vselect (v8i1 VK8WM:$mask), (v8i32 VR256X:$src1),
+                          (v8i32 VR256X:$src0))),
+          (EXTRACT_SUBREG
+           (v16i32
+            (VMOVDQA32Zrrk
+             (v16i32 (INSERT_SUBREG (IMPLICIT_DEF), VR256X:$src0, sub_ymm)),
+             (COPY_TO_REGCLASS VK8WM:$mask, VK16WM),
+             (v16i32 (INSERT_SUBREG (IMPLICIT_DEF), VR256X:$src1, sub_ymm)))),
+           sub_ymm)>;
+}
 
 let Predicates = [HasVLX, NoBWI] in {
   // 128-bit load/store without BWI.
@@ -5932,6 +5957,30 @@ let Predicates = [HasAVX512] in {
             (VCVTUSI2SDZrm_Int VR128X:$src1, addr:$src2)>;
 } // Predicates = [HasAVX512]
 
+// Patterns used for matching vcvtsi2s{s,d} intrinsic sequences from clang
+// which produce unnecessary vmovs{s,d} instructions
+let Predicates = [HasAVX512] in {
+def : Pat<(v4f32 (X86Movss
+                   (v4f32 VR128X:$dst),
+                   (v4f32 (scalar_to_vector (f32 (sint_to_fp GR64:$src)))))),
+          (VCVTSI642SSZrr_Int VR128X:$dst, GR64:$src)>;
+
+def : Pat<(v4f32 (X86Movss
+                   (v4f32 VR128X:$dst),
+                   (v4f32 (scalar_to_vector (f32 (sint_to_fp GR32:$src)))))),
+          (VCVTSI2SSZrr_Int VR128X:$dst, GR32:$src)>;
+
+def : Pat<(v2f64 (X86Movsd
+                   (v2f64 VR128X:$dst),
+                   (v2f64 (scalar_to_vector (f64 (sint_to_fp GR64:$src)))))),
+          (VCVTSI642SDZrr_Int VR128X:$dst, GR64:$src)>;
+
+def : Pat<(v2f64 (X86Movsd
+                   (v2f64 VR128X:$dst),
+                   (v2f64 (scalar_to_vector (f64 (sint_to_fp GR32:$src)))))),
+          (VCVTSI2SDZrr_Int VR128X:$dst, GR32:$src)>;
+} // Predicates = [HasAVX512]
+
 // Convert float/double to signed/unsigned int 32/64 with truncation
 multiclass avx512_cvt_s_all<bits<8> opc, string asm, X86VectorVTInfo _SrcRC,
                             X86VectorVTInfo _DstRC, SDNode OpNode,
@@ -6111,6 +6160,21 @@ def : Pat<(f32 (fpround FR64X:$src)),
           (COPY_TO_REGCLASS (VCVTSD2SSZrr (COPY_TO_REGCLASS FR64X:$src, VR128X),
                     (COPY_TO_REGCLASS FR64X:$src, VR128X)), VR128X)>,
            Requires<[HasAVX512]>;
+
+def : Pat<(v4f32 (X86Movss
+                   (v4f32 VR128X:$dst),
+                   (v4f32 (scalar_to_vector
+                     (f32 (fpround (f64 (extractelt VR128X:$src, (iPTR 0))))))))),
+          (VCVTSD2SSZrr VR128X:$dst, VR128X:$src)>,
+          Requires<[HasAVX512]>;
+
+def : Pat<(v2f64 (X86Movsd
+                   (v2f64 VR128X:$dst),
+                   (v2f64 (scalar_to_vector
+                     (f64 (fpextend (f32 (extractelt VR128X:$src, (iPTR 0))))))))),
+          (VCVTSS2SDZrr VR128X:$dst, VR128X:$src)>,
+          Requires<[HasAVX512]>;
+
 //===----------------------------------------------------------------------===//
 // AVX-512  Vector convert from signed/unsigned integer to float/double
 //          and from float/double to signed/unsigned integer

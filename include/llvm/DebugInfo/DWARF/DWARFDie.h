@@ -13,6 +13,7 @@
 #include "llvm/ADT/iterator.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/Optional.h"
+#include "llvm/DebugInfo/DWARF/DWARFAttribute.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugInfoEntry.h"
 
 namespace llvm {
@@ -147,21 +148,6 @@ public:
   /// DW_AT_abstract_origin referenced DIEs.
   ///
   /// \param Attr the attribute to extract.
-  /// \param FailValue the value to return if this DIE doesn't have this
-  /// attribute.
-  /// \returns the address value of the attribute or FailValue if the
-  /// attribute doesn't exist or if the attribute's form isn't a form that
-  /// describes an address.
-  uint64_t getAttributeValueAsAddress(dwarf::Attribute Attr,
-                                      uint64_t FailValue) const;
-
-  /// Extract the specified attribute from this DIE as an address.
-  ///
-  /// Extract an attribute value from this DIE only. This call doesn't look
-  /// for the attribute value in any DW_AT_specification or
-  /// DW_AT_abstract_origin referenced DIEs.
-  ///
-  /// \param Attr the attribute to extract.
   /// \returns an optional value for the attribute.
   Optional<uint64_t> getAttributeValueAsAddress(dwarf::Attribute Attr) const;
   
@@ -172,39 +158,9 @@ public:
   /// DW_AT_abstract_origin referenced DIEs.
   ///
   /// \param Attr the attribute to extract.
-  /// \param FailValue the value to return if this DIE doesn't have this
-  /// attribute.
-  /// \returns the signed integer constant value of the attribute or FailValue
-  /// if the attribute doesn't exist or if the attribute's form isn't a form
-  /// that describes a signed integer.
-  int64_t getAttributeValueAsSignedConstant(dwarf::Attribute Attr,
-                                            int64_t FailValue) const;
-
-  /// Extract the specified attribute from this DIE as a signed integer.
-  ///
-  /// Extract an attribute value from this DIE only. This call doesn't look
-  /// for the attribute value in any DW_AT_specification or
-  /// DW_AT_abstract_origin referenced DIEs.
-  ///
-  /// \param Attr the attribute to extract.
   /// \returns an optional value for the attribute.
   Optional<int64_t>
   getAttributeValueAsSignedConstant(dwarf::Attribute Attr) const;
-  
-  /// Extract the specified attribute from this DIE as an unsigned integer.
-  ///
-  /// Extract an attribute value from this DIE only. This call doesn't look
-  /// for the attribute value in any DW_AT_specification or
-  /// DW_AT_abstract_origin referenced DIEs.
-  ///
-  /// \param Attr the attribute to extract.
-  /// \param FailValue the value to return if this DIE doesn't have this
-  /// attribute.
-  /// \returns the unsigned integer constant value of the attribute or FailValue
-  /// if the attribute doesn't exist or if the attribute's form isn't a form
-  /// that describes an unsigned integer.
-  uint64_t getAttributeValueAsUnsignedConstant(dwarf::Attribute Attr,
-                                               uint64_t FailValue) const;
   
   /// Extract the specified attribute from this DIE as an unsigned integer.
   ///
@@ -224,38 +180,9 @@ public:
   /// DW_AT_abstract_origin referenced DIEs.
   ///
   /// \param Attr the attribute to extract.
-  /// \param FailValue the value to return if this DIE doesn't have this
-  /// attribute.
-  /// \returns the unsigned integer constant value of the attribute or FailValue
-  /// if the attribute doesn't exist or if the attribute's form isn't a form
-  /// that describes a reference.
-  uint64_t getAttributeValueAsReference(dwarf::Attribute Attr,
-                                        uint64_t FailValue) const;
-  
-  /// Extract the specified attribute from this DIE as absolute DIE Offset.
-  ///
-  /// Extract an attribute value from this DIE only. This call doesn't look
-  /// for the attribute value in any DW_AT_specification or
-  /// DW_AT_abstract_origin referenced DIEs.
-  ///
-  /// \param Attr the attribute to extract.
   /// \returns an optional value for the attribute.
   Optional<uint64_t> getAttributeValueAsReference(dwarf::Attribute Attr) const;
   
-  /// Extract the specified attribute from this DIE as absolute section offset.
-  ///
-  /// Extract an attribute value from this DIE only. This call doesn't look
-  /// for the attribute value in any DW_AT_specification or
-  /// DW_AT_abstract_origin referenced DIEs.
-  ///
-  /// \param Attr the attribute to extract.
-  /// \param FailValue the value to return if this DIE doesn't have this
-  /// attribute.
-  /// \returns the unsigned integer constant value of the attribute or FailValue
-  /// if the attribute doesn't exist or if the attribute's form isn't a form
-  /// that describes a section offset.
-  uint64_t getAttributeValueAsSectionOffset(dwarf::Attribute Attr,
-                                            uint64_t FailValue) const;
   /// Extract the specified attribute from this DIE as absolute section offset.
   ///
   /// Extract an attribute value from this DIE only. This call doesn't look
@@ -360,11 +287,42 @@ public:
   getInlinedChainForAddress(const uint64_t Address,
                             SmallVectorImpl<DWARFDie> &InlinedChain) const;
 
+  /// Get an iterator range to all attributes in the current DIE only.
+  ///
+  /// \returns an iterator range for the attributes of the current DIE.
+  class attribute_iterator;
+  iterator_range<attribute_iterator> attributes() const;
+  
   class iterator;
   
   iterator begin() const;
   iterator end() const;
   iterator_range<iterator> children() const;
+};
+  
+class DWARFDie::attribute_iterator :
+    public iterator_facade_base<attribute_iterator, std::forward_iterator_tag,
+                                const DWARFAttribute> {
+  /// The DWARF DIE we are extracting attributes from.
+  DWARFDie Die;
+  /// The value vended to clients via the operator*() or operator->().
+  DWARFAttribute AttrValue;
+  /// The attribute index within the abbreviation declaration in Die.
+  uint32_t Index;
+  
+  /// Update the attribute index and attempt to read the attribute value. If the
+  /// attribute is able to be read, update AttrValue and the Index member
+  /// variable. If the attribute value is not able to be read, an appropriate
+  /// error will be set if the Err member variable is non-NULL and the iterator
+  /// will be set to the end value so iteration stops.
+  void updateForIndex(const DWARFAbbreviationDeclaration &AbbrDecl, uint32_t I);
+public:
+  attribute_iterator() = delete;
+  explicit attribute_iterator(DWARFDie D, bool End);
+  attribute_iterator &operator++();
+  explicit operator bool() const { return AttrValue.isValid(); }
+  const DWARFAttribute &operator*() const { return AttrValue; }
+  bool operator==(const attribute_iterator &X) const { return Index == X.Index; }
 };
 
   
