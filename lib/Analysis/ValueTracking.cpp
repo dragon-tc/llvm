@@ -2448,7 +2448,7 @@ Intrinsic::ID llvm::getIntrinsicForCallSite(ImmutableCallSite ICS,
   if (!TLI)
     return Intrinsic::not_intrinsic;
 
-  LibFunc::Func Func;
+  LibFunc Func;
   // We're going to make assumptions on the semantics of the functions, check
   // that the target knows that it's available in this environment and it does
   // not have local linkage.
@@ -2463,81 +2463,81 @@ Intrinsic::ID llvm::getIntrinsicForCallSite(ImmutableCallSite ICS,
   switch (Func) {
   default:
     break;
-  case LibFunc::sin:
-  case LibFunc::sinf:
-  case LibFunc::sinl:
+  case LibFunc_sin:
+  case LibFunc_sinf:
+  case LibFunc_sinl:
     return Intrinsic::sin;
-  case LibFunc::cos:
-  case LibFunc::cosf:
-  case LibFunc::cosl:
+  case LibFunc_cos:
+  case LibFunc_cosf:
+  case LibFunc_cosl:
     return Intrinsic::cos;
-  case LibFunc::exp:
-  case LibFunc::expf:
-  case LibFunc::expl:
+  case LibFunc_exp:
+  case LibFunc_expf:
+  case LibFunc_expl:
     return Intrinsic::exp;
-  case LibFunc::exp2:
-  case LibFunc::exp2f:
-  case LibFunc::exp2l:
+  case LibFunc_exp2:
+  case LibFunc_exp2f:
+  case LibFunc_exp2l:
     return Intrinsic::exp2;
-  case LibFunc::log:
-  case LibFunc::logf:
-  case LibFunc::logl:
+  case LibFunc_log:
+  case LibFunc_logf:
+  case LibFunc_logl:
     return Intrinsic::log;
-  case LibFunc::log10:
-  case LibFunc::log10f:
-  case LibFunc::log10l:
+  case LibFunc_log10:
+  case LibFunc_log10f:
+  case LibFunc_log10l:
     return Intrinsic::log10;
-  case LibFunc::log2:
-  case LibFunc::log2f:
-  case LibFunc::log2l:
+  case LibFunc_log2:
+  case LibFunc_log2f:
+  case LibFunc_log2l:
     return Intrinsic::log2;
-  case LibFunc::fabs:
-  case LibFunc::fabsf:
-  case LibFunc::fabsl:
+  case LibFunc_fabs:
+  case LibFunc_fabsf:
+  case LibFunc_fabsl:
     return Intrinsic::fabs;
-  case LibFunc::fmin:
-  case LibFunc::fminf:
-  case LibFunc::fminl:
+  case LibFunc_fmin:
+  case LibFunc_fminf:
+  case LibFunc_fminl:
     return Intrinsic::minnum;
-  case LibFunc::fmax:
-  case LibFunc::fmaxf:
-  case LibFunc::fmaxl:
+  case LibFunc_fmax:
+  case LibFunc_fmaxf:
+  case LibFunc_fmaxl:
     return Intrinsic::maxnum;
-  case LibFunc::copysign:
-  case LibFunc::copysignf:
-  case LibFunc::copysignl:
+  case LibFunc_copysign:
+  case LibFunc_copysignf:
+  case LibFunc_copysignl:
     return Intrinsic::copysign;
-  case LibFunc::floor:
-  case LibFunc::floorf:
-  case LibFunc::floorl:
+  case LibFunc_floor:
+  case LibFunc_floorf:
+  case LibFunc_floorl:
     return Intrinsic::floor;
-  case LibFunc::ceil:
-  case LibFunc::ceilf:
-  case LibFunc::ceill:
+  case LibFunc_ceil:
+  case LibFunc_ceilf:
+  case LibFunc_ceill:
     return Intrinsic::ceil;
-  case LibFunc::trunc:
-  case LibFunc::truncf:
-  case LibFunc::truncl:
+  case LibFunc_trunc:
+  case LibFunc_truncf:
+  case LibFunc_truncl:
     return Intrinsic::trunc;
-  case LibFunc::rint:
-  case LibFunc::rintf:
-  case LibFunc::rintl:
+  case LibFunc_rint:
+  case LibFunc_rintf:
+  case LibFunc_rintl:
     return Intrinsic::rint;
-  case LibFunc::nearbyint:
-  case LibFunc::nearbyintf:
-  case LibFunc::nearbyintl:
+  case LibFunc_nearbyint:
+  case LibFunc_nearbyintf:
+  case LibFunc_nearbyintl:
     return Intrinsic::nearbyint;
-  case LibFunc::round:
-  case LibFunc::roundf:
-  case LibFunc::roundl:
+  case LibFunc_round:
+  case LibFunc_roundf:
+  case LibFunc_roundl:
     return Intrinsic::round;
-  case LibFunc::pow:
-  case LibFunc::powf:
-  case LibFunc::powl:
+  case LibFunc_pow:
+  case LibFunc_powf:
+  case LibFunc_powl:
     return Intrinsic::pow;
-  case LibFunc::sqrt:
-  case LibFunc::sqrtf:
-  case LibFunc::sqrtl:
+  case LibFunc_sqrt:
+  case LibFunc_sqrtf:
+  case LibFunc_sqrtl:
     if (ICS->hasNoNaNs())
       return Intrinsic::sqrt;
     return Intrinsic::not_intrinsic;
@@ -2602,6 +2602,11 @@ static bool cannotBeOrderedLessThanZeroImpl(const Value *V,
                                             const TargetLibraryInfo *TLI,
                                             bool SignBitOnly,
                                             unsigned Depth) {
+  // TODO: This function does not do the right thing when SignBitOnly is true
+  // and we're lowering to a hypothetical IEEE 754-compliant-but-evil platform
+  // which flips the sign bits of NaNs.  See
+  // https://llvm.org/bugs/show_bug.cgi?id=31702.
+
   if (const ConstantFP *CFP = dyn_cast<ConstantFP>(V)) {
     return !CFP->getValueAPF().isNegative() ||
            (!SignBitOnly && CFP->getValueAPF().isZero());
@@ -2645,7 +2650,8 @@ static bool cannotBeOrderedLessThanZeroImpl(const Value *V,
     return cannotBeOrderedLessThanZeroImpl(I->getOperand(0), TLI, SignBitOnly,
                                            Depth + 1);
   case Instruction::Call:
-    Intrinsic::ID IID = getIntrinsicForCallSite(cast<CallInst>(I), TLI);
+    const auto *CI = cast<CallInst>(I);
+    Intrinsic::ID IID = getIntrinsicForCallSite(CI, TLI);
     switch (IID) {
     default:
       break;
@@ -2662,16 +2668,37 @@ static bool cannotBeOrderedLessThanZeroImpl(const Value *V,
     case Intrinsic::exp:
     case Intrinsic::exp2:
     case Intrinsic::fabs:
-    case Intrinsic::sqrt:
       return true;
+
+    case Intrinsic::sqrt:
+      // sqrt(x) is always >= -0 or NaN.  Moreover, sqrt(x) == -0 iff x == -0.
+      if (!SignBitOnly)
+        return true;
+      return CI->hasNoNaNs() && (CI->hasNoSignedZeros() ||
+                                 CannotBeNegativeZero(CI->getOperand(0), TLI));
+
     case Intrinsic::powi:
-      if (ConstantInt *CI = dyn_cast<ConstantInt>(I->getOperand(1))) {
+      if (ConstantInt *Exponent = dyn_cast<ConstantInt>(I->getOperand(1))) {
         // powi(x,n) is non-negative if n is even.
-        if (CI->getBitWidth() <= 64 && CI->getSExtValue() % 2u == 0)
+        if (Exponent->getBitWidth() <= 64 && Exponent->getSExtValue() % 2u == 0)
           return true;
       }
+      // TODO: This is not correct.  Given that exp is an integer, here are the
+      // ways that pow can return a negative value:
+      //
+      //   pow(x, exp)    --> negative if exp is odd and x is negative.
+      //   pow(-0, exp)   --> -inf if exp is negative odd.
+      //   pow(-0, exp)   --> -0 if exp is positive odd.
+      //   pow(-inf, exp) --> -0 if exp is negative odd.
+      //   pow(-inf, exp) --> -inf if exp is positive odd.
+      //
+      // Therefore, if !SignBitOnly, we can return true if x >= +0 or x is NaN,
+      // but we must return false if x == -0.  Unfortunately we do not currently
+      // have a way of expressing this constraint.  See details in
+      // https://llvm.org/bugs/show_bug.cgi?id=31702.
       return cannotBeOrderedLessThanZeroImpl(I->getOperand(0), TLI, SignBitOnly,
                                              Depth + 1);
+
     case Intrinsic::fma:
     case Intrinsic::fmuladd:
       // x*x+y is non-negative if y is non-negative.
@@ -3338,6 +3365,10 @@ bool llvm::isSafeToSpeculativelyExecute(const Value *V,
       case Intrinsic::nearbyint:
       case Intrinsic::rint:
       case Intrinsic::round:
+        return true;
+      // These intrinsics do not correspond to any libm function, and
+      // do not set errno.
+      case Intrinsic::powi:
         return true;
       // TODO: are convert_{from,to}_fp16 safe?
       // TODO: can we list target-specific intrinsics here?
@@ -4125,58 +4156,64 @@ static SelectPatternResult matchSelectPattern(CmpInst::Predicate Pred,
 
 static Value *lookThroughCast(CmpInst *CmpI, Value *V1, Value *V2,
                               Instruction::CastOps *CastOp) {
-  CastInst *CI = dyn_cast<CastInst>(V1);
-  Constant *C = dyn_cast<Constant>(V2);
-  if (!CI)
+  auto *Cast1 = dyn_cast<CastInst>(V1);
+  if (!Cast1)
     return nullptr;
-  *CastOp = CI->getOpcode();
 
-  if (auto *CI2 = dyn_cast<CastInst>(V2)) {
-    // If V1 and V2 are both the same cast from the same type, we can look
-    // through V1.
-    if (CI2->getOpcode() == CI->getOpcode() &&
-        CI2->getSrcTy() == CI->getSrcTy())
-      return CI2->getOperand(0);
-    return nullptr;
-  } else if (!C) {
+  *CastOp = Cast1->getOpcode();
+  Type *SrcTy = Cast1->getSrcTy();
+  if (auto *Cast2 = dyn_cast<CastInst>(V2)) {
+    // If V1 and V2 are both the same cast from the same type, look through V1.
+    if (*CastOp == Cast2->getOpcode() && SrcTy == Cast2->getSrcTy())
+      return Cast2->getOperand(0);
     return nullptr;
   }
 
+  auto *C = dyn_cast<Constant>(V2);
+  if (!C)
+    return nullptr;
+
   Constant *CastedTo = nullptr;
-
-  if (isa<ZExtInst>(CI) && CmpI->isUnsigned())
-    CastedTo = ConstantExpr::getTrunc(C, CI->getSrcTy());
-
-  if (isa<SExtInst>(CI) && CmpI->isSigned())
-    CastedTo = ConstantExpr::getTrunc(C, CI->getSrcTy(), true);
-
-  if (isa<TruncInst>(CI))
-    CastedTo = ConstantExpr::getIntegerCast(C, CI->getSrcTy(), CmpI->isSigned());
-
-  if (isa<FPTruncInst>(CI))
-    CastedTo = ConstantExpr::getFPExtend(C, CI->getSrcTy(), true);
-
-  if (isa<FPExtInst>(CI))
-    CastedTo = ConstantExpr::getFPTrunc(C, CI->getSrcTy(), true);
-
-  if (isa<FPToUIInst>(CI))
-    CastedTo = ConstantExpr::getUIToFP(C, CI->getSrcTy(), true);
-
-  if (isa<FPToSIInst>(CI))
-    CastedTo = ConstantExpr::getSIToFP(C, CI->getSrcTy(), true);
-
-  if (isa<UIToFPInst>(CI))
-    CastedTo = ConstantExpr::getFPToUI(C, CI->getSrcTy(), true);
-
-  if (isa<SIToFPInst>(CI))
-    CastedTo = ConstantExpr::getFPToSI(C, CI->getSrcTy(), true);
+  switch (*CastOp) {
+  case Instruction::ZExt:
+    if (CmpI->isUnsigned())
+      CastedTo = ConstantExpr::getTrunc(C, SrcTy);
+    break;
+  case Instruction::SExt:
+    if (CmpI->isSigned())
+      CastedTo = ConstantExpr::getTrunc(C, SrcTy, true);
+    break;
+  case Instruction::Trunc:
+    CastedTo = ConstantExpr::getIntegerCast(C, SrcTy, CmpI->isSigned());
+    break;
+  case Instruction::FPTrunc:
+    CastedTo = ConstantExpr::getFPExtend(C, SrcTy, true);
+    break;
+  case Instruction::FPExt:
+    CastedTo = ConstantExpr::getFPTrunc(C, SrcTy, true);
+    break;
+  case Instruction::FPToUI:
+    CastedTo = ConstantExpr::getUIToFP(C, SrcTy, true);
+    break;
+  case Instruction::FPToSI:
+    CastedTo = ConstantExpr::getSIToFP(C, SrcTy, true);
+    break;
+  case Instruction::UIToFP:
+    CastedTo = ConstantExpr::getFPToUI(C, SrcTy, true);
+    break;
+  case Instruction::SIToFP:
+    CastedTo = ConstantExpr::getFPToSI(C, SrcTy, true);
+    break;
+  default:
+    break;
+  }
 
   if (!CastedTo)
     return nullptr;
 
-  Constant *CastedBack =
-      ConstantExpr::getCast(CI->getOpcode(), CastedTo, C->getType(), true);
   // Make sure the cast doesn't lose any information.
+  Constant *CastedBack =
+      ConstantExpr::getCast(*CastOp, CastedTo, C->getType(), true);
   if (CastedBack != C)
     return nullptr;
 

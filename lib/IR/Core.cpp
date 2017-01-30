@@ -259,7 +259,8 @@ void LLVMSetTarget(LLVMModuleRef M, const char *Triple) {
 }
 
 void LLVMDumpModule(LLVMModuleRef M) {
-  unwrap(M)->dump();
+  unwrap(M)->print(errs(), nullptr,
+                   /*ShouldPreserveUseListOrder=*/false, /*IsForDebug=*/true);
 }
 
 LLVMBool LLVMPrintModuleToFile(LLVMModuleRef M, const char *Filename,
@@ -358,9 +359,11 @@ LLVMContextRef LLVMGetTypeContext(LLVMTypeRef Ty) {
   return wrap(&unwrap(Ty)->getContext());
 }
 
-void LLVMDumpType(LLVMTypeRef Ty) {
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+LLVM_DUMP_METHOD void LLVMDumpType(LLVMTypeRef Ty) {
   return unwrap(Ty)->dump();
 }
+#endif
 
 char *LLVMPrintTypeToString(LLVMTypeRef Ty) {
   std::string buf;
@@ -640,9 +643,11 @@ void LLVMSetValueName(LLVMValueRef Val, const char *Name) {
   unwrap(Val)->setName(Name);
 }
 
-void LLVMDumpValue(LLVMValueRef Val) {
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+LLVM_DUMP_METHOD void LLVMDumpValue(LLVMValueRef Val) {
   unwrap(Val)->dump();
 }
+#endif
 
 char* LLVMPrintValueToString(LLVMValueRef Val) {
   std::string buf;

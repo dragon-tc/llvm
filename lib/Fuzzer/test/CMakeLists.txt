@@ -83,6 +83,7 @@ set(Tests
   CounterTest
   CustomCrossOverTest
   CustomMutatorTest
+  CxxStringEqTest
   DivTest
   EmptyTest
   EquivalenceATest
@@ -238,6 +239,7 @@ configure_lit_site_cfg(
 
 add_lit_testsuite(check-fuzzer "Running Fuzzer tests"
     ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS ${TestBinaries}
     )
 
 # Don't add dependencies on Windows. The linker step would fail on Windows,

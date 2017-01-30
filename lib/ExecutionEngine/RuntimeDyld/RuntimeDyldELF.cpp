@@ -272,6 +272,8 @@ void RuntimeDyldELF::resolveX86_64Relocation(const SectionEntry &Section,
   default:
     llvm_unreachable("Relocation type not implemented yet!");
     break;
+  case ELF::R_X86_64_NONE:
+    break;
   case ELF::R_X86_64_64: {
     support::ulittle64_t::ref(Section.getAddressWithOffset(Offset)) =
         Value + Addend;
@@ -419,6 +421,18 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
     // from bits 11:0 of X
     or32AArch64Imm(TargetPtr, Value + Addend);
     break;
+  case ELF::R_AARCH64_LDST8_ABS_LO12_NC:
+    // Operation: S + A
+    // Immediate goes in bits 21:10 of LD/ST instruction, taken
+    // from bits 11:0 of X
+    or32AArch64Imm(TargetPtr, getBits(Value + Addend, 0, 11));
+    break;
+  case ELF::R_AARCH64_LDST16_ABS_LO12_NC:
+    // Operation: S + A
+    // Immediate goes in bits 21:10 of LD/ST instruction, taken
+    // from bits 11:1 of X
+    or32AArch64Imm(TargetPtr, getBits(Value + Addend, 1, 11));
+    break;
   case ELF::R_AARCH64_LDST32_ABS_LO12_NC:
     // Operation: S + A
     // Immediate goes in bits 21:10 of LD/ST instruction, taken
@@ -430,6 +444,12 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
     // Immediate goes in bits 21:10 of LD/ST instruction, taken
     // from bits 11:3 of X
     or32AArch64Imm(TargetPtr, getBits(Value + Addend, 3, 11));
+    break;
+  case ELF::R_AARCH64_LDST128_ABS_LO12_NC:
+    // Operation: S + A
+    // Immediate goes in bits 21:10 of LD/ST instruction, taken
+    // from bits 11:4 of X
+    or32AArch64Imm(TargetPtr, getBits(Value + Addend, 4, 11));
     break;
   }
 }
@@ -900,7 +920,7 @@ uint32_t RuntimeDyldELF::getMatchingLoRelocation(uint32_t RelType,
 }
 
 // Sometimes we don't need to create thunk for a branch.
-// This typically happens when branch target is located 
+// This typically happens when branch target is located
 // in the same object file. In such case target is either
 // a weak symbol or symbol in a different executable section.
 // This function checks if branch target is located in the

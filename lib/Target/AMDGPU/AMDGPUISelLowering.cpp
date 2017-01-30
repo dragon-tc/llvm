@@ -492,6 +492,9 @@ static bool fnegFoldsIntoOp(unsigned Opc) {
   case ISD::FMA:
   case ISD::FMAD:
   case ISD::FSIN:
+  case ISD::FTRUNC:
+  case ISD::FRINT:
+  case ISD::FNEARBYINT:
   case AMDGPUISD::RCP:
   case AMDGPUISD::RCP_LEGACY:
   case AMDGPUISD::SIN_HW:
@@ -829,7 +832,7 @@ SDValue AMDGPUTargetLowering::LowerOperation(SDValue Op,
                                              SelectionDAG &DAG) const {
   switch (Op.getOpcode()) {
   default:
-    Op->dump(&DAG);
+    Op->print(errs(), &DAG);
     llvm_unreachable("Custom lowering code for this"
                      "instruction is not implemented yet!");
     break;
@@ -2872,7 +2875,7 @@ SDValue AMDGPUTargetLowering::performFNegCombine(SDNode *N,
     else
       RHS = RHS.getOperand(0);
 
-    SDValue Res = DAG.getNode(ISD::FADD, SL, VT, LHS, RHS);
+    SDValue Res = DAG.getNode(ISD::FADD, SL, VT, LHS, RHS, N0->getFlags());
     if (!N0.hasOneUse())
       DAG.ReplaceAllUsesWith(N0, DAG.getNode(ISD::FNEG, SL, VT, Res));
     return Res;
@@ -2891,7 +2894,7 @@ SDValue AMDGPUTargetLowering::performFNegCombine(SDNode *N,
     else
       RHS = DAG.getNode(ISD::FNEG, SL, VT, RHS);
 
-    SDValue Res = DAG.getNode(Opc, SL, VT, LHS, RHS);
+    SDValue Res = DAG.getNode(Opc, SL, VT, LHS, RHS, N0->getFlags());
     if (!N0.hasOneUse())
       DAG.ReplaceAllUsesWith(N0, DAG.getNode(ISD::FNEG, SL, VT, Res));
     return Res;
@@ -2924,9 +2927,12 @@ SDValue AMDGPUTargetLowering::performFNegCombine(SDNode *N,
     return Res;
   }
   case ISD::FP_EXTEND:
+  case ISD::FTRUNC:
+  case ISD::FRINT:
+  case ISD::FNEARBYINT: // XXX - Should fround be handled?
+  case ISD::FSIN:
   case AMDGPUISD::RCP:
   case AMDGPUISD::RCP_LEGACY:
-  case ISD::FSIN:
   case AMDGPUISD::SIN_HW: {
     SDValue CvtSrc = N0.getOperand(0);
     if (CvtSrc.getOpcode() == ISD::FNEG) {
@@ -2941,7 +2947,7 @@ SDValue AMDGPUTargetLowering::performFNegCombine(SDNode *N,
     // (fneg (fp_extend x)) -> (fp_extend (fneg x))
     // (fneg (rcp x)) -> (rcp (fneg x))
     SDValue Neg = DAG.getNode(ISD::FNEG, SL, CvtSrc.getValueType(), CvtSrc);
-    return DAG.getNode(Opc, SL, VT, Neg);
+    return DAG.getNode(Opc, SL, VT, Neg, N0->getFlags());
   }
   case ISD::FP_ROUND: {
     SDValue CvtSrc = N0.getOperand(0);

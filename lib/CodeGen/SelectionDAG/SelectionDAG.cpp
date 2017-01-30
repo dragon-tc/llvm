@@ -4084,6 +4084,19 @@ SDValue SelectionDAG::getNode(unsigned Opcode, const SDLoc &DL, EVT VT,
       if (VT.getSimpleVT() == N1.getSimpleValueType())
         return N1;
 
+      // EXTRACT_SUBVECTOR of an UNDEF is an UNDEF.
+      if (N1.isUndef())
+        return getUNDEF(VT);
+
+      // EXTRACT_SUBVECTOR of CONCAT_VECTOR can be simplified if the pieces of
+      // the concat have the same type as the extract.
+      if (N2C && N1.getOpcode() == ISD::CONCAT_VECTORS &&
+          N1.getNumOperands() > 0 &&
+          VT == N1.getOperand(0).getValueType()) {
+        unsigned Factor = VT.getVectorNumElements();
+        return N1.getOperand(N2C->getZExtValue() / Factor);
+      }
+
       // EXTRACT_SUBVECTOR of INSERT_SUBVECTOR is often created
       // during shuffle legalization.
       if (N1.getOpcode() == ISD::INSERT_SUBVECTOR && N2 == N1.getOperand(2) &&
@@ -7144,11 +7157,6 @@ bool SDNode::hasPredecessor(const SDNode *N) const {
   SmallVector<const SDNode *, 16> Worklist;
   Worklist.push_back(this);
   return hasPredecessorHelper(N, Visited, Worklist);
-}
-
-uint64_t SDNode::getConstantOperandVal(unsigned Num) const {
-  assert(Num < NumOperands && "Invalid child # of SDNode!");
-  return cast<ConstantSDNode>(OperandList[Num])->getZExtValue();
 }
 
 const SDNodeFlags *SDNode::getFlags() const {

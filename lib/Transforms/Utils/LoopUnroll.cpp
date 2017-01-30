@@ -199,11 +199,14 @@ const Loop* llvm::addClonedBlockToLoopInfo(BasicBlock *OriginalBB,
     assert(OriginalBB == OldLoop->getHeader() &&
            "Header should be first in RPO");
 
+    NewLoop = new Loop();
     Loop *NewLoopParent = NewLoops.lookup(OldLoop->getParentLoop());
-    assert(NewLoopParent &&
-           "Expected parent loop before sub-loop in RPO");
-    NewLoop = new Loop;
-    NewLoopParent->addChildLoop(NewLoop);
+
+    if (NewLoopParent)
+      NewLoopParent->addChildLoop(NewLoop);
+    else
+      LI->addTopLevelLoop(NewLoop);
+
     NewLoop->addBasicBlockToLoop(ClonedBB, *LI);
     return OldLoop;
   } else {
@@ -303,8 +306,10 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
     Count = TripCount;
 
   // Don't enter the unroll code if there is nothing to do.
-  if (TripCount == 0 && Count < 2 && PeelCount == 0)
+  if (TripCount == 0 && Count < 2 && PeelCount == 0) {
+    DEBUG(dbgs() << "Won't unroll; almost nothing to do\n");
     return false;
+  }
 
   assert(Count > 0);
   assert(TripMultiple > 0);
@@ -359,8 +364,12 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
                                   PreserveLCSSA)) {
     if (Force)
       RuntimeTripCount = false;
-    else
+    else {
+      DEBUG(
+          dbgs() << "Wont unroll; prolog and epilog code could not be inserted "
+                    "when assuming runtime trip count\n");
       return false;
+    }
   }
 
   // Notify ScalarEvolution that the loop will be substantially changed,
@@ -748,26 +757,25 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
       // OuterL includes all loops for which we can break loop-simplify, so
       // it's sufficient to simplify only it (it'll recursively simplify inner
       // loops too).
-      // TODO: That potentially might be compile-time expensive. We should try
-      // to fix the loop-simplified form incrementally.
-      // Note that we only preserve LCSSA at this stage if we need to and if we
-      // won't end up fixing it. If we end up fixing it anyways, we don't need
-      // to preserve it here and in fact we can't because it isn't correct.
-      simplifyLoop(OuterL, DT, LI, SE, AC, PreserveLCSSA && !NeedToFixLCSSA);
+      if (NeedToFixLCSSA) {
+        // LCSSA must be performed on the outermost affected loop. The unrolled
+        // loop's last loop latch is guaranteed to be in the outermost loop
+        // after LoopInfo's been updated by markAsRemoved.
+        Loop *LatchLoop = LI->getLoopFor(Latches.back());
+        Loop *FixLCSSALoop = OuterL;
+        if (!FixLCSSALoop->contains(LatchLoop))
+          while (FixLCSSALoop->getParentLoop() != LatchLoop)
+            FixLCSSALoop = FixLCSSALoop->getParentLoop();
 
-      // LCSSA must be performed on the outermost affected loop. The unrolled
-      // loop's last loop latch is guaranteed to be in the outermost loop after
-      // LoopInfo's been updated by markAsRemoved.
-      Loop *LatchLoop = LI->getLoopFor(Latches.back());
-      if (!OuterL->contains(LatchLoop))
-        while (OuterL->getParentLoop() != LatchLoop)
-          OuterL = OuterL->getParentLoop();
-
-      if (NeedToFixLCSSA)
-        formLCSSARecursively(*OuterL, *DT, LI, SE);
-      else if (PreserveLCSSA)
+        formLCSSARecursively(*FixLCSSALoop, *DT, LI, SE);
+      } else if (PreserveLCSSA) {
         assert(OuterL->isLCSSAForm(*DT) &&
                "Loops should be in LCSSA form after loop-unroll.");
+      }
+
+      // TODO: That potentially might be compile-time expensive. We should try
+      // to fix the loop-simplified form incrementally.
+      simplifyLoop(OuterL, DT, LI, SE, AC, PreserveLCSSA);
     } else {
       // Simplify loops for which we might've broken loop-simplify form.
       for (Loop *SubLoop : LoopsToSimplify)

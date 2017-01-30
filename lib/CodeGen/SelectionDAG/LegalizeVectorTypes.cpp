@@ -97,6 +97,7 @@ void DAGTypeLegalizer::ScalarizeVectorResult(SDNode *N, unsigned ResNo) {
   case ISD::TRUNCATE:
   case ISD::UINT_TO_FP:
   case ISD::ZERO_EXTEND:
+  case ISD::FCANONICALIZE:
     R = ScalarizeVecRes_UnaryOp(N);
     break;
 
@@ -637,6 +638,7 @@ void DAGTypeLegalizer::SplitVectorResult(SDNode *N, unsigned ResNo) {
   case ISD::SINT_TO_FP:
   case ISD::TRUNCATE:
   case ISD::UINT_TO_FP:
+  case ISD::FCANONICALIZE:
     SplitVecRes_UnaryOp(N, Lo, Hi);
     break;
 
@@ -1466,6 +1468,7 @@ bool DAGTypeLegalizer::SplitVectorOperand(SDNode *N, unsigned OpNo) {
     case ISD::ZERO_EXTEND:
     case ISD::ANY_EXTEND:
     case ISD::FTRUNC:
+    case ISD::FCANONICALIZE:
       Res = SplitVecOp_UnaryOp(N);
       break;
     }
@@ -2322,6 +2325,15 @@ SDValue DAGTypeLegalizer::WidenVecRes_Convert(SDNode *N) {
       if (N->getNumOperands() == 1)
         return DAG.getNode(Opcode, DL, WidenVT, InOp);
       return DAG.getNode(Opcode, DL, WidenVT, InOp, N->getOperand(1), Flags);
+    }
+    if (WidenVT.getSizeInBits() == InVT.getSizeInBits()) {
+      // If both input and result vector types are of same width, extend
+      // operations should be done with SIGN/ZERO_EXTEND_VECTOR_INREG, which
+      // accepts fewer elements in the result than in the input.
+      if (Opcode == ISD::SIGN_EXTEND)
+        return DAG.getSignExtendVectorInReg(InOp, DL, WidenVT);
+      if (Opcode == ISD::ZERO_EXTEND)
+        return DAG.getZeroExtendVectorInReg(InOp, DL, WidenVT);
     }
   }
 
@@ -3439,7 +3451,10 @@ SDValue DAGTypeLegalizer::GenWidenVectorLoads(SmallVectorImpl<SDValue> &LdChain,
                       LD->getPointerInfo().getWithOffset(Offset),
                       MinAlign(Align, Increment), MMOFlags, AAInfo);
       LdChain.push_back(L.getValue(1));
-      if (L->getValueType(0).isVector()) {
+      if (L->getValueType(0).isVector() && NewVTWidth >= LdWidth) {
+        // Later code assumes the vector loads produced will be mergeable, so we
+        // must pad the final entry up to the previous width. Scalars are
+        // combined separately.
         SmallVector<SDValue, 16> Loads;
         Loads.push_back(L);
         unsigned size = L->getValueSizeInBits(0);
