@@ -274,11 +274,12 @@ public:
 
   /// Return the amount of LDS that can be used that will not restrict the
   /// occupancy lower than WaveCount.
-  unsigned getMaxLocalMemSizeWithWaveCount(unsigned WaveCount) const;
+  unsigned getMaxLocalMemSizeWithWaveCount(unsigned WaveCount,
+                                           const Function &) const;
 
   /// Inverse of getMaxLocalMemWithWaveCount. Return the maximum wavecount if
   /// the given LDS memory size is the only constraint.
-  unsigned getOccupancyWithLocalMemSize(uint32_t Bytes) const;
+  unsigned getOccupancyWithLocalMemSize(uint32_t Bytes, const Function &) const;
 
   bool hasFP16Denormals() const {
     return FP64FP16Denormals;
@@ -312,6 +313,10 @@ public:
     return EnableXNACK;
   }
 
+  bool hasFlatAddressSpace() const {
+    return FlatAddressSpace;
+  }
+
   bool isMesaKernel(const MachineFunction &MF) const {
     return isMesa3DOS() && !AMDGPU::isShader(MF.getFunction()->getCallingConv());
   }
@@ -323,6 +328,10 @@ public:
 
   bool isAmdCodeObjectV2(const MachineFunction &MF) const {
     return isAmdHsaOS() || isMesaKernel(MF);
+  }
+
+  bool hasFminFmaxLegacy() const {
+    return getGeneration() < AMDGPUSubtarget::VOLCANIC_ISLANDS;
   }
 
   /// \brief Returns the offset in bytes from the start of the input buffer
@@ -517,6 +526,21 @@ public:
     return GISel->getCallLowering();
   }
 
+  const InstructionSelector *getInstructionSelector() const override {
+    assert(GISel && "Access to GlobalISel APIs not set");
+    return GISel->getInstructionSelector();
+  }
+
+  const LegalizerInfo *getLegalizerInfo() const override {
+    assert(GISel && "Access to GlobalISel APIs not set");
+    return GISel->getLegalizerInfo();
+  }
+
+  const RegisterBankInfo *getRegBankInfo() const override {
+    assert(GISel && "Access to GlobalISel APIs not set");
+    return GISel->getRegBankInfo();
+  }
+
   const SIRegisterInfo *getRegisterInfo() const override {
     return &InstrInfo.getRegisterInfo();
   }
@@ -537,10 +561,6 @@ public:
 
   unsigned getMaxNumUserSGPRs() const {
     return 16;
-  }
-
-  bool hasFlatAddressSpace() const {
-    return FlatAddressSpace;
   }
 
   bool hasSMemRealTime() const {

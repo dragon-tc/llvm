@@ -210,15 +210,19 @@ void MemorySSAUpdater::insertUse(MemoryUse *MU) {
   // to do.
 }
 
+// Set every incoming edge {BB, MP->getBlock()} of MemoryPhi MP to NewDef.
 void setMemoryPhiValueForBlock(MemoryPhi *MP, const BasicBlock *BB,
                                MemoryAccess *NewDef) {
   // Replace any operand with us an incoming block with the new defining
   // access.
   int i = MP->getBasicBlockIndex(BB);
   assert(i != -1 && "Should have found the basic block in the phi");
-  while (MP->getIncomingBlock(i) == BB) {
-    // Unlike above, there is already a phi node here, so we only need
-    // to set the right value.
+  // We can't just compare i against getNumOperands since one is signed and the
+  // other not. So use it to index into the block iterator.
+  for (auto BBIter = MP->block_begin() + i; BBIter != MP->block_end();
+       ++BBIter) {
+    if (*BBIter != BB)
+      break;
     MP->setIncomingValue(i, NewDef);
     ++i;
   }

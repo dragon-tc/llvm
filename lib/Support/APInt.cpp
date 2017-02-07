@@ -424,6 +424,18 @@ APInt& APInt::operator&=(const APInt& RHS) {
   return *this;
 }
 
+APInt &APInt::operator&=(uint64_t RHS) {
+  if (isSingleWord()) {
+    VAL &= RHS;
+    return *this;
+  }
+  pVal[0] &= RHS;
+  unsigned numWords = getNumWords();
+  for (unsigned i = 1; i < numWords; ++i)
+    pVal[i] = 0;
+  return *this;
+}
+
 APInt& APInt::operator|=(const APInt& RHS) {
   assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
   if (isSingleWord()) {
@@ -2247,7 +2259,7 @@ LLVM_DUMP_METHOD void APInt::dump() const {
   this->toStringUnsigned(U);
   this->toStringSigned(S);
   dbgs() << "APInt(" << BitWidth << "b, "
-         << U << "u " << S << "s)";
+         << U << "u " << S << "s)\n";
 }
 #endif
 

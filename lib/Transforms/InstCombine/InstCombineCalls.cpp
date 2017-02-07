@@ -3255,17 +3255,34 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   }
 
   case Intrinsic::experimental_guard: {
-    Value *IIOperand = II->getArgOperand(0);
+    // Is this guard followed by another guard?
+    Instruction *NextInst = II->getNextNode();
+    Value *NextCond = nullptr;
+    if (match(NextInst,
+              m_Intrinsic<Intrinsic::experimental_guard>(m_Value(NextCond)))) {
+      Value *CurrCond = II->getArgOperand(0);
 
-    // Remove a guard if it is immediately followed by an identical guard.
-    if (match(II->getNextNode(),
-              m_Intrinsic<Intrinsic::experimental_guard>(m_Specific(IIOperand))))
-      return eraseInstFromFunction(*II);
+      // Remove a guard that it is immediately preceeded by an identical guard.
+      if (CurrCond == NextCond)
+        return eraseInstFromFunction(*NextInst);
+
+      // Otherwise canonicalize guard(a); guard(b) -> guard(a & b).
+      II->setArgOperand(0, Builder->CreateAnd(CurrCond, NextCond));
+      return eraseInstFromFunction(*NextInst);
+    }
     break;
   }
   }
-
   return visitCallSite(II);
+}
+
+// Fence instruction simplification
+Instruction *InstCombiner::visitFenceInst(FenceInst &FI) {
+  // Remove identical consecutive fences.
+  if (auto *NFI = dyn_cast<FenceInst>(FI.getNextNode()))
+    if (FI.isIdenticalTo(NFI))
+      return eraseInstFromFunction(FI);
+  return nullptr;
 }
 
 // InvokeInst simplification

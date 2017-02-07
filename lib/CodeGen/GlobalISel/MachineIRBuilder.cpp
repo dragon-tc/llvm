@@ -213,8 +213,25 @@ MachineInstrBuilder MachineIRBuilder::buildMul(unsigned Res, unsigned Op0,
       .addUse(Op1);
 }
 
+MachineInstrBuilder MachineIRBuilder::buildAnd(unsigned Res, unsigned Op0,
+                                               unsigned Op1) {
+  assert((MRI->getType(Res).isScalar() || MRI->getType(Res).isVector()) &&
+         "invalid operand type");
+  assert(MRI->getType(Res) == MRI->getType(Op0) &&
+         MRI->getType(Res) == MRI->getType(Op1) && "type mismatch");
+
+  return buildInstr(TargetOpcode::G_AND)
+      .addDef(Res)
+      .addUse(Op0)
+      .addUse(Op1);
+}
+
 MachineInstrBuilder MachineIRBuilder::buildBr(MachineBasicBlock &Dest) {
   return buildInstr(TargetOpcode::G_BR).addMBB(&Dest);
+}
+
+MachineInstrBuilder MachineIRBuilder::buildBrIndirect(unsigned Tgt) {
+  return buildInstr(TargetOpcode::G_BRINDIRECT).addUse(Tgt);
 }
 
 MachineInstrBuilder MachineIRBuilder::buildCopy(unsigned Res, unsigned Op) {
@@ -317,6 +334,17 @@ MachineInstrBuilder MachineIRBuilder::buildSExtOrTrunc(unsigned Res,
   unsigned Opcode = TargetOpcode::COPY;
   if (MRI->getType(Res).getSizeInBits() > MRI->getType(Op).getSizeInBits())
     Opcode = TargetOpcode::G_SEXT;
+  else if (MRI->getType(Res).getSizeInBits() < MRI->getType(Op).getSizeInBits())
+    Opcode = TargetOpcode::G_TRUNC;
+
+  return buildInstr(Opcode).addDef(Res).addUse(Op);
+}
+
+MachineInstrBuilder MachineIRBuilder::buildZExtOrTrunc(unsigned Res,
+                                                       unsigned Op) {
+  unsigned Opcode = TargetOpcode::COPY;
+  if (MRI->getType(Res).getSizeInBits() > MRI->getType(Op).getSizeInBits())
+    Opcode = TargetOpcode::G_ZEXT;
   else if (MRI->getType(Res).getSizeInBits() < MRI->getType(Op).getSizeInBits())
     Opcode = TargetOpcode::G_TRUNC;
 
