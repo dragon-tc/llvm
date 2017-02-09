@@ -358,13 +358,14 @@ MCSectionELF *MCContext::getELFNamedSection(const Twine &Prefix,
 
 MCSectionELF *MCContext::getELFSection(const Twine &Section, unsigned Type,
                                        unsigned Flags, unsigned EntrySize,
-                                       const Twine &Group, unsigned UniqueID) {
+                                       const Twine &Group, unsigned UniqueID,
+                                       const MCSectionELF *Associated) {
   MCSymbolELF *GroupSym = nullptr;
   if (!Group.isTriviallyEmpty() && !Group.str().empty())
     GroupSym = cast<MCSymbolELF>(getOrCreateSymbol(Group));
 
   return getELFSection(Section, Type, Flags, EntrySize, GroupSym, UniqueID,
-                       nullptr);
+                       Associated);
 }
 
 MCSectionELF *MCContext::getELFSection(const Twine &Section, unsigned Type,
@@ -521,13 +522,15 @@ CodeViewContext &MCContext::getCVContext() {
 void MCContext::reportError(SMLoc Loc, const Twine &Msg) {
   HadError = true;
 
-  // If we have a source manager use it. Otherwise just use the generic
-  // report_fatal_error().
-  if (!SrcMgr)
+  // If we have a source manager use it. Otherwise, try using the inline source
+  // manager.
+  // If that fails, use the generic report_fatal_error().
+  if (SrcMgr)
+    SrcMgr->PrintMessage(Loc, SourceMgr::DK_Error, Msg);
+  else if (InlineSrcMgr)
+    InlineSrcMgr->PrintMessage(Loc, SourceMgr::DK_Error, Msg);
+  else
     report_fatal_error(Msg, false);
-
-  // Use the source manager to print the message.
-  SrcMgr->PrintMessage(Loc, SourceMgr::DK_Error, Msg);
 }
 
 void MCContext::reportFatalError(SMLoc Loc, const Twine &Msg) {

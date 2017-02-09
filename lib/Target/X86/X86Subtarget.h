@@ -154,9 +154,6 @@ protected:
   /// Processor has RTM instructions.
   bool HasRTM;
 
-  /// Processor has HLE.
-  bool HasHLE;
-
   /// Processor has ADX instructions.
   bool HasADX;
 
@@ -174,6 +171,9 @@ protected:
 
   /// Processor has MONITORX/MWAITX instructions.
   bool HasMWAITX;
+
+  /// Processor has Cache Line Zero instruction
+  bool HasCLZERO;
 
   /// Processor has Prefetch with intent to Write instruction
   bool HasPFPREFETCHWT1;
@@ -271,23 +271,11 @@ protected:
   /// Processor supports MPX - Memory Protection Extensions
   bool HasMPX;
 
-  /// Processor supports Invalidate Process-Context Identifier
-  bool HasInvPCId;
-
-  /// Processor has VM Functions
-  bool HasVMFUNC;
-
-  /// Processor has Supervisor Mode Access Protection
-  bool HasSMAP;
-
   /// Processor has Software Guard Extensions
   bool HasSGX;
 
   /// Processor supports Flush Cache Line instruction
   bool HasCLFLUSHOPT;
-
-  /// Processor has Persistent Commit feature
-  bool HasPCOMMIT;
 
   /// Processor supports Cache Line Write Back instruction
   bool HasCLWB;
@@ -459,13 +447,13 @@ public:
   bool hasVBMI() const { return HasVBMI; }
   bool hasIFMA() const { return HasIFMA; }
   bool hasRTM() const { return HasRTM; }
-  bool hasHLE() const { return HasHLE; }
   bool hasADX() const { return HasADX; }
   bool hasSHA() const { return HasSHA; }
   bool hasPRFCHW() const { return HasPRFCHW; }
   bool hasRDSEED() const { return HasRDSEED; }
   bool hasLAHFSAHF() const { return HasLAHFSAHF; }
   bool hasMWAITX() const { return HasMWAITX; }
+  bool hasCLZERO() const { return HasCLZERO; }
   bool isBTMemSlow() const { return IsBTMemSlow; }
   bool isSHLDSlow() const { return IsSHLDSlow; }
   bool isPMULLDSlow() const { return IsPMULLDSlow; }
@@ -493,6 +481,7 @@ public:
   bool hasVLX() const { return HasVLX; }
   bool hasPKU() const { return HasPKU; }
   bool hasMPX() const { return HasMPX; }
+  bool hasCLFLUSHOPT() const { return HasCLFLUSHOPT; }
 
   bool isXRaySupported() const override { return is64Bit(); }
 

@@ -59,6 +59,9 @@ namespace llvm {
     /// The SourceMgr for this object, if any.
     const SourceMgr *SrcMgr;
 
+    /// The SourceMgr for inline assembly, if any.
+    SourceMgr *InlineSrcMgr;
+
     /// The MCAsmInfo for this target.
     const MCAsmInfo *MAI;
 
@@ -243,6 +246,8 @@ namespace llvm {
 
     const SourceMgr *getSourceManager() const { return SrcMgr; }
 
+    void setInlineSourceManager(SourceMgr *SM) { InlineSrcMgr = SM; }
+
     const MCAsmInfo *getAsmInfo() const { return MAI; }
 
     const MCRegisterInfo *getRegisterInfo() const { return MRI; }
@@ -352,7 +357,15 @@ namespace llvm {
 
     MCSectionELF *getELFSection(const Twine &Section, unsigned Type,
                                 unsigned Flags, unsigned EntrySize,
-                                const Twine &Group, unsigned UniqueID);
+                                const Twine &Group, unsigned UniqueID) {
+      return getELFSection(Section, Type, Flags, EntrySize, Group, UniqueID,
+                           nullptr);
+    }
+
+    MCSectionELF *getELFSection(const Twine &Section, unsigned Type,
+                                unsigned Flags, unsigned EntrySize,
+                                const Twine &Group, unsigned UniqueID,
+                                const MCSectionELF *Associated);
 
     MCSectionELF *getELFSection(const Twine &Section, unsigned Type,
                                 unsigned Flags, unsigned EntrySize,

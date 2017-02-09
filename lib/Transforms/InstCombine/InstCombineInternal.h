@@ -508,6 +508,9 @@ public:
     return llvm::computeOverflowForUnsignedAdd(LHS, RHS, DL, &AC, CxtI, &DT);
   }
 
+  /// Maximum size of array considered when transforming.
+  uint64_t MaxArraySizeForCombine;
+
 private:
   /// \brief Performs a few simplifications for operators which are associative
   /// or commutative.
@@ -647,6 +650,8 @@ private:
   Instruction *PromoteCastOfAllocation(BitCastInst &CI, AllocaInst &AI);
   Instruction *MatchBSwap(BinaryOperator &I);
   bool SimplifyStoreAtEndOfBlock(StoreInst &SI);
+
+  Instruction *SimplifyElementAtomicMemCpy(ElementAtomicMemCpyInst *AMI);
   Instruction *SimplifyMemTransfer(MemIntrinsic *MI);
   Instruction *SimplifyMemSet(MemSetInst *MI);
 

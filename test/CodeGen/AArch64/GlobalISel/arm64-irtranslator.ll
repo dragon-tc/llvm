@@ -1123,3 +1123,24 @@ define i8* @test_const_placement() {
 next:
   ret i8* inttoptr(i32 42 to i8*)
 }
+
+declare void @llvm.va_end(i8*)
+define void @test_va_end(i8* %list) {
+; CHECK-LABEL: name: test_va_end
+; CHECK-NOT: va_end
+; CHECK-NOT: INTRINSIC
+; CHECK: RET_ReallyLR
+  call void @llvm.va_end(i8* %list)
+  ret void
+}
+
+declare float @llvm.pow.f32(float, float)
+define float @test_pow_intrin(float %l, float %r) {
+; CHECK-LABEL: name: test_pow_intrin
+; CHECK: [[LHS:%[0-9]+]](s32) = COPY %s0
+; CHECK: [[RHS:%[0-9]+]](s32) = COPY %s1
+; CHECK: [[RES:%[0-9]+]](s32) = G_FPOW [[LHS]], [[RHS]]
+; CHECK: %s0 = COPY [[RES]]
+  %res = call float @llvm.pow.f32(float %l, float %r)
+  ret float %res
+}

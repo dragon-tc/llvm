@@ -80,15 +80,19 @@ public:
 unsigned HexagonResource::setWeight(unsigned s) {
   const unsigned SlotWeight = 8;
   const unsigned MaskWeight = SlotWeight - 1;
-  bool Key = (1 << s) & getUnits();
+  unsigned Units = getUnits();
+  unsigned Key = ((1u << s) & Units) != 0;
 
   // Calculate relative weight of the insn for the given slot, weighing it the
   // heavier the more restrictive the insn is and the lowest the slots that the
   // insn may be executed in.
-  Weight =
-      (Key << (SlotWeight * s)) * ((MaskWeight - countPopulation(getUnits()))
-                                   << countTrailingZeros(getUnits()));
-  return (Weight);
+  if (Key == 0 || Units == 0 || (SlotWeight*s >= 32))
+    return Weight = 0;
+
+  unsigned Ctpop = countPopulation(Units);
+  unsigned Cttz = countTrailingZeros(Units);
+  Weight = (1u << (SlotWeight * s)) * ((MaskWeight - Ctpop) << Cttz);
+  return Weight;
 }
 
 void HexagonCVIResource::SetupTUL(TypeUnitsAndLanes *TUL, StringRef CPU) {
@@ -235,13 +239,19 @@ unsigned countNeitherAnorX(MCInstrInfo const &MCII, MCInst const &ID) {
   unsigned Result = 0;
   unsigned Type = HexagonMCInstrInfo::getType(MCII, ID);
   if (Type == HexagonII::TypeDUPLEX) {
-      unsigned subInst0Opcode = ID.getOperand(0).getInst()->getOpcode();
-      unsigned subInst1Opcode = ID.getOperand(1).getInst()->getOpcode();
-      Result += !isDuplexAGroup(subInst0Opcode);
-      Result += !isDuplexAGroup(subInst1Opcode);
+    unsigned subInst0Opcode = ID.getOperand(0).getInst()->getOpcode();
+    unsigned subInst1Opcode = ID.getOperand(1).getInst()->getOpcode();
+    Result += !isDuplexAGroup(subInst0Opcode);
+    Result += !isDuplexAGroup(subInst1Opcode);
   } else
-    Result += Type != HexagonII::TypeALU32 &&
-              Type != HexagonII::TypeXTYPE;
+    Result += Type != HexagonII::TypeALU32_2op &&
+              Type != HexagonII::TypeALU32_3op &&
+              Type != HexagonII::TypeALU32_ADDI &&
+              Type != HexagonII::TypeS_2op &&
+              Type != HexagonII::TypeS_3op &&
+              Type != HexagonII::TypeALU64 &&
+              (Type != HexagonII::TypeM ||
+               HexagonMCInstrInfo::isFloat(MCII, ID));
   return Result;
 }
 }
@@ -299,7 +309,9 @@ bool HexagonShuffler::check() {
       ++jump1;
 
     switch (HexagonMCInstrInfo::getType(MCII, ID)) {
-    case HexagonII::TypeXTYPE:
+    case HexagonII::TypeS_2op:
+    case HexagonII::TypeS_3op:
+    case HexagonII::TypeALU64:
       if (HexagonMCInstrInfo::isFloat(MCII, ID))
         ++xtypeFloat;
       break;
@@ -420,7 +432,9 @@ bool HexagonShuffler::check() {
         ISJ->Core.setUnits(ISJ->Core.getUnits() & ~slotOne);
 
     // Exclude from slot #1 any insn but A-type.
-    if (HexagonMCInstrInfo::getType(MCII, ID) != HexagonII::TypeALU32)
+    if (HexagonMCInstrInfo::getType(MCII, ID) != HexagonII::TypeALU32_2op &&
+        HexagonMCInstrInfo::getType(MCII, ID) != HexagonII::TypeALU32_3op &&
+        HexagonMCInstrInfo::getType(MCII, ID) != HexagonII::TypeALU32_ADDI)
       if (onlyAin1)
         ISJ->Core.setUnits(ISJ->Core.getUnits() & ~slotOne);
 

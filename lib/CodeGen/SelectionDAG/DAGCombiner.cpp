@@ -1834,12 +1834,6 @@ SDValue DAGCombiner::visitADDLike(SDValue N0, SDValue N1, SDNode *LocReference) 
     }
   }
 
-  // (add X, (adde Y, 0, Carry)) -> (adde X, Y, Carry)
-  if (N1.getOpcode() == ISD::ADDE && N1->hasOneUse() &&
-      isNullConstant(N1.getOperand(1)))
-    return DAG.getNode(ISD::ADDE, DL, DAG.getVTList(VT, MVT::Glue),
-                       N0, N1->getOperand(0), N1->getOperand(2));
-
   return SDValue();
 }
 
@@ -4380,8 +4374,8 @@ struct ByteProvider {
   }
   static ByteProvider getConstantZero() { return ByteProvider(nullptr, 0); }
 
-  bool isConstantZero() { return !Load; }
-  bool isMemory() { return Load; }
+  bool isConstantZero() const { return !Load; }
+  bool isMemory() const { return Load; }
 
   bool operator==(const ByteProvider &Other) const {
     return Other.Load == Load && Other.ByteOffset == ByteOffset;
@@ -4539,6 +4533,7 @@ SDValue DAGCombiner::MatchLoadCombine(SDNode *N) {
 
   SmallSet<LoadSDNode *, 8> Loads;
   LoadSDNode *FirstLoad = nullptr;
+  int64_t FirstOffset = INT64_MAX;
 
   bool IsBigEndianTarget = DAG.getDataLayout().isBigEndian();
   auto ByteAt = IsBigEndianTarget ? BigEndianByteAt : LittleEndianByteAt;
@@ -4581,21 +4576,25 @@ SDValue DAGCombiner::MatchLoadCombine(SDNode *N) {
     ByteOffsets[i] = ByteOffsetFromBase;
 
     // Remember the first byte load
-    if (ByteOffsetFromBase == 0)
+    if (ByteOffsetFromBase < FirstOffset) {
       FirstLoad = L;
+      FirstOffset = ByteOffsetFromBase;
+    }
 
     Loads.insert(L);
   }
   assert(Loads.size() > 0 && "All the bytes of the value must be loaded from "
          "memory, so there must be at least one load which produces the value");
   assert(Base && "Base address of the accessed memory location must be set");
+  assert(FirstOffset != INT64_MAX && "First byte offset must be set");
 
   // Check if the bytes of the OR we are looking at match with either big or
   // little endian value load
   bool BigEndian = true, LittleEndian = true;
   for (unsigned i = 0; i < ByteWidth; i++) {
-    LittleEndian &= ByteOffsets[i] == LittleEndianByteAt(ByteWidth, i);
-    BigEndian &= ByteOffsets[i] == BigEndianByteAt(ByteWidth, i);
+    int64_t CurrentByteOffset = ByteOffsets[i] - FirstOffset;
+    LittleEndian &= CurrentByteOffset == LittleEndianByteAt(ByteWidth, i);
+    BigEndian &= CurrentByteOffset == BigEndianByteAt(ByteWidth, i);
     if (!BigEndian && !LittleEndian)
       return SDValue();
   }
@@ -7871,6 +7870,18 @@ SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
   if (!VT.isVector() &&
       SimplifyDemandedBits(SDValue(N, 0)))
     return SDValue(N, 0);
+
+  // (trunc adde(X, Y, Carry)) -> (adde trunc(X), trunc(Y), Carry)
+  // When the adde's carry is not used.
+  if (N0.getOpcode() == ISD::ADDE && N0.hasOneUse() &&
+      !N0.getNode()->hasAnyUseOfValue(1) &&
+      (!LegalOperations || TLI.isOperationLegal(ISD::ADDE, VT))) {
+    SDLoc SL(N);
+    auto X = DAG.getNode(ISD::TRUNCATE, SL, VT, N0.getOperand(0));
+    auto Y = DAG.getNode(ISD::TRUNCATE, SL, VT, N0.getOperand(1));
+    return DAG.getNode(ISD::ADDE, SL, DAG.getVTList(VT, MVT::Glue),
+                       X, Y, N0.getOperand(2));
+  }
 
   return SDValue();
 }
