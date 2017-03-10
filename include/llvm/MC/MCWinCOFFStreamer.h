@@ -40,7 +40,7 @@ public:
   /// \{
 
   void InitSections(bool NoExecStack) override;
-  void EmitLabel(MCSymbol *Symbol) override;
+  void EmitLabel(MCSymbol *Symbol, SMLoc Loc = SMLoc()) override;
   void EmitAssemblerFlag(MCAssemblerFlag Flag) override;
   void EmitThumbFunc(MCSymbol *Func) override;
   bool EmitSymbolAttribute(MCSymbol *Symbol, MCSymbolAttr Attribute) override;
@@ -60,7 +60,6 @@ public:
                     unsigned ByteAlignment) override;
   void EmitTBSSSymbol(MCSection *Section, MCSymbol *Symbol, uint64_t Size,
                       unsigned ByteAlignment) override;
-  void EmitFileDirective(StringRef Filename) override;
   void EmitIdent(StringRef IdentString) override;
   void EmitWinEHHandlerData() override;
   void FinishImpl() override;

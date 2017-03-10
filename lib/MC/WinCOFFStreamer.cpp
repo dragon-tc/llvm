@@ -79,10 +79,9 @@ void MCWinCOFFStreamer::InitSections(bool NoExecStack) {
   SwitchSection(getContext().getObjectFileInfo()->getTextSection());
 }
 
-void MCWinCOFFStreamer::EmitLabel(MCSymbol *S) {
+void MCWinCOFFStreamer::EmitLabel(MCSymbol *S, SMLoc Loc) {
   auto *Symbol = cast<MCSymbolCOFF>(S);
-  assert(Symbol->isUndefined() && "Cannot define a symbol twice!");
-  MCObjectStreamer::EmitLabel(Symbol);
+  MCObjectStreamer::EmitLabel(Symbol, Loc);
 }
 
 void MCWinCOFFStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {
@@ -277,10 +276,6 @@ void MCWinCOFFStreamer::EmitZerofill(MCSection *Section, MCSymbol *Symbol,
 void MCWinCOFFStreamer::EmitTBSSSymbol(MCSection *Section, MCSymbol *Symbol,
                                        uint64_t Size, unsigned ByteAlignment) {
   llvm_unreachable("not implemented");
-}
-
-void MCWinCOFFStreamer::EmitFileDirective(StringRef Filename) {
-  getAssembler().addFileName(Filename);
 }
 
 // TODO: Implement this if you want to emit .comment section in COFF obj files.

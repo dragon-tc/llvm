@@ -327,7 +327,7 @@ void LiveDebugValues::printVarLocInMBB(const MachineFunction &MF,
 /// address the spill location in a target independent way.
 int LiveDebugValues::extractSpillBaseRegAndOffset(const MachineInstr &MI,
                                                   unsigned &Reg) {
-  assert(MI.hasOneMemOperand() &&
+  assert(MI.hasOneMemOperand() && 
          "Spill instruction does not have exactly one memory operand?");
   auto MMOI = MI.memoperands_begin();
   const PseudoSourceValue *PVal = (*MMOI)->getPseudoValue();
@@ -373,8 +373,12 @@ void LiveDebugValues::transferRegisterDef(MachineInstr &MI,
   unsigned SP = TLI->getStackPointerRegisterToSaveRestore();
   SparseBitVector<> KillSet;
   for (const MachineOperand &MO : MI.operands()) {
+    // Determine whether the operand is a register def.  Assume that call
+    // instructions never clobber SP, because some backends (e.g., AArch64)
+    // never list SP in the regmask.
     if (MO.isReg() && MO.isDef() && MO.getReg() &&
-        TRI->isPhysicalRegister(MO.getReg())) {
+        TRI->isPhysicalRegister(MO.getReg()) &&
+        !(MI.isCall() && MO.getReg() == SP)) {
       // Remove ranges of all aliased registers.
       for (MCRegAliasIterator RAI(MO.getReg(), TRI, true); RAI.isValid(); ++RAI)
         for (unsigned ID : OpenRanges.getVarLocs())
@@ -399,11 +403,17 @@ void LiveDebugValues::transferRegisterDef(MachineInstr &MI,
 /// criteria to make this decision:
 /// - Is this instruction a store to a spill slot?
 /// - Is there a register operand that is both used and killed?
+/// TODO: Store optimization can fold spills into other stores (including
+/// other spills). We do not handle this yet (more than one memory operand).
 bool LiveDebugValues::isSpillInstruction(const MachineInstr &MI,
                                          MachineFunction *MF, unsigned &Reg) {
   const MachineFrameInfo &FrameInfo = MF->getFrameInfo();
   int FI;
   const MachineMemOperand *MMO;
+
+  // TODO: Handle multiple stores folded into one. 
+  if (!MI.hasOneMemOperand())
+    return false;
 
   // To identify a spill instruction, use the same criteria as in AsmPrinter.
   if (!((TII->isStoreToStackSlotPostFE(MI, FI) ||

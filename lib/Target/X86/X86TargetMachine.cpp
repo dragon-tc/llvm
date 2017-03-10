@@ -14,6 +14,11 @@
 #include "MCTargetDesc/X86MCTargetDesc.h"
 #include "X86.h"
 #include "X86CallLowering.h"
+#include "X86LegalizerInfo.h"
+#include "X86InstructionSelector.h"
+#ifdef LLVM_BUILD_GLOBAL_ISEL
+#include "X86RegisterBankInfo.h"
+#endif
 #include "X86MacroFusion.h"
 #include "X86Subtarget.h"
 #include "X86TargetMachine.h"
@@ -28,6 +33,9 @@
 #include "llvm/CodeGen/GlobalISel/CallLowering.h"
 #include "llvm/CodeGen/GlobalISel/GISelAccessor.h"
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
+#include "llvm/CodeGen/GlobalISel/Legalizer.h"
+#include "llvm/CodeGen/GlobalISel/RegBankSelect.h"
+#include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
@@ -202,27 +210,25 @@ X86TargetMachine::~X86TargetMachine() = default;
 namespace {
 
 struct X86GISelActualAccessor : public GISelAccessor {
-  std::unique_ptr<CallLowering> CL;
-
-  X86GISelActualAccessor(CallLowering* CL): CL(CL) {}
+  std::unique_ptr<CallLowering> CallLoweringInfo;
+  std::unique_ptr<LegalizerInfo> Legalizer;
+  std::unique_ptr<RegisterBankInfo> RegBankInfo;
+  std::unique_ptr<InstructionSelector> InstSelector;
 
   const CallLowering *getCallLowering() const override {
-    return CL.get();
+    return CallLoweringInfo.get();
   }
 
   const InstructionSelector *getInstructionSelector() const override {
-    //TODO: Implement
-    return nullptr;
+    return InstSelector.get();
   }
 
   const LegalizerInfo *getLegalizerInfo() const override {
-    //TODO: Implement
-    return nullptr;
+    return Legalizer.get();
   }
 
   const RegisterBankInfo *getRegBankInfo() const override {
-    //TODO: Implement
-    return nullptr;
+    return RegBankInfo.get();
   }
 };
 
@@ -271,8 +277,15 @@ X86TargetMachine::getSubtargetImpl(const Function &F) const {
 #ifndef LLVM_BUILD_GLOBAL_ISEL
     GISelAccessor *GISel = new GISelAccessor();
 #else
-    X86GISelActualAccessor *GISel = new X86GISelActualAccessor(
-        new X86CallLowering(*I->getTargetLowering()));
+    X86GISelActualAccessor *GISel = new X86GISelActualAccessor();
+
+    GISel->CallLoweringInfo.reset(new X86CallLowering(*I->getTargetLowering()));
+    GISel->Legalizer.reset(new X86LegalizerInfo(*I));
+
+    auto *RBI = new X86RegisterBankInfo(*I->getRegisterInfo());
+    GISel->RegBankInfo.reset(RBI);
+    GISel->InstSelector.reset(new X86InstructionSelector(*I, *RBI));
+
 #endif
     I->setGISelAccessor(*GISel);
   }
@@ -371,17 +384,17 @@ bool X86PassConfig::addIRTranslator() {
 }
 
 bool X86PassConfig::addLegalizeMachineIR() {
-  //TODO: Implement
+  addPass(new Legalizer());
   return false;
 }
 
 bool X86PassConfig::addRegBankSelect() {
-  //TODO: Implement
+  addPass(new RegBankSelect());
   return false;
 }
 
 bool X86PassConfig::addGlobalInstructionSelect() {
-  //TODO: Implement
+  addPass(new InstructionSelect());
   return false;
 }
 #endif

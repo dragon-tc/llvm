@@ -3095,38 +3095,6 @@ void ARMDAGToDAGISel::Select(SDNode *N) {
     return;
   }
   case ARMISD::UMLAL:{
-    // UMAAL is similar to UMLAL but it adds two 32-bit values to the
-    // 64-bit multiplication result.
-    if (Subtarget->hasV6Ops() && Subtarget->hasDSP() &&
-        N->getOperand(2).getOpcode() == ARMISD::ADDC &&
-        N->getOperand(3).getOpcode() == ARMISD::ADDE) {
-
-      SDValue Addc = N->getOperand(2);
-      SDValue Adde = N->getOperand(3);
-
-      if (Adde.getOperand(2).getNode() == Addc.getNode()) {
-
-        ConstantSDNode *Op0 = dyn_cast<ConstantSDNode>(Adde.getOperand(0));
-        ConstantSDNode *Op1 = dyn_cast<ConstantSDNode>(Adde.getOperand(1));
-
-        if (Op0 && Op1 && Op0->getZExtValue() == 0 && Op1->getZExtValue() == 0)
-        {
-          // Select UMAAL instead: UMAAL RdLo, RdHi, Rn, Rm
-          // RdLo = one operand to be added, lower 32-bits of res
-          // RdHi = other operand to be added, upper 32-bits of res
-          // Rn = first multiply operand
-          // Rm = second multiply operand
-          SDValue Ops[] = { N->getOperand(0), N->getOperand(1),
-                            Addc.getOperand(0), Addc.getOperand(1),
-                            getAL(CurDAG, dl),
-                            CurDAG->getRegister(0, MVT::i32) };
-          unsigned opc = Subtarget->isThumb() ? ARM::t2UMAAL : ARM::UMAAL;
-          CurDAG->SelectNodeTo(N, opc, MVT::i32, MVT::i32, Ops);
-          return;
-        }
-      }
-    }
-
     if (Subtarget->isThumb()) {
       SDValue Ops[] = { N->getOperand(0), N->getOperand(1), N->getOperand(2),
                         N->getOperand(3), getAL(CurDAG, dl),
@@ -3277,26 +3245,23 @@ void ARMDAGToDAGISel::Select(SDNode *N) {
       int64_t Addend = -C->getSExtValue();
 
       SDNode *Add = nullptr;
-      // In T2 mode, ADDS can be better than CMN if the immediate fits in a
+      // ADDS can be better than CMN if the immediate fits in a
       // 16-bit ADDS, which means either [0,256) for tADDi8 or [0,8) for tADDi3.
       // Outside that range we can just use a CMN which is 32-bit but has a
       // 12-bit immediate range.
-      if (Subtarget->isThumb2() && Addend < 1<<8) {
-        SDValue Ops[] = { X, CurDAG->getTargetConstant(Addend, dl, MVT::i32),
-                          getAL(CurDAG, dl), CurDAG->getRegister(0, MVT::i32),
-                          CurDAG->getRegister(0, MVT::i32) };
-        Add = CurDAG->getMachineNode(ARM::t2ADDri, dl, MVT::i32, Ops);
-      } else if (!Subtarget->isThumb2() && Addend < 1<<8) {
-        // FIXME: Add T1 tADDi8 code.
-        SDValue Ops[] = {CurDAG->getRegister(ARM::CPSR, MVT::i32), X,
-                         CurDAG->getTargetConstant(Addend, dl, MVT::i32),
-                         getAL(CurDAG, dl), CurDAG->getRegister(0, MVT::i32)};
-        Add = CurDAG->getMachineNode(ARM::tADDi8, dl, MVT::i32, Ops);
-      } else if (!Subtarget->isThumb2() && Addend < 1<<3) {
-        SDValue Ops[] = {CurDAG->getRegister(ARM::CPSR, MVT::i32), X,
-                         CurDAG->getTargetConstant(Addend, dl, MVT::i32),
-                         getAL(CurDAG, dl), CurDAG->getRegister(0, MVT::i32)};
-        Add = CurDAG->getMachineNode(ARM::tADDi3, dl, MVT::i32, Ops);
+      if (Addend < 1<<8) {
+        if (Subtarget->isThumb2()) {
+          SDValue Ops[] = { X, CurDAG->getTargetConstant(Addend, dl, MVT::i32),
+                            getAL(CurDAG, dl), CurDAG->getRegister(0, MVT::i32),
+                            CurDAG->getRegister(0, MVT::i32) };
+          Add = CurDAG->getMachineNode(ARM::t2ADDri, dl, MVT::i32, Ops);
+        } else {
+          unsigned Opc = (Addend < 1<<3) ? ARM::tADDi3 : ARM::tADDi8;
+          SDValue Ops[] = {CurDAG->getRegister(ARM::CPSR, MVT::i32), X,
+                           CurDAG->getTargetConstant(Addend, dl, MVT::i32),
+                           getAL(CurDAG, dl), CurDAG->getRegister(0, MVT::i32)};
+          Add = CurDAG->getMachineNode(Opc, dl, MVT::i32, Ops);
+        }
       }
       if (Add) {
         SDValue Ops2[] = {SDValue(Add, 0), CurDAG->getConstant(0, dl, MVT::i32)};
@@ -4123,11 +4088,10 @@ static inline int getMClassRegisterSYSmValueMask(StringRef RegString) {
 // The flags here are common to those allowed for apsr in the A class cores and
 // those allowed for the special registers in the M class cores. Returns a
 // value representing which flags were present, -1 if invalid.
-static inline int getMClassFlagsMask(StringRef Flags, bool hasDSP) {
-  if (Flags.empty())
-    return 0x2 | (int)hasDSP;
-
+static inline int getMClassFlagsMask(StringRef Flags) {
   return StringSwitch<int>(Flags)
+          .Case("", 0x2) // no flags means nzcvq for psr registers, and 0x2 is
+                         // correct when flags are not permitted
           .Case("g", 0x1)
           .Case("nzcvq", 0x2)
           .Case("nzcvqg", 0x3)
@@ -4170,7 +4134,7 @@ static int getMClassRegisterMask(StringRef Reg, StringRef Flags, bool IsRead,
   }
 
   // We know we are now handling a write so need to get the mask for the flags.
-  int Mask = getMClassFlagsMask(Flags, Subtarget->hasDSP());
+  int Mask = getMClassFlagsMask(Flags);
 
   // Only apsr, iapsr, eapsr, xpsr can have flags. The other register values
   // shouldn't have flags present.
@@ -4185,10 +4149,7 @@ static int getMClassRegisterMask(StringRef Reg, StringRef Flags, bool IsRead,
   // The register was valid so need to put the mask in the correct place
   // (the flags need to be in bits 11-10) and combine with the SYSmvalue to
   // construct the operand for the instruction node.
-  if (SYSmvalue < 0x4)
-    return SYSmvalue | Mask << 10;
-
-  return SYSmvalue;
+  return SYSmvalue | Mask << 10;
 }
 
 static int getARClassRegisterMask(StringRef Reg, StringRef Flags) {
@@ -4201,7 +4162,7 @@ static int getARClassRegisterMask(StringRef Reg, StringRef Flags) {
     // The flags permitted for apsr are the same flags that are allowed in
     // M class registers. We get the flag value and then shift the flags into
     // the correct place to combine with the mask.
-    Mask = getMClassFlagsMask(Flags, true);
+    Mask = getMClassFlagsMask(Flags);
     if (Mask == -1)
       return -1;
     return Mask << 2;

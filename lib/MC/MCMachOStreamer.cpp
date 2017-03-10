@@ -78,7 +78,7 @@ public:
   /// @{
 
   void ChangeSection(MCSection *Sect, const MCExpr *Subsect) override;
-  void EmitLabel(MCSymbol *Symbol) override;
+  void EmitLabel(MCSymbol *Symbol, SMLoc Loc = SMLoc()) override;
   void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) override;
   void EmitEHSymAttributes(const MCSymbol *Symbol, MCSymbol *EHSymbol) override;
   void EmitAssemblerFlag(MCAssemblerFlag Flag) override;
@@ -92,35 +92,12 @@ public:
   void EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                         unsigned ByteAlignment) override;
 
-  void BeginCOFFSymbolDef(const MCSymbol *Symbol) override {
-    llvm_unreachable("macho doesn't support this directive");
-  }
-
-  void EmitCOFFSymbolStorageClass(int StorageClass) override {
-    llvm_unreachable("macho doesn't support this directive");
-  }
-
-  void EmitCOFFSymbolType(int Type) override {
-    llvm_unreachable("macho doesn't support this directive");
-  }
-
-  void EndCOFFSymbolDef() override {
-    llvm_unreachable("macho doesn't support this directive");
-  }
-
   void EmitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                              unsigned ByteAlignment) override;
   void EmitZerofill(MCSection *Section, MCSymbol *Symbol = nullptr,
                     uint64_t Size = 0, unsigned ByteAlignment = 0) override;
   void EmitTBSSSymbol(MCSection *Section, MCSymbol *Symbol, uint64_t Size,
                       unsigned ByteAlignment = 0) override;
-
-  void EmitFileDirective(StringRef Filename) override {
-    // FIXME: Just ignore the .file; it isn't important enough to fail the
-    // entire assembly.
-
-    // report_fatal_error("unsupported directive: '.file'");
-  }
 
   void EmitIdent(StringRef IdentString) override {
     llvm_unreachable("macho doesn't support this directive");
@@ -194,15 +171,13 @@ void MCMachOStreamer::EmitEHSymAttributes(const MCSymbol *Symbol,
     EmitSymbolAttribute(EHSymbol, MCSA_PrivateExtern);
 }
 
-void MCMachOStreamer::EmitLabel(MCSymbol *Symbol) {
-  assert(Symbol->isUndefined() && "Cannot define a symbol twice!");
-
+void MCMachOStreamer::EmitLabel(MCSymbol *Symbol, SMLoc Loc) {
   // We have to create a new fragment if this is an atom defining symbol,
   // fragments cannot span atoms.
   if (getAssembler().isSymbolLinkerVisible(*Symbol))
     insert(new MCDataFragment());
 
-  MCObjectStreamer::EmitLabel(Symbol);
+  MCObjectStreamer::EmitLabel(Symbol, Loc);
 
   // This causes the reference type flag to be cleared. Darwin 'as' was "trying"
   // to clear the weak reference and weak definition bits too, but the
