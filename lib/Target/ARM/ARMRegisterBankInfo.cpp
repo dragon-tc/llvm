@@ -180,6 +180,7 @@ const RegisterBank &ARMRegisterBankInfo::getRegBankFromRegClass(
   switch (RC.getID()) {
   case GPRRegClassID:
   case GPRnopcRegClassID:
+  case GPRspRegClassID:
   case tGPR_and_tcGPRRegClassID:
   case tGPRRegClassID:
     return getRegBank(ARM::GPRRegBankID);
@@ -218,6 +219,8 @@ ARMRegisterBankInfo::getInstrMapping(const MachineInstr &MI) const {
 
   switch (Opc) {
   case G_ADD:
+  case G_SUB:
+  case G_MUL:
   case G_SEXT:
   case G_ZEXT:
   case G_GEP:

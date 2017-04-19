@@ -69,8 +69,9 @@ tools/binutils
 tools/libffi
 # Sphinx build tree, if building in-source dir.
 docs/_build
-# VSCode config files.
+# VS2017 and VSCode config files.
 .vscode
+.vs
 
 #==============================================================================#
 # Files created in tree by the Go bindings.
