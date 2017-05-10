@@ -66,18 +66,17 @@ void AVRFrameLowering::emitPrologue(MachineFunction &MF,
         .setMIFlag(MachineInstr::FrameSetup);
   }
 
+  // Save the frame pointer if we have one.
+  if (HasFP) {
+    BuildMI(MBB, MBBI, DL, TII.get(AVR::PUSHWRr))
+        .addReg(AVR::R29R28, RegState::Kill)
+        .setMIFlag(MachineInstr::FrameSetup);
+  }
+
   // Emit special prologue code to save R1, R0 and SREG in interrupt/signal
   // handlers before saving any other registers.
   if (CallConv == CallingConv::AVR_INTR ||
       CallConv == CallingConv::AVR_SIGNAL) {
-
-    // Save the frame pointer if we have one.
-    if (HasFP) {
-      BuildMI(MBB, MBBI, DL, TII.get(AVR::PUSHWRr))
-          .addReg(AVR::R29R28, RegState::Kill)
-          .setMIFlag(MachineInstr::FrameSetup);
-    }
-
     BuildMI(MBB, MBBI, DL, TII.get(AVR::PUSHWRr))
         .addReg(AVR::R1R0, RegState::Kill)
         .setMIFlag(MachineInstr::FrameSetup);
@@ -173,10 +172,10 @@ void AVRFrameLowering::emitEpilogue(MachineFunction &MF,
         .addImm(0x3f)
         .addReg(AVR::R0, RegState::Kill);
     BuildMI(MBB, MBBI, DL, TII.get(AVR::POPWRd), AVR::R1R0);
-
-    if (hasFP(MF))
-      BuildMI(MBB, MBBI, DL, TII.get(AVR::POPWRd), AVR::R29R28);
   }
+
+  if (hasFP(MF))
+    BuildMI(MBB, MBBI, DL, TII.get(AVR::POPWRd), AVR::R29R28);
 
   // Early exit if there is no need to restore the frame pointer.
   if (!FrameSize) {
@@ -229,9 +228,8 @@ void AVRFrameLowering::emitEpilogue(MachineFunction &MF,
 bool AVRFrameLowering::hasFP(const MachineFunction &MF) const {
   const AVRMachineFunctionInfo *FuncInfo = MF.getInfo<AVRMachineFunctionInfo>();
 
-  // TODO: We do not always need a frame pointer.
-  // This can be optimised.
-  return true;
+  return (FuncInfo->getHasSpills() || FuncInfo->getHasAllocas() ||
+          FuncInfo->getHasStackArgs());
 }
 
 bool AVRFrameLowering::spillCalleeSavedRegisters(
@@ -377,7 +375,7 @@ MachineBasicBlock::iterator AVRFrameLowering::eliminateCallFramePseudoInstr(
 
   DebugLoc DL = MI->getDebugLoc();
   unsigned int Opcode = MI->getOpcode();
-  int Amount = MI->getOperand(0).getImm();
+  int Amount = TII.getFrameSize(*MI);
 
   // Adjcallstackup does not need to allocate stack space for the call, instead
   // we insert push instructions that will allocate the necessary stack.
