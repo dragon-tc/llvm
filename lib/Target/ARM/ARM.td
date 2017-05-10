@@ -697,7 +697,7 @@ def : ProcessorModel<"krait2",       CortexA9Model,      [ARMv7a, ProcKrait,
                                                          FeatureFP16,
                                                          FeatureAvoidPartialCPSR,
                                                          FeatureVFP4,
-                                                         FeatureHWDiv,
+                                                         FeatureHWDivThumb,
                                                          FeatureHWDivARM]>;
 
 def : ProcessorModel<"swift",       SwiftModel,         [ARMv7a, ProcSwift,
