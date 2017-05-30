@@ -23,6 +23,7 @@ add_llvm_library(LLVMCodeGen
   ExecutionDepsFix.cpp
   ExpandISelPseudos.cpp
   ExpandPostRAPseudos.cpp
+  ExpandReductions.cpp
   FaultMaps.cpp
   FEntryInserter.cpp
   FuncletLayout.cpp
@@ -118,6 +119,7 @@ add_llvm_library(LLVMCodeGen
   SafeStack.cpp
   SafeStackColoring.cpp
   SafeStackLayout.cpp
+  ScalarizeMaskedMemIntrin.cpp
   ScheduleDAG.cpp
   ScheduleDAGInstrs.cpp
   ScheduleDAGPrinter.cpp

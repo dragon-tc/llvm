@@ -660,10 +660,12 @@ void ModuleBitcodeWriter::writeAttributeTable() {
 
   SmallVector<uint64_t, 64> Record;
   for (unsigned i = 0, e = Attrs.size(); i != e; ++i) {
-    const AttributeList &A = Attrs[i];
-    for (unsigned i = 0, e = A.getNumSlots(); i != e; ++i)
-      Record.push_back(
-          VE.getAttributeGroupID({A.getSlotIndex(i), A.getSlotAttributes(i)}));
+    AttributeList AL = Attrs[i];
+    for (unsigned i = AL.index_begin(), e = AL.index_end(); i != e; ++i) {
+      AttributeSet AS = AL.getAttributes(i);
+      if (AS.hasAttributes())
+        Record.push_back(VE.getAttributeGroupID({i, AS}));
+    }
 
     Stream.EmitRecord(bitc::PARAMATTR_CODE_ENTRY, Record);
     Record.clear();
@@ -1109,7 +1111,7 @@ void ModuleBitcodeWriter::writeModuleInfo() {
     // GLOBALVAR: [strtab offset, strtab size, type, isconst, initid,
     //             linkage, alignment, section, visibility, threadlocal,
     //             unnamed_addr, externally_initialized, dllstorageclass,
-    //             comdat]
+    //             comdat, attributes]
     Vals.push_back(StrtabBuilder.add(GV.getName()));
     Vals.push_back(GV.getName().size());
     Vals.push_back(VE.getTypeID(GV.getValueType()));
@@ -1124,13 +1126,17 @@ void ModuleBitcodeWriter::writeModuleInfo() {
         GV.getUnnamedAddr() != GlobalValue::UnnamedAddr::None ||
         GV.isExternallyInitialized() ||
         GV.getDLLStorageClass() != GlobalValue::DefaultStorageClass ||
-        GV.hasComdat()) {
+        GV.hasComdat() ||
+        GV.hasAttributes()) {
       Vals.push_back(getEncodedVisibility(GV));
       Vals.push_back(getEncodedThreadLocalMode(GV));
       Vals.push_back(getEncodedUnnamedAddr(GV));
       Vals.push_back(GV.isExternallyInitialized());
       Vals.push_back(getEncodedDLLStorageClass(GV));
       Vals.push_back(GV.hasComdat() ? VE.getComdatID(GV.getComdat()) : 0);
+
+      auto AL = GV.getAttributesAsList(AttributeList::FunctionIndex);
+      Vals.push_back(VE.getAttributeListID(AL));
     } else {
       AbbrevToUse = SimpleGVarAbbrev;
     }
@@ -3409,30 +3415,8 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
 
   // Create value IDs for undefined references.
   forEachSummary([&](GVInfo I) {
-    if (auto *VS = dyn_cast<GlobalVarSummary>(I.second)) {
-      for (auto &RI : VS->refs())
-        assignValueId(RI.getGUID());
-      return;
-    }
-
-    auto *FS = dyn_cast<FunctionSummary>(I.second);
-    if (!FS)
-      return;
-    for (auto &RI : FS->refs())
+    for (auto &RI : I.second->refs())
       assignValueId(RI.getGUID());
-
-    for (auto &EI : FS->calls()) {
-      GlobalValue::GUID GUID = EI.first.getGUID();
-      if (!hasValueId(GUID)) {
-        // For SamplePGO, the indirect call targets for local functions will
-        // have its original name annotated in profile. We try to find the
-        // corresponding PGOFuncName as the GUID.
-        GUID = Index.getGUIDFromOriginalID(GUID);
-        if (GUID == 0 || !hasValueId(GUID))
-          continue;
-      }
-      assignValueId(GUID);
-    }
   });
 
   for (const auto &GVI : valueIds()) {

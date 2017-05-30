@@ -145,6 +145,9 @@ protected:
   bool HasSDWA;
   bool HasDPP;
   bool FlatAddressSpace;
+  bool FlatInstOffsets;
+  bool FlatGlobalInsts;
+  bool FlatScratchInsts;
   bool R600ALUInst;
   bool CaymanISA;
   bool CFALUBug;
@@ -286,6 +289,10 @@ public:
     return getGeneration() >= GFX9;
   }
 
+  bool hasMin3Max3_16() const {
+    return getGeneration() >= GFX9;
+  }
+
   bool hasCARRY() const {
     return (getGeneration() >= EVERGREEN);
   }
@@ -380,6 +387,18 @@ public:
     return FlatAddressSpace;
   }
 
+  bool hasFlatInstOffsets() const {
+    return FlatInstOffsets;
+  }
+
+  bool hasFlatGlobalInsts() const {
+    return FlatGlobalInsts;
+  }
+
+  bool hasFlatScratchInsts() const {
+    return FlatScratchInsts;
+  }
+
   bool isMesaKernel(const MachineFunction &MF) const {
     return isMesa3DOS() && !AMDGPU::isShader(MF.getFunction()->getCallingConv());
   }
@@ -395,6 +414,10 @@ public:
 
   bool hasFminFmaxLegacy() const {
     return getGeneration() < AMDGPUSubtarget::VOLCANIC_ISLANDS;
+  }
+
+  bool hasSDWA() const {
+    return HasSDWA;
   }
 
   /// \brief Returns the offset in bytes from the start of the input buffer
@@ -649,10 +672,6 @@ public:
 
   bool hasInv2PiInlineImm() const {
     return HasInv2PiInlineImm;
-  }
-
-  bool hasSDWA() const {
-    return HasSDWA;
   }
 
   bool hasDPP() const {
