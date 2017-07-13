@@ -69,6 +69,26 @@ Error BinaryStreamReader::readCString(StringRef &Dest) {
   return Error::success();
 }
 
+Error BinaryStreamReader::readWideString(ArrayRef<UTF16> &Dest) {
+  uint32_t Length = 0;
+  uint32_t OriginalOffset = getOffset();
+  const UTF16 *C;
+  while (true) {
+    if (auto EC = readObject(C))
+      return EC;
+    if (*C == 0x0000)
+      break;
+    ++Length;
+  }
+  uint32_t NewOffset = getOffset();
+  setOffset(OriginalOffset);
+
+  if (auto EC = readArray(Dest, Length))
+    return EC;
+  setOffset(NewOffset);
+  return Error::success();
+}
+
 Error BinaryStreamReader::readFixedString(StringRef &Dest, uint32_t Length) {
   ArrayRef<uint8_t> Bytes;
   if (auto EC = readBytes(Bytes, Length))
@@ -87,6 +107,12 @@ Error BinaryStreamReader::readStreamRef(BinaryStreamRef &Ref, uint32_t Length) {
   Ref = Stream.slice(Offset, Length);
   Offset += Length;
   return Error::success();
+}
+
+Error BinaryStreamReader::readSubstream(BinarySubstreamRef &Stream,
+                                        uint32_t Size) {
+  Stream.Offset = getOffset();
+  return readStreamRef(Stream.StreamData, Size);
 }
 
 Error BinaryStreamReader::skip(uint32_t Amount) {

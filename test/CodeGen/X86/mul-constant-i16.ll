@@ -348,9 +348,9 @@ define i16 @test_mul_by_18(i16 %x) {
 define i16 @test_mul_by_19(i16 %x) {
 ; X86-LABEL: test_mul_by_19:
 ; X86:       # BB#0:
-; X86-NEXT:    movzwl {{[0-9]+}}(%esp), %eax
-; X86-NEXT:    leal (%eax,%eax,4), %ecx
-; X86-NEXT:    shll $2, %ecx
+; X86-NEXT:    movzwl {{[0-9]+}}(%esp), %ecx
+; X86-NEXT:    leal (%ecx,%ecx,4), %eax
+; X86-NEXT:    shll $2, %eax
 ; X86-NEXT:    subl %ecx, %eax
 ; X86-NEXT:    # kill: %AX<def> %AX<kill> %EAX<kill>
 ; X86-NEXT:    retl
@@ -360,8 +360,8 @@ define i16 @test_mul_by_19(i16 %x) {
 ; X64-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
 ; X64-NEXT:    leal (%rdi,%rdi,4), %eax
 ; X64-NEXT:    shll $2, %eax
-; X64-NEXT:    subl %eax, %edi
-; X64-NEXT:    movl %edi, %eax
+; X64-NEXT:    subl %edi, %eax
+; X64-NEXT:    # kill: %AX<def> %AX<kill> %EAX<kill>
 ; X64-NEXT:    retq
   %mul = mul nsw i16 %x, 19
   ret i16 %mul
@@ -432,9 +432,9 @@ define i16 @test_mul_by_22(i16 %x) {
 define i16 @test_mul_by_23(i16 %x) {
 ; X86-LABEL: test_mul_by_23:
 ; X86:       # BB#0:
-; X86-NEXT:    movzwl {{[0-9]+}}(%esp), %eax
-; X86-NEXT:    leal (%eax,%eax,2), %ecx
-; X86-NEXT:    shll $3, %ecx
+; X86-NEXT:    movzwl {{[0-9]+}}(%esp), %ecx
+; X86-NEXT:    leal (%ecx,%ecx,2), %eax
+; X86-NEXT:    shll $3, %eax
 ; X86-NEXT:    subl %ecx, %eax
 ; X86-NEXT:    # kill: %AX<def> %AX<kill> %EAX<kill>
 ; X86-NEXT:    retl
@@ -444,8 +444,8 @@ define i16 @test_mul_by_23(i16 %x) {
 ; X64-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
 ; X64-NEXT:    leal (%rdi,%rdi,2), %eax
 ; X64-NEXT:    shll $3, %eax
-; X64-NEXT:    subl %eax, %edi
-; X64-NEXT:    movl %edi, %eax
+; X64-NEXT:    subl %edi, %eax
+; X64-NEXT:    # kill: %AX<def> %AX<kill> %EAX<kill>
 ; X64-NEXT:    retq
   %mul = mul nsw i16 %x, 23
   ret i16 %mul
@@ -494,9 +494,9 @@ define i16 @test_mul_by_25(i16 %x) {
 define i16 @test_mul_by_26(i16 %x) {
 ; X86-LABEL: test_mul_by_26:
 ; X86:       # BB#0:
-; X86-NEXT:    movzwl {{[0-9]+}}(%esp), %eax
-; X86-NEXT:    leal (%eax,%eax,8), %ecx
-; X86-NEXT:    leal (%ecx,%ecx,2), %ecx
+; X86-NEXT:    movzwl {{[0-9]+}}(%esp), %ecx
+; X86-NEXT:    leal (%ecx,%ecx,8), %eax
+; X86-NEXT:    leal (%eax,%eax,2), %eax
 ; X86-NEXT:    subl %ecx, %eax
 ; X86-NEXT:    # kill: %AX<def> %AX<kill> %EAX<kill>
 ; X86-NEXT:    retl
@@ -506,8 +506,8 @@ define i16 @test_mul_by_26(i16 %x) {
 ; X64-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
 ; X64-NEXT:    leal (%rdi,%rdi,8), %eax
 ; X64-NEXT:    leal (%rax,%rax,2), %eax
-; X64-NEXT:    subl %eax, %edi
-; X64-NEXT:    movl %edi, %eax
+; X64-NEXT:    subl %edi, %eax
+; X64-NEXT:    # kill: %AX<def> %AX<kill> %EAX<kill>
 ; X64-NEXT:    retq
   %mul = mul nsw i16 %x, 26
   ret i16 %mul
@@ -582,12 +582,11 @@ define i16 @test_mul_by_29(i16 %x) {
 define i16 @test_mul_by_30(i16 %x) {
 ; X86-LABEL: test_mul_by_30:
 ; X86:       # BB#0:
-; X86-NEXT:    movzwl {{[0-9]+}}(%esp), %eax
-; X86-NEXT:    movl %eax, %ecx
-; X86-NEXT:    shll $5, %ecx
-; X86-NEXT:    movl %eax, %edx
-; X86-NEXT:    subl %ecx, %edx
-; X86-NEXT:    subl %edx, %eax
+; X86-NEXT:    movzwl {{[0-9]+}}(%esp), %ecx
+; X86-NEXT:    movl %ecx, %eax
+; X86-NEXT:    shll $5, %eax
+; X86-NEXT:    subl %ecx, %eax
+; X86-NEXT:    subl %ecx, %eax
 ; X86-NEXT:    # kill: %AX<def> %AX<kill> %EAX<kill>
 ; X86-NEXT:    retl
 ;
@@ -595,10 +594,9 @@ define i16 @test_mul_by_30(i16 %x) {
 ; X64:       # BB#0:
 ; X64-NEXT:    movl %edi, %eax
 ; X64-NEXT:    shll $5, %eax
-; X64-NEXT:    movl %edi, %ecx
-; X64-NEXT:    subl %eax, %ecx
-; X64-NEXT:    subl %ecx, %edi
-; X64-NEXT:    movl %edi, %eax
+; X64-NEXT:    subl %edi, %eax
+; X64-NEXT:    subl %edi, %eax
+; X64-NEXT:    # kill: %AX<def> %AX<kill> %EAX<kill>
 ; X64-NEXT:    retq
   %mul = mul nsw i16 %x, 30
   ret i16 %mul

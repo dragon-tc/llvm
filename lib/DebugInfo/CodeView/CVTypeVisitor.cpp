@@ -12,8 +12,6 @@
 #include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/DebugInfo/CodeView/CodeViewError.h"
 #include "llvm/DebugInfo/CodeView/TypeCollection.h"
-#include "llvm/DebugInfo/CodeView/TypeDatabase.h"
-#include "llvm/DebugInfo/CodeView/TypeDatabaseVisitor.h"
 #include "llvm/DebugInfo/CodeView/TypeDeserializer.h"
 #include "llvm/DebugInfo/CodeView/TypeRecordMapping.h"
 #include "llvm/DebugInfo/CodeView/TypeServerHandler.h"
@@ -71,7 +69,7 @@ static Error visitMemberRecord(CVMemberRecord &Record,
   MEMBER_RECORD(EnumVal, EnumVal, AliasName)
 #define TYPE_RECORD(EnumName, EnumVal, Name)
 #define TYPE_RECORD_ALIAS(EnumName, EnumVal, Name, AliasName)
-#include "llvm/DebugInfo/CodeView/TypeRecords.def"
+#include "llvm/DebugInfo/CodeView/CodeViewTypes.def"
   }
 
   if (auto EC = Callbacks.visitMemberEnd(Record))
@@ -155,7 +153,7 @@ Error CVTypeVisitor::finishVisitation(CVType &Record) {
   TYPE_RECORD(EnumVal, EnumVal, AliasName)
 #define MEMBER_RECORD(EnumName, EnumVal, Name)
 #define MEMBER_RECORD_ALIAS(EnumName, EnumVal, Name, AliasName)
-#include "llvm/DebugInfo/CodeView/TypeRecords.def"
+#include "llvm/DebugInfo/CodeView/CodeViewTypes.def"
   }
 
   if (auto EC = Callbacks.visitTypeEnd(Record))

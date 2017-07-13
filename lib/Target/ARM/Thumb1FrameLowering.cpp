@@ -11,26 +11,26 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Thumb1FrameLowering.h"
 #include "ARMBaseInstrInfo.h"
 #include "ARMBaseRegisterInfo.h"
 #include "ARMMachineFunctionInfo.h"
 #include "ARMSubtarget.h"
 #include "MCTargetDesc/ARMBaseInfo.h"
-#include "Thumb1FrameLowering.h"
 #include "Thumb1InstrInfo.h"
 #include "ThumbRegisterInfo.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
-#include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
+#include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/MC/MCDwarf.h"
@@ -236,7 +236,7 @@ void Thumb1FrameLowering::emitPrologue(MachineFunction &MF,
     case ARM::R12:
       if (STI.splitFramePushPop(MF))
         break;
-      // fallthough
+      LLVM_FALLTHROUGH;
     case ARM::R0:
     case ARM::R1:
     case ARM::R2:
@@ -698,13 +698,14 @@ spillCalleeSavedRegisters(MachineBasicBlock &MBB,
       CopyRegs.insert(ArgReg);
 
   // Push the low registers and lr
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
   if (!LoRegsToSave.empty()) {
     MachineInstrBuilder MIB =
         BuildMI(MBB, MI, DL, TII.get(ARM::tPUSH)).add(predOps(ARMCC::AL));
     for (unsigned Reg : {ARM::R4, ARM::R5, ARM::R6, ARM::R7, ARM::LR}) {
       if (LoRegsToSave.count(Reg)) {
-        bool isKill = !MF.getRegInfo().isLiveIn(Reg);
-        if (isKill)
+        bool isKill = !MRI.isLiveIn(Reg);
+        if (isKill && !MRI.isReserved(Reg))
           MBB.addLiveIn(Reg);
 
         MIB.addReg(Reg, getKillRegState(isKill));
@@ -746,8 +747,8 @@ spillCalleeSavedRegisters(MachineBasicBlock &MBB,
     SmallVector<unsigned, 4> RegsToPush;
     while (HiRegToSave != AllHighRegsEnd && CopyReg != AllCopyRegsEnd) {
       if (HiRegsToSave.count(*HiRegToSave)) {
-        bool isKill = !MF.getRegInfo().isLiveIn(*HiRegToSave);
-        if (isKill)
+        bool isKill = !MRI.isLiveIn(*HiRegToSave);
+        if (isKill && !MRI.isReserved(*HiRegToSave))
           MBB.addLiveIn(*HiRegToSave);
 
         // Emit a MOV from the high reg to the low reg.

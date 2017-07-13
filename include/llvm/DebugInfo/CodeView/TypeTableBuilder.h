@@ -13,8 +13,8 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/DebugInfo/CodeView/TypeIndex.h"
-#include "llvm/DebugInfo/CodeView/TypeSerializer.h"
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
+#include "llvm/DebugInfo/CodeView/TypeSerializer.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Error.h"
 #include <algorithm>
@@ -37,8 +37,9 @@ private:
   TypeSerializer Serializer;
 
 public:
-  explicit TypeTableBuilder(BumpPtrAllocator &Allocator)
-      : Allocator(Allocator), Serializer(Allocator) {}
+  explicit TypeTableBuilder(BumpPtrAllocator &Allocator,
+                            bool WriteUnique = true)
+      : Allocator(Allocator), Serializer(Allocator, WriteUnique) {}
   TypeTableBuilder(const TypeTableBuilder &) = delete;
   TypeTableBuilder &operator=(const TypeTableBuilder &) = delete;
 
