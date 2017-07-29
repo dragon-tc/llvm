@@ -86,10 +86,12 @@ set(Tests
   CustomCrossOverTest
   CustomMutatorTest
   CxxStringEqTest
+  DeepRecursionTest
   DivTest
   EmptyTest
   EquivalenceATest
   EquivalenceBTest
+  FlagsTest
   FourIndependentBranchesTest
   FullCoverageSetTest
   InitializeTest
@@ -157,6 +159,7 @@ function(test_export_symbol target symbol)
   endif()
 endfunction()
 
+test_export_symbol(FlagsTest "LLVMFuzzerInitialize")
 test_export_symbol(InitializeTest "LLVMFuzzerInitialize")
 test_export_symbol(BogusInitializeTest "LLVMFuzzerInitialize")
 test_export_symbol(CustomCrossOverTest "LLVMFuzzerCustomCrossOver")

@@ -129,6 +129,10 @@ def FeatureFPAO           : SubtargetFeature<"fpao", "HasFPAO", "true",
 def FeatureFuseAES        : SubtargetFeature<"fuse-aes", "HasFuseAES", "true",
                                              "CPU fuses AES crypto operations">;
 
+// The way of reading thread pointer                                             
+def FeatureReadTp :  SubtargetFeature<"read-tp-hard", "ReadTPHard", "true",
+                                      "Reading thread pointer from register">;
+
 // Cyclone can zero VFP registers in 0 cycles.
 def FeatureZCZeroing      : SubtargetFeature<"zcz", "HasZeroCycleZeroing", "true",
                                              "Has zero-cycle zeroing instructions">;
@@ -316,6 +320,9 @@ def FeatureNoNegativeImmediates
                                              "equivalent when the immediate does "
                                              "not fit in the encoding.">;
 
+// Use the MachineScheduler for instruction scheduling for the subtarget.
+def FeatureUseMISched: SubtargetFeature<"use-misched", "UseMISched", "true",
+                                        "Use the MachineScheduler">;
 
 //===----------------------------------------------------------------------===//
 // ARM architecture class
@@ -439,7 +446,7 @@ def ProcSwift   : SubtargetFeature<"swift", "ARMProcFamily", "Swift",
                                    "Swift ARM processors", []>;
 
 def ProcExynosM1 : SubtargetFeature<"exynosm1", "ARMProcFamily", "ExynosM1",
-                                    "Samsung Exynos-M1 processors", []>;
+                                    "Samsung Exynos-Mx processors", []>;
 
 def ProcR4      : SubtargetFeature<"r4", "ARMProcFamily", "CortexR4",
                                    "Cortex-R4 ARM processors", []>;
@@ -794,7 +801,8 @@ def : ProcessorModel<"swift",       SwiftModel,         [ARMv7a, ProcSwift,
                                                          FeatureSlowOddRegister,
                                                          FeatureSlowLoadDSubreg,
                                                          FeatureSlowVGETLNi32,
-                                                         FeatureSlowVDUP32]>;
+                                                         FeatureSlowVDUP32,
+                                                         FeatureUseMISched]>;
 
 def : ProcessorModel<"cortex-r4",   CortexA8Model,      [ARMv7r, ProcR4,
                                                          FeatureHasRetAddrStack,
@@ -918,6 +926,7 @@ def : ProcessorModel<"cyclone",     SwiftModel,         [ARMv8a, ProcSwift,
                                                          FeatureAvoidMOVsShOp,
                                                          FeatureHasSlowFPVMLx,
                                                          FeatureCrypto,
+                                                         FeatureUseMISched,
                                                          FeatureZCZeroing]>;
 
 def : ProcNoItin<"exynos-m1",                           [ARMv8a, ProcExynosM1,

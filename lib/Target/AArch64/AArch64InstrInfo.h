@@ -27,6 +27,13 @@ namespace llvm {
 class AArch64Subtarget;
 class AArch64TargetMachine;
 
+static const MachineMemOperand::Flags MOSuppressPair =
+    MachineMemOperand::MOTargetFlag1;
+static const MachineMemOperand::Flags MOStridedAccess =
+    MachineMemOperand::MOTargetFlag2;
+
+#define FALKOR_STRIDED_ACCESS_MD "falkor.strided.access"
+
 class AArch64InstrInfo final : public AArch64GenInstrInfo {
   const AArch64RegisterInfo RI;
   const AArch64Subtarget &Subtarget;
@@ -80,6 +87,9 @@ public:
   /// Return true if pairing the given load or store is hinted to be
   /// unprofitable.
   bool isLdStPairSuppressed(const MachineInstr &MI) const;
+
+  /// Return true if the given load or store is a strided memory access.
+  bool isStridedAccess(const MachineInstr &MI) const;
 
   /// Return true if this is an unscaled load/store.
   bool isUnscaledLdSt(unsigned Opc) const;
@@ -184,10 +194,6 @@ public:
   bool shouldClusterMemOps(MachineInstr &FirstLdSt, MachineInstr &SecondLdSt,
                            unsigned NumLoads) const override;
 
-  MachineInstr *emitFrameIndexDebugValue(MachineFunction &MF, int FrameIx,
-                                         uint64_t Offset, const MDNode *Var,
-                                         const MDNode *Expr,
-                                         const DebugLoc &DL) const;
   void copyPhysRegTuple(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
                         const DebugLoc &DL, unsigned DestReg, unsigned SrcReg,
                         bool KillSrc, unsigned Opcode,
@@ -293,8 +299,10 @@ public:
   getSerializableMachineMemOperandTargetFlags() const override;
 
   bool isFunctionSafeToOutlineFrom(MachineFunction &MF) const override;
-  unsigned getOutliningBenefit(size_t SequenceSize, size_t Occurrences,
-                               bool CanBeTailCall) const override;
+  size_t getOutliningCallOverhead(MachineBasicBlock::iterator &StartIt,
+  MachineBasicBlock::iterator &EndIt) const override;
+  size_t getOutliningFrameOverhead(MachineBasicBlock::iterator &StartIt,
+  MachineBasicBlock::iterator &EndIt) const override;
   AArch64GenInstrInfo::MachineOutlinerInstrType
   getOutliningType(MachineInstr &MI) const override;
   void insertOutlinerEpilogue(MachineBasicBlock &MBB,
@@ -356,7 +364,7 @@ enum AArch64FrameOffsetStatus {
 /// If result == AArch64FrameOffsetCannotUpdate, @p MI cannot be updated to
 /// use an offset.eq
 /// If result & AArch64FrameOffsetIsLegal, @p Offset can completely be
-/// rewriten in @p MI.
+/// rewritten in @p MI.
 /// If result & AArch64FrameOffsetCanUpdate, @p Offset contains the
 /// amount that is off the limit of the legal offset.
 /// If set, @p OutUseUnscaledOp will contain the whether @p MI should be

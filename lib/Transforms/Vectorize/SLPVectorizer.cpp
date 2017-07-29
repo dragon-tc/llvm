@@ -416,6 +416,9 @@ public:
 private:
   struct TreeEntry;
 
+  /// Checks if all users of \p I are the part of the vectorization tree.
+  bool areAllUsersVectorized(Instruction *I) const;
+
   /// \returns the cost of the vectorizable entry.
   int getEntryCost(TreeEntry *E);
 
@@ -424,7 +427,7 @@ private:
 
   /// \returns True if the ExtractElement/ExtractValue instructions in VL can
   /// be vectorized to use the original vector (or aggregate "bitcast" to a vector).
-  bool canReuseExtract(ArrayRef<Value *> VL, unsigned Opcode) const;
+  bool canReuseExtract(ArrayRef<Value *> VL, Value *OpValue) const;
 
   /// Vectorize a single entry in the tree.
   Value *vectorizeTree(TreeEntry *E);
@@ -434,7 +437,7 @@ private:
 
   /// \returns the pointer to the vectorized value if \p VL is already
   /// vectorized, or NULL. They may happen in cycles.
-  Value *alreadyVectorized(ArrayRef<Value *> VL) const;
+  Value *alreadyVectorized(ArrayRef<Value *> VL, Value *OpValue) const;
 
   /// \returns the scalarization cost for this type. Scalarization in this
   /// context means the creation of vectors from a group of scalars.
@@ -857,7 +860,7 @@ private:
     /// Checks if a bundle of instructions can be scheduled, i.e. has no
     /// cyclic dependencies. This is only a dry-run, no instructions are
     /// actually moved at this stage.
-    bool tryScheduleBundle(ArrayRef<Value *> VL, BoUpSLP *SLP);
+    bool tryScheduleBundle(ArrayRef<Value *> VL, BoUpSLP *SLP, Value *OpValue);
 
     /// Un-bundles a group of instructions.
     void cancelScheduling(ArrayRef<Value *> VL, Value *OpValue);
@@ -1212,7 +1215,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
   // Check that all of the users of the scalars that we want to vectorize are
   // schedulable.
   Instruction *VL0 = cast<Instruction>(VL[0]);
-  BasicBlock *BB = cast<Instruction>(VL0)->getParent();
+  BasicBlock *BB = VL0->getParent();
 
   if (!DT->isReachableFromEntry(BB)) {
     // Don't go into unreachable blocks. They may contain instructions with
@@ -1237,7 +1240,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
   }
   BlockScheduling &BS = *BSRef.get();
 
-  if (!BS.tryScheduleBundle(VL, this)) {
+  if (!BS.tryScheduleBundle(VL, this, VL0)) {
     DEBUG(dbgs() << "SLP: We are not able to schedule this bundle!\n");
     assert((!BS.getScheduleData(VL[0]) ||
             !BS.getScheduleData(VL[0])->isPartOfBundle()) &&
@@ -1280,7 +1283,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
     }
     case Instruction::ExtractValue:
     case Instruction::ExtractElement: {
-      bool Reuse = canReuseExtract(VL, Opcode);
+      bool Reuse = canReuseExtract(VL, VL0);
       if (Reuse) {
         DEBUG(dbgs() << "SLP: Reusing extract sequence.\n");
       } else {
@@ -1297,7 +1300,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
       // loading/storing it as an i8 struct. If we vectorize loads/stores from
       // such a struct we read/write packed bits disagreeing with the
       // unvectorized version.
-      Type *ScalarTy = VL[0]->getType();
+      Type *ScalarTy = VL0->getType();
 
       if (DL->getTypeSizeInBits(ScalarTy) !=
           DL->getTypeAllocSizeInBits(ScalarTy)) {
@@ -1399,7 +1402,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
     case Instruction::FCmp: {
       // Check that all of the compares have the same predicate.
       CmpInst::Predicate P0 = cast<CmpInst>(VL0)->getPredicate();
-      Type *ComparedTy = cast<Instruction>(VL[0])->getOperand(0)->getType();
+      Type *ComparedTy = VL0->getOperand(0)->getType();
       for (unsigned i = 1, e = VL.size(); i < e; ++i) {
         CmpInst *Cmp = cast<CmpInst>(VL[i]);
         if (Cmp->getPredicate() != P0 ||
@@ -1479,7 +1482,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
 
       // We can't combine several GEPs into one vector if they operate on
       // different types.
-      Type *Ty0 = cast<Instruction>(VL0)->getOperand(0)->getType();
+      Type *Ty0 = VL0->getOperand(0)->getType();
       for (unsigned j = 0; j < VL.size(); ++j) {
         Type *CurTy = cast<Instruction>(VL[j])->getOperand(0)->getType();
         if (Ty0 != CurTy) {
@@ -1536,7 +1539,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
     }
     case Instruction::Call: {
       // Check if the calls are all to the same vectorizable intrinsic.
-      CallInst *CI = cast<CallInst>(VL[0]);
+      CallInst *CI = cast<CallInst>(VL0);
       // Check if this is an Intrinsic call or something that can be
       // represented by an intrinsic call
       Intrinsic::ID ID = getVectorIntrinsicIDForCall(CI, TLI);
@@ -1663,19 +1666,18 @@ unsigned BoUpSLP::canMapToVector(Type *T, const DataLayout &DL) const {
   return N;
 }
 
-bool BoUpSLP::canReuseExtract(ArrayRef<Value *> VL, unsigned Opcode) const {
-  assert(Opcode == Instruction::ExtractElement ||
-         Opcode == Instruction::ExtractValue);
-  assert(Opcode == getSameOpcode(VL) && "Invalid opcode");
+bool BoUpSLP::canReuseExtract(ArrayRef<Value *> VL, Value *OpValue) const {
+  Instruction *E0 = cast<Instruction>(OpValue);
+  assert(E0->getOpcode() == Instruction::ExtractElement ||
+         E0->getOpcode() == Instruction::ExtractValue);
+  assert(E0->getOpcode() == getSameOpcode(VL) && "Invalid opcode");
   // Check if all of the extracts come from the same vector and from the
   // correct offset.
-  Value *VL0 = VL[0];
-  Instruction *E0 = cast<Instruction>(VL0);
   Value *Vec = E0->getOperand(0);
 
   // We have to extract from a vector/aggregate with the same number of elements.
   unsigned NElts;
-  if (Opcode == Instruction::ExtractValue) {
+  if (E0->getOpcode() == Instruction::ExtractValue) {
     const DataLayout &DL = E0->getModule()->getDataLayout();
     NElts = canMapToVector(Vec->getType(), DL);
     if (!NElts)
@@ -1692,18 +1694,22 @@ bool BoUpSLP::canReuseExtract(ArrayRef<Value *> VL, unsigned Opcode) const {
     return false;
 
   // Check that all of the indices extract from the correct offset.
-  if (!matchExtractIndex(E0, 0, Opcode))
-    return false;
-
-  for (unsigned i = 1, e = VL.size(); i < e; ++i) {
-    Instruction *E = cast<Instruction>(VL[i]);
-    if (!matchExtractIndex(E, i, Opcode))
+  for (unsigned I = 0, E = VL.size(); I < E; ++I) {
+    Instruction *Inst = cast<Instruction>(VL[I]);
+    if (!matchExtractIndex(Inst, I, Inst->getOpcode()))
       return false;
-    if (E->getOperand(0) != Vec)
+    if (Inst->getOperand(0) != Vec)
       return false;
   }
 
   return true;
+}
+
+bool BoUpSLP::areAllUsersVectorized(Instruction *I) const {
+  return I->hasOneUse() ||
+         std::all_of(I->user_begin(), I->user_end(), [this](User *U) {
+           return ScalarToTreeEntry.count(U) > 0;
+         });
 }
 
 int BoUpSLP::getEntryCost(TreeEntry *E) {
@@ -1739,17 +1745,14 @@ int BoUpSLP::getEntryCost(TreeEntry *E) {
     }
     case Instruction::ExtractValue:
     case Instruction::ExtractElement: {
-      if (canReuseExtract(VL, Opcode)) {
+      if (canReuseExtract(VL, VL0)) {
         int DeadCost = 0;
         for (unsigned i = 0, e = VL.size(); i < e; ++i) {
           Instruction *E = cast<Instruction>(VL[i]);
           // If all users are going to be vectorized, instruction can be
           // considered as dead.
           // The same, if have only one user, it will be vectorized for sure.
-          if (E->hasOneUse() ||
-              std::all_of(E->user_begin(), E->user_end(), [this](User *U) {
-                return ScalarToTreeEntry.count(U) > 0;
-              }))
+          if (areAllUsersVectorized(E))
             // Take credit for instruction that will become dead.
             DeadCost +=
                 TTI->getVectorInstrCost(Instruction::ExtractElement, VecTy, i);
@@ -2427,8 +2430,8 @@ Value *BoUpSLP::Gather(ArrayRef<Value *> VL, VectorType *Ty) {
   return Vec;
 }
 
-Value *BoUpSLP::alreadyVectorized(ArrayRef<Value *> VL) const {
-  if (const TreeEntry *En = getTreeEntry(VL[0])) {
+Value *BoUpSLP::alreadyVectorized(ArrayRef<Value *> VL, Value *OpValue) const {
+  if (const TreeEntry *En = getTreeEntry(OpValue)) {
     if (En->isSame(VL) && En->VectorizedValue)
       return En->VectorizedValue;
   }
@@ -2508,7 +2511,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
     }
 
     case Instruction::ExtractElement: {
-      if (canReuseExtract(E->Scalars, Instruction::ExtractElement)) {
+      if (canReuseExtract(E->Scalars, VL0)) {
         Value *V = VL0->getOperand(0);
         E->VectorizedValue = V;
         return V;
@@ -2519,7 +2522,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       return V;
     }
     case Instruction::ExtractValue: {
-      if (canReuseExtract(E->Scalars, Instruction::ExtractValue)) {
+      if (canReuseExtract(E->Scalars, VL0)) {
         LoadInst *LI = cast<LoadInst>(VL0->getOperand(0));
         Builder.SetInsertPoint(LI);
         PointerType *PtrTy = PointerType::get(VecTy, LI->getPointerAddressSpace());
@@ -2553,7 +2556,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
 
       Value *InVec = vectorizeTree(INVL);
 
-      if (Value *V = alreadyVectorized(E->Scalars))
+      if (Value *V = alreadyVectorized(E->Scalars, VL0))
         return V;
 
       CastInst *CI = dyn_cast<CastInst>(VL0);
@@ -2575,7 +2578,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       Value *L = vectorizeTree(LHSV);
       Value *R = vectorizeTree(RHSV);
 
-      if (Value *V = alreadyVectorized(E->Scalars))
+      if (Value *V = alreadyVectorized(E->Scalars, VL0))
         return V;
 
       CmpInst::Predicate P0 = cast<CmpInst>(VL0)->getPredicate();
@@ -2604,7 +2607,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       Value *True = vectorizeTree(TrueVec);
       Value *False = vectorizeTree(FalseVec);
 
-      if (Value *V = alreadyVectorized(E->Scalars))
+      if (Value *V = alreadyVectorized(E->Scalars, VL0))
         return V;
 
       Value *V = Builder.CreateSelect(Cond, True, False);
@@ -2644,7 +2647,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       Value *LHS = vectorizeTree(LHSVL);
       Value *RHS = vectorizeTree(RHSVL);
 
-      if (Value *V = alreadyVectorized(E->Scalars))
+      if (Value *V = alreadyVectorized(E->Scalars, VL0))
         return V;
 
       BinaryOperator *BinOp = cast<BinaryOperator>(VL0);
@@ -2750,7 +2753,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
     }
     case Instruction::Call: {
       CallInst *CI = cast<CallInst>(VL0);
-      setInsertPointAfterBundle(E->Scalars);
+      setInsertPointAfterBundle(VL0);
       Function *FI;
       Intrinsic::ID IID  = Intrinsic::not_intrinsic;
       Value *ScalarArg = nullptr;
@@ -2806,7 +2809,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       Value *LHS = vectorizeTree(LHSVL);
       Value *RHS = vectorizeTree(RHSVL);
 
-      if (Value *V = alreadyVectorized(E->Scalars))
+      if (Value *V = alreadyVectorized(E->Scalars, VL0))
         return V;
 
       // Create a vector of LHS op1 RHS
@@ -2990,9 +2993,8 @@ BoUpSLP::vectorizeTree(ExtraValueToDebugLocsMap &ExternallyUsedValues) {
         for (User *U : Scalar->users()) {
           DEBUG(dbgs() << "SLP: \tvalidating user:" << *U << ".\n");
 
-          assert((getTreeEntry(U) ||
-                  // It is legal to replace users in the ignorelist by undef.
-                  is_contained(UserIgnoreList, U)) &&
+          // It is legal to replace users in the ignorelist by undef.
+          assert((getTreeEntry(U) || is_contained(UserIgnoreList, U)) &&
                  "Replacing out-of-tree value with undef");
         }
 #endif
@@ -3097,8 +3099,8 @@ void BoUpSLP::optimizeGatherSequence() {
 // Groups the instructions to a bundle (which is then a single scheduling entity)
 // and schedules instructions until the bundle gets ready.
 bool BoUpSLP::BlockScheduling::tryScheduleBundle(ArrayRef<Value *> VL,
-                                                 BoUpSLP *SLP) {
-  if (isa<PHINode>(VL[0]))
+                                                 BoUpSLP *SLP, Value *OpValue) {
+  if (isa<PHINode>(OpValue))
     return true;
 
   // Initialize the instruction bundle.
@@ -3106,7 +3108,7 @@ bool BoUpSLP::BlockScheduling::tryScheduleBundle(ArrayRef<Value *> VL,
   ScheduleData *PrevInBundle = nullptr;
   ScheduleData *Bundle = nullptr;
   bool ReSchedule = false;
-  DEBUG(dbgs() << "SLP:  bundle: " << *VL[0] << "\n");
+  DEBUG(dbgs() << "SLP:  bundle: " << *OpValue << "\n");
 
   // Make sure that the scheduling region contains all
   // instructions of the bundle.
@@ -3177,7 +3179,7 @@ bool BoUpSLP::BlockScheduling::tryScheduleBundle(ArrayRef<Value *> VL,
     }
   }
   if (!Bundle->isReady()) {
-    cancelScheduling(VL, VL[0]);
+    cancelScheduling(VL, OpValue);
     return false;
   }
   return true;
@@ -4774,7 +4776,7 @@ static bool tryToVectorizeHorReductionOrInstOperands(
   if (!Root)
     return false;
 
-  if (Root->getParent() != BB)
+  if (Root->getParent() != BB || isa<PHINode>(Root))
     return false;
   // Start analysis starting from Root instruction. If horizontal reduction is
   // found, try to vectorize it. If it is not a horizontal reduction or
@@ -4795,7 +4797,7 @@ static bool tryToVectorizeHorReductionOrInstOperands(
     if (!V)
       continue;
     auto *Inst = dyn_cast<Instruction>(V);
-    if (!Inst || isa<PHINode>(Inst))
+    if (!Inst)
       continue;
     if (auto *BI = dyn_cast<BinaryOperator>(Inst)) {
       HorizontalReduction HorRdx;
@@ -4829,9 +4831,14 @@ static bool tryToVectorizeHorReductionOrInstOperands(
     }
 
     // Try to vectorize operands.
+    // Continue analysis for the instruction from the same basic block only to
+    // save compile time.
     if (++Level < RecursionMaxDepth)
       for (auto *Op : Inst->operand_values())
-        Stack.emplace_back(Op, Level);
+        if (VisitedInstrs.insert(Op).second)
+          if (auto *I = dyn_cast<Instruction>(Op))
+            if (!isa<PHINode>(Inst) && I->getParent() == BB)
+              Stack.emplace_back(Op, Level);
   }
   return Res;
 }

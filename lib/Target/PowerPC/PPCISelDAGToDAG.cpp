@@ -178,7 +178,7 @@ namespace {
     /// a base register plus a signed 16-bit displacement [r+imm].
     bool SelectAddrImm(SDValue N, SDValue &Disp,
                        SDValue &Base) {
-      return PPCLowering->SelectAddressRegImm(N, Disp, Base, *CurDAG, false);
+      return PPCLowering->SelectAddressRegImm(N, Disp, Base, *CurDAG, 0);
     }
 
     /// SelectAddrImmOffs - Return true if the operand is valid for a preinc
@@ -211,7 +211,11 @@ namespace {
     /// a base register plus a signed 16-bit displacement that is a multiple of 4.
     /// Suitable for use by STD and friends.
     bool SelectAddrImmX4(SDValue N, SDValue &Disp, SDValue &Base) {
-      return PPCLowering->SelectAddressRegImm(N, Disp, Base, *CurDAG, true);
+      return PPCLowering->SelectAddressRegImm(N, Disp, Base, *CurDAG, 4);
+    }
+
+    bool SelectAddrImmX16(SDValue N, SDValue &Disp, SDValue &Base) {
+      return PPCLowering->SelectAddressRegImm(N, Disp, Base, *CurDAG, 16);
     }
 
     // Select an address into a single register.
@@ -305,6 +309,7 @@ private:
     bool AllUsersSelectZero(SDNode *N);
     void SwapAllSelectUsers(SDNode *N);
 
+    bool isOffsetMultipleOf(SDNode *N, unsigned Val) const;
     void transferMemOperands(SDNode *N, SDNode *Result);
   };
 
@@ -2894,6 +2899,19 @@ SDValue PPCDAGToDAGISel::get64BitZExtCompare(SDValue LHS, SDValue RHS,
                                           getI64Imm(58, dl), getI64Imm(63, dl)),
                    0);
   }
+  case ISD::SETNE: {
+    // {addc.reg, addc.CA} = (addcarry (xor %a, %b), -1)
+    // (zext (setcc %a, %b, setne)) -> (sube addc.reg, addc.reg, addc.CA)
+    // {addcz.reg, addcz.CA} = (addcarry %a, -1)
+    // (zext (setcc %a, 0, setne)) -> (sube addcz.reg, addcz.reg, addcz.CA)
+    SDValue Xor = IsRHSZero ? LHS :
+      SDValue(CurDAG->getMachineNode(PPC::XOR8, dl, MVT::i64, LHS, RHS), 0);
+    SDValue AC =
+      SDValue(CurDAG->getMachineNode(PPC::ADDIC8, dl, MVT::i64, MVT::Glue,
+                                     Xor, getI32Imm(~0U, dl)), 0);
+    return SDValue(CurDAG->getMachineNode(PPC::SUBFE8, dl, MVT::i64, AC,
+                                          Xor, AC.getValue(1)), 0);
+  }
   }
 }
 
@@ -2917,6 +2935,19 @@ SDValue PPCDAGToDAGISel::get64BitSExtCompare(SDValue LHS, SDValue RHS,
                                      AddInput, getI32Imm(~0U, dl)), 0);
     return SDValue(CurDAG->getMachineNode(PPC::SUBFE8, dl, MVT::i64, Addic,
                                           Addic, Addic.getValue(1)), 0);
+  }
+  case ISD::SETNE: {
+    // {subfc.reg, subfc.CA} = (subcarry 0, (xor %a, %b))
+    // (sext (setcc %a, %b, setne)) -> (sube subfc.reg, subfc.reg, subfc.CA)
+    // {subfcz.reg, subfcz.CA} = (subcarry 0, %a)
+    // (sext (setcc %a, 0, setne)) -> (sube subfcz.reg, subfcz.reg, subfcz.CA)
+    SDValue Xor = IsRHSZero ? LHS :
+      SDValue(CurDAG->getMachineNode(PPC::XOR8, dl, MVT::i64, LHS, RHS), 0);
+    SDValue SC =
+      SDValue(CurDAG->getMachineNode(PPC::SUBFIC8, dl, MVT::i64, MVT::Glue,
+                                     Xor, getI32Imm(0, dl)), 0);
+    return SDValue(CurDAG->getMachineNode(PPC::SUBFE8, dl, MVT::i64, SC,
+                                          SC, SC.getValue(1)), 0);
   }
   }
 }
@@ -2997,6 +3028,25 @@ SDValue PPCDAGToDAGISel::getSETCCInGPR(SDValue Compare,
   else if (IsSext)
     return get64BitSExtCompare(LHS, RHS, CC, RHSValue, dl);
   return get64BitZExtCompare(LHS, RHS, CC, RHSValue, dl);
+}
+
+/// Does this node represent a load/store node whose address can be represented
+/// with a register plus an immediate that's a multiple of \p Val:
+bool PPCDAGToDAGISel::isOffsetMultipleOf(SDNode *N, unsigned Val) const {
+  LoadSDNode *LDN = dyn_cast<LoadSDNode>(N);
+  StoreSDNode *STN = dyn_cast<StoreSDNode>(N);
+  SDValue AddrOp;
+  if (LDN)
+    AddrOp = LDN->getOperand(1);
+  else if (STN)
+    AddrOp = STN->getOperand(2);
+
+  short Imm = 0;
+  if (AddrOp.getOpcode() == ISD::ADD)
+    return isIntS16Immediate(AddrOp.getOperand(1), Imm) && !(Imm % Val);
+
+  // If the address comes from the outside, the offset will be zero.
+  return AddrOp.getOpcode() == ISD::CopyFromReg;
 }
 
 void PPCDAGToDAGISel::transferMemOperands(SDNode *N, SDNode *Result) {
