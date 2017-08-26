@@ -54,6 +54,12 @@ const unsigned MaxDepth = 6;
 static cl::opt<unsigned> DomConditionsMaxUses("dom-conditions-max-uses",
                                               cl::Hidden, cl::init(20));
 
+// This optimization is known to cause performance regressions is some cases,
+// keep it under a temporary flag for now.
+static cl::opt<bool>
+DontImproveNonNegativePhiBits("dont-improve-non-negative-phi-bits",
+                              cl::Hidden, cl::init(true));
+
 /// Returns the bitwidth of the given scalar or pointer type. For vector types,
 /// returns the element type's bitwidth.
 static unsigned getBitWidth(Type *Ty, const DataLayout &DL) {
@@ -378,13 +384,13 @@ static bool isEphemeralValueOf(const Instruction *I, const Value *E) {
       if (V == E)
         return true;
 
-      EphValues.insert(V);
-      if (const User *U = dyn_cast<User>(V))
-        for (User::const_op_iterator J = U->op_begin(), JE = U->op_end();
-             J != JE; ++J) {
-          if (isSafeToSpeculativelyExecute(*J))
-            WorkSet.push_back(*J);
-        }
+      if (V == I || isSafeToSpeculativelyExecute(V)) {
+       EphValues.insert(V);
+       if (const User *U = dyn_cast<User>(V))
+         for (User::const_op_iterator J = U->op_begin(), JE = U->op_end();
+              J != JE; ++J)
+           WorkSet.push_back(*J);
+      }
     }
   }
 
@@ -1252,6 +1258,9 @@ static void computeKnownBitsFromOperator(const Operator *I, KnownBits &Known,
           Known.Zero.setLowBits(std::min(Known2.countMinTrailingZeros(),
                                          Known3.countMinTrailingZeros()));
 
+          if (DontImproveNonNegativePhiBits)
+            break;
+
           auto *OverflowOp = dyn_cast<OverflowingBinaryOperator>(LU);
           if (OverflowOp && OverflowOp->hasNoSignedWrap()) {
             // If initial value of recurrence is nonnegative, and we are adding
@@ -1553,6 +1562,8 @@ void computeKnownBits(const Value *V, KnownBits &Known, unsigned Depth,
 /// types and vectors of integers.
 bool isKnownToBeAPowerOfTwo(const Value *V, bool OrZero, unsigned Depth,
                             const Query &Q) {
+  assert(Depth <= MaxDepth && "Limit Search Depth");
+
   if (const Constant *C = dyn_cast<Constant>(V)) {
     if (C->isNullValue())
       return OrZero;
@@ -2012,6 +2023,7 @@ static unsigned ComputeNumSignBits(const Value *V, unsigned Depth,
 /// vector element with the mininum number of known sign bits.
 static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
                                        const Query &Q) {
+  assert(Depth <= MaxDepth && "Limit Search Depth");
 
   // We return the minimum number of sign bits that are guaranteed to be present
   // in V, so for undef we have to conservatively return 1.  We don't have the
@@ -2186,6 +2198,17 @@ static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
     Tmp = ComputeNumSignBits(U->getOperand(0), Depth + 1, Q);
     if (Tmp == 1) return 1;  // Early out.
     return std::min(Tmp, Tmp2)-1;
+
+  case Instruction::Mul: {
+    // The output of the Mul can be at most twice the valid bits in the inputs.
+    unsigned SignBitsOp0 = ComputeNumSignBits(U->getOperand(0), Depth + 1, Q);
+    if (SignBitsOp0 == 1) return 1;  // Early out.
+    unsigned SignBitsOp1 = ComputeNumSignBits(U->getOperand(1), Depth + 1, Q);
+    if (SignBitsOp1 == 1) return 1;
+    unsigned OutValidBits =
+        (TyBits - SignBitsOp0 + 1) + (TyBits - SignBitsOp1 + 1);
+    return OutValidBits > TyBits ? 1 : TyBits - OutValidBits + 1;
+  }
 
   case Instruction::PHI: {
     const PHINode *PN = cast<PHINode>(U);

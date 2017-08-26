@@ -12,11 +12,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "InstCombineInternal.h"
+#include "llvm/Analysis/CmpInstAnalysis.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/PatternMatch.h"
-#include "llvm/Transforms/Utils/CmpInstAnalysis.h"
 #include "llvm/Transforms/Utils/Local.h"
 using namespace llvm;
 using namespace PatternMatch;
@@ -292,6 +292,18 @@ static unsigned conjugateICmpMask(unsigned Mask) {
   return NewMask;
 }
 
+// Adapts the external decomposeBitTestICmp for local use.
+static bool decomposeBitTestICmp(Value *LHS, Value *RHS, CmpInst::Predicate &Pred,
+                                 Value *&X, Value *&Y, Value *&Z) {
+  APInt Mask;
+  if (!llvm::decomposeBitTestICmp(LHS, RHS, Pred, X, Mask))
+    return false;
+
+  Y = ConstantInt::get(LHS->getType(), Mask);
+  Z = ConstantInt::get(RHS->getType(), 0);
+  return true;
+}
+
 /// Handle (icmp(A & B) ==/!= C) &/| (icmp(A & D) ==/!= E).
 /// Return the set of pattern classes (from MaskedICmpType) that both LHS and
 /// RHS satisfy.
@@ -302,8 +314,8 @@ static unsigned getMaskedTypeForICmpPair(Value *&A, Value *&B, Value *&C,
                                          ICmpInst::Predicate &PredR) {
   if (LHS->getOperand(0)->getType() != RHS->getOperand(0)->getType())
     return 0;
-  // vectors are not (yet?) supported
-  if (LHS->getOperand(0)->getType()->isVectorTy())
+  // vectors are not (yet?) supported. Don't support pointers either.
+  if (!LHS->getOperand(0)->getType()->isIntegerTy())
     return 0;
 
   // Here comes the tricky part:
@@ -316,24 +328,18 @@ static unsigned getMaskedTypeForICmpPair(Value *&A, Value *&B, Value *&C,
   Value *L2 = LHS->getOperand(1);
   Value *L11, *L12, *L21, *L22;
   // Check whether the icmp can be decomposed into a bit test.
-  if (decomposeBitTestICmp(LHS, PredL, L11, L12, L2)) {
+  if (decomposeBitTestICmp(L1, L2, PredL, L11, L12, L2)) {
     L21 = L22 = L1 = nullptr;
   } else {
     // Look for ANDs in the LHS icmp.
-    if (!L1->getType()->isIntegerTy()) {
-      // You can icmp pointers, for example. They really aren't masks.
-      L11 = L12 = nullptr;
-    } else if (!match(L1, m_And(m_Value(L11), m_Value(L12)))) {
+    if (!match(L1, m_And(m_Value(L11), m_Value(L12)))) {
       // Any icmp can be viewed as being trivially masked; if it allows us to
       // remove one, it's worth it.
       L11 = L1;
       L12 = Constant::getAllOnesValue(L1->getType());
     }
 
-    if (!L2->getType()->isIntegerTy()) {
-      // You can icmp pointers, for example. They really aren't masks.
-      L21 = L22 = nullptr;
-    } else if (!match(L2, m_And(m_Value(L21), m_Value(L22)))) {
+    if (!match(L2, m_And(m_Value(L21), m_Value(L22)))) {
       L21 = L2;
       L22 = Constant::getAllOnesValue(L2->getType());
     }
@@ -347,7 +353,7 @@ static unsigned getMaskedTypeForICmpPair(Value *&A, Value *&B, Value *&C,
   Value *R2 = RHS->getOperand(1);
   Value *R11, *R12;
   bool Ok = false;
-  if (decomposeBitTestICmp(RHS, PredR, R11, R12, R2)) {
+  if (decomposeBitTestICmp(R1, R2, PredR, R11, R12, R2)) {
     if (R11 == L11 || R11 == L12 || R11 == L21 || R11 == L22) {
       A = R11;
       D = R12;
@@ -360,7 +366,7 @@ static unsigned getMaskedTypeForICmpPair(Value *&A, Value *&B, Value *&C,
     E = R2;
     R1 = nullptr;
     Ok = true;
-  } else if (R1->getType()->isIntegerTy()) {
+  } else {
     if (!match(R1, m_And(m_Value(R11), m_Value(R12)))) {
       // As before, model no mask as a trivial mask if it'll let us do an
       // optimization.
@@ -386,7 +392,7 @@ static unsigned getMaskedTypeForICmpPair(Value *&A, Value *&B, Value *&C,
     return 0;
 
   // Look for ANDs on the right side of the RHS icmp.
-  if (!Ok && R2->getType()->isIntegerTy()) {
+  if (!Ok) {
     if (!match(R2, m_And(m_Value(R11), m_Value(R12)))) {
       R11 = R2;
       R12 = Constant::getAllOnesValue(R2->getType());
@@ -984,12 +990,6 @@ bool InstCombiner::shouldOptimizeCast(CastInst *CI) {
   if (const auto *PrecedingCI = dyn_cast<CastInst>(CastSrc))
     if (isEliminableCastPair(PrecedingCI, CI))
       return false;
-
-  // If this is a vector sext from a compare, then we don't want to break the
-  // idiom where each element of the extended vector is either zero or all ones.
-  if (CI->getOpcode() == Instruction::SExt &&
-      isa<CmpInst>(CastSrc) && CI->getDestTy()->isVectorTy())
-    return false;
 
   return true;
 }
@@ -1811,69 +1811,6 @@ Value *InstCombiner::foldOrOfFCmps(FCmpInst *LHS, FCmpInst *RHS) {
   return nullptr;
 }
 
-/// This helper function folds:
-///
-///     ((A | B) & C1) | (B & C2)
-///
-/// into:
-///
-///     (A & C1) | B
-///
-/// when the XOR of the two constants is "all ones" (-1).
-static Instruction *FoldOrWithConstants(BinaryOperator &I, Value *Op,
-                                        Value *A, Value *B, Value *C,
-                                        InstCombiner::BuilderTy &Builder) {
-  ConstantInt *CI1 = dyn_cast<ConstantInt>(C);
-  if (!CI1) return nullptr;
-
-  Value *V1 = nullptr;
-  ConstantInt *CI2 = nullptr;
-  if (!match(Op, m_And(m_Value(V1), m_ConstantInt(CI2)))) return nullptr;
-
-  APInt Xor = CI1->getValue() ^ CI2->getValue();
-  if (!Xor.isAllOnesValue()) return nullptr;
-
-  if (V1 == A || V1 == B) {
-    Value *NewOp = Builder.CreateAnd((V1 == A) ? B : A, CI1);
-    return BinaryOperator::CreateOr(NewOp, V1);
-  }
-
-  return nullptr;
-}
-
-/// \brief This helper function folds:
-///
-///     ((A ^ B) & C1) | (B & C2)
-///
-/// into:
-///
-///     (A & C1) ^ B
-///
-/// when the XOR of the two constants is "all ones" (-1).
-static Instruction *FoldXorWithConstants(BinaryOperator &I, Value *Op,
-                                         Value *A, Value *B, Value *C,
-                                         InstCombiner::BuilderTy &Builder) {
-  ConstantInt *CI1 = dyn_cast<ConstantInt>(C);
-  if (!CI1)
-    return nullptr;
-
-  Value *V1 = nullptr;
-  ConstantInt *CI2 = nullptr;
-  if (!match(Op, m_And(m_Value(V1), m_ConstantInt(CI2))))
-    return nullptr;
-
-  APInt Xor = CI1->getValue() ^ CI2->getValue();
-  if (!Xor.isAllOnesValue())
-    return nullptr;
-
-  if (V1 == A || V1 == B) {
-    Value *NewOp = Builder.CreateAnd(V1 == A ? B : A, CI1);
-    return BinaryOperator::CreateXor(NewOp, V1);
-  }
-
-  return nullptr;
-}
-
 // FIXME: We use commutative matchers (m_c_*) for some, but not all, matches
 // here. We should standardize that construct where it is needed or choose some
 // other way to ensure that commutated variants of patterns are not missed.
@@ -1939,10 +1876,10 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
   Value *C = nullptr, *D = nullptr;
   if (match(Op0, m_And(m_Value(A), m_Value(C))) &&
       match(Op1, m_And(m_Value(B), m_Value(D)))) {
-    Value *V1 = nullptr, *V2 = nullptr;
     ConstantInt *C1 = dyn_cast<ConstantInt>(C);
     ConstantInt *C2 = dyn_cast<ConstantInt>(D);
     if (C1 && C2) {  // (A & C1)|(B & C2)
+      Value *V1 = nullptr, *V2 = nullptr;
       if ((C1->getValue() & C2->getValue()).isNullValue()) {
         // ((V | N) & C1) | (V & C2) --> (V|N) & (C1|C2)
         // iff (C1&C2) == 0 and (N&~C1) == 0
@@ -1974,6 +1911,24 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
                                  Builder.getInt(C1->getValue()|C2->getValue()));
         }
       }
+
+      if (C1->getValue() == ~C2->getValue()) {
+        Value *X;
+
+        // ((X|B)&C1)|(B&C2) -> (X&C1) | B iff C1 == ~C2
+        if (match(A, m_c_Or(m_Value(X), m_Specific(B))))
+          return BinaryOperator::CreateOr(Builder.CreateAnd(X, C1), B);
+        // (A&C2)|((X|A)&C1) -> (X&C2) | A iff C1 == ~C2
+        if (match(B, m_c_Or(m_Specific(A), m_Value(X))))
+          return BinaryOperator::CreateOr(Builder.CreateAnd(X, C2), A);
+
+        // ((X^B)&C1)|(B&C2) -> (X&C1) ^ B iff C1 == ~C2
+        if (match(A, m_c_Xor(m_Value(X), m_Specific(B))))
+          return BinaryOperator::CreateXor(Builder.CreateAnd(X, C1), B);
+        // (A&C2)|((X^A)&C1) -> (X&C2) ^ A iff C1 == ~C2
+        if (match(B, m_c_Xor(m_Specific(A), m_Value(X))))
+          return BinaryOperator::CreateXor(Builder.CreateAnd(X, C2), A);
+      }
     }
 
     // Don't try to form a select if it's unlikely that we'll get rid of at
@@ -1997,27 +1952,6 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
         return replaceInstUsesWith(I, V);
       if (Value *V = matchSelectFromAndOr(D, B, C, A, Builder))
         return replaceInstUsesWith(I, V);
-    }
-
-    // ((A|B)&1)|(B&-2) -> (A&1) | B
-    if (match(A, m_c_Or(m_Value(V1), m_Specific(B)))) {
-      if (Instruction *Ret = FoldOrWithConstants(I, Op1, V1, B, C, Builder))
-        return Ret;
-    }
-    // (B&-2)|((A|B)&1) -> (A&1) | B
-    if (match(B, m_c_Or(m_Specific(A), m_Value(V1)))) {
-      if (Instruction *Ret = FoldOrWithConstants(I, Op0, A, V1, D, Builder))
-        return Ret;
-    }
-    // ((A^B)&1)|(B&-2) -> (A&1) ^ B
-    if (match(A, m_c_Xor(m_Value(V1), m_Specific(B)))) {
-      if (Instruction *Ret = FoldXorWithConstants(I, Op1, V1, B, C, Builder))
-        return Ret;
-    }
-    // (B&-2)|((A^B)&1) -> (A&1) ^ B
-    if (match(B, m_c_Xor(m_Specific(A), m_Value(V1)))) {
-      if (Instruction *Ret = FoldXorWithConstants(I, Op0, A, V1, D, Builder))
-        return Ret;
     }
   }
 
