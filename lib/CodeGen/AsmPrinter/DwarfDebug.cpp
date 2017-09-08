@@ -534,11 +534,11 @@ sortGlobalExprs(SmallVectorImpl<DwarfCompileUnit::GlobalExpr> &GVEs) {
   std::sort(GVEs.begin(), GVEs.end(),
             [](DwarfCompileUnit::GlobalExpr A, DwarfCompileUnit::GlobalExpr B) {
               if (A.Expr != B.Expr && A.Expr && B.Expr) {
-		auto FragmentA = A.Expr->getFragmentInfo();
-		auto FragmentB = B.Expr->getFragmentInfo();
-		if (FragmentA && FragmentB)
-		  return FragmentA->OffsetInBits < FragmentB->OffsetInBits;
-	      }
+                auto FragmentA = A.Expr->getFragmentInfo();
+                auto FragmentB = B.Expr->getFragmentInfo();
+                if (FragmentA && FragmentB)
+                  return FragmentA->OffsetInBits < FragmentB->OffsetInBits;
+              }
               return false;
             });
   GVEs.erase(std::unique(GVEs.begin(), GVEs.end(),
@@ -1362,8 +1362,8 @@ void DwarfDebug::recordSourceLine(unsigned Line, unsigned Col, const MDNode *S,
   if (auto *Scope = cast_or_null<DIScope>(S)) {
     Fn = Scope->getFilename();
     Dir = Scope->getDirectory();
-    if (auto *LBF = dyn_cast<DILexicalBlockFile>(Scope))
-      if (getDwarfVersion() >= 4)
+    if (Line != 0 && getDwarfVersion() >= 4)
+      if (auto *LBF = dyn_cast<DILexicalBlockFile>(Scope))
         Discriminator = LBF->getDiscriminator();
 
     unsigned CUID = Asm->OutStreamer->getContext().getDwarfCompileUnitID();

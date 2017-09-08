@@ -799,7 +799,8 @@ public:
   /// if DAG changes.
   static bool hasPredecessorHelper(const SDNode *N,
                                    SmallPtrSetImpl<const SDNode *> &Visited,
-                                   SmallVectorImpl<const SDNode *> &Worklist) {
+                                   SmallVectorImpl<const SDNode *> &Worklist,
+                                   unsigned int MaxSteps = 0) {
     if (Visited.count(N))
       return true;
     while (!Worklist.empty()) {
@@ -814,6 +815,8 @@ public:
       }
       if (Found)
         return true;
+      if (MaxSteps != 0 && Visited.size() >= MaxSteps)
+        return false;
     }
     return false;
   }
@@ -1845,19 +1848,20 @@ public:
   }
 };
 
-class EHLabelSDNode : public SDNode {
+class LabelSDNode : public SDNode {
   friend class SelectionDAG;
 
   MCSymbol *Label;
 
-  EHLabelSDNode(unsigned Order, const DebugLoc &dl, MCSymbol *L)
+  LabelSDNode(unsigned Order, const DebugLoc &dl, MCSymbol *L)
       : SDNode(ISD::EH_LABEL, Order, dl, getSDVTList(MVT::Other)), Label(L) {}
 
 public:
   MCSymbol *getLabel() const { return Label; }
 
   static bool classof(const SDNode *N) {
-    return N->getOpcode() == ISD::EH_LABEL;
+    return N->getOpcode() == ISD::EH_LABEL ||
+           N->getOpcode() == ISD::ANNOTATION_LABEL;
   }
 };
 
