@@ -1318,6 +1318,24 @@ static Instruction *processUGT_ADDCST_ADD(ICmpInst &I, Value *A, Value *B,
   return ExtractValueInst::Create(Call, 1, "sadd.overflow");
 }
 
+// Handle (icmp sgt smin(PosA, B) 0) -> (icmp sgt B 0)
+Instruction *InstCombiner::foldICmpWithZero(ICmpInst &Cmp) {
+  CmpInst::Predicate Pred = Cmp.getPredicate();
+  Value *X = Cmp.getOperand(0);
+
+  if (match(Cmp.getOperand(1), m_Zero()) && Pred == ICmpInst::ICMP_SGT) {
+    Value *A, *B;
+    SelectPatternResult SPR = matchSelectPattern(X, A, B);
+    if (SPR.Flavor == SPF_SMIN) {
+      if (isKnownPositive(A, DL, 0, &AC, &Cmp, &DT))
+        return new ICmpInst(Pred, B, Cmp.getOperand(1));
+      if (isKnownPositive(B, DL, 0, &AC, &Cmp, &DT))
+        return new ICmpInst(Pred, A, Cmp.getOperand(1));
+    }
+  }
+  return nullptr;
+}
+
 // Fold icmp Pred X, C.
 Instruction *InstCombiner::foldICmpWithConstant(ICmpInst &Cmp) {
   CmpInst::Predicate Pred = Cmp.getPredicate();
@@ -1347,17 +1365,6 @@ Instruction *InstCombiner::foldICmpWithConstant(ICmpInst &Cmp) {
       if (Instruction *Res = processUGT_ADDCST_ADD(
               Cmp, A, B, CI2, cast<ConstantInt>(Cmp.getOperand(1)), *this))
         return Res;
-  }
-
-  // (icmp sgt smin(PosA, B) 0) -> (icmp sgt B 0)
-  if (C->isNullValue() && Pred == ICmpInst::ICMP_SGT) {
-    SelectPatternResult SPR = matchSelectPattern(X, A, B);
-    if (SPR.Flavor == SPF_SMIN) {
-      if (isKnownPositive(A, DL, 0, &AC, &Cmp, &DT))
-        return new ICmpInst(Pred, B, Cmp.getOperand(1));
-      if (isKnownPositive(B, DL, 0, &AC, &Cmp, &DT))
-        return new ICmpInst(Pred, A, Cmp.getOperand(1));
-    }
   }
 
   // FIXME: Use m_APInt to allow folds for splat constants.
@@ -2011,42 +2018,45 @@ Instruction *InstCombiner::foldICmpShrConstant(ICmpInst &Cmp,
     return nullptr;
 
   bool IsAShr = Shr->getOpcode() == Instruction::AShr;
-  if (!Cmp.isEquality()) {
-    // If we have an unsigned comparison and an ashr, we can't simplify this.
-    // Similarly for signed comparisons with lshr.
-    if (Cmp.isSigned() != IsAShr)
-      return nullptr;
-
-    // Otherwise, all lshr and most exact ashr's are equivalent to a udiv/sdiv
-    // by a power of 2.  Since we already have logic to simplify these,
-    // transform to div and then simplify the resultant comparison.
-    if (IsAShr && (!Shr->isExact() || ShAmtVal == TypeBits - 1))
-      return nullptr;
-
-    // Revisit the shift (to delete it).
-    Worklist.Add(Shr);
-
-    Constant *DivCst = ConstantInt::get(
-        Shr->getType(), APInt::getOneBitSet(TypeBits, ShAmtVal));
-
-    Value *Tmp = IsAShr ? Builder.CreateSDiv(X, DivCst, "", Shr->isExact())
-                        : Builder.CreateUDiv(X, DivCst, "", Shr->isExact());
-
-    Cmp.setOperand(0, Tmp);
-
-    // If the builder folded the binop, just return it.
-    BinaryOperator *TheDiv = dyn_cast<BinaryOperator>(Tmp);
-    if (!TheDiv)
-      return &Cmp;
-
-    // Otherwise, fold this div/compare.
-    assert(TheDiv->getOpcode() == Instruction::SDiv ||
-           TheDiv->getOpcode() == Instruction::UDiv);
-
-    Instruction *Res = foldICmpDivConstant(Cmp, TheDiv, C);
-    assert(Res && "This div/cst should have folded!");
-    return Res;
+  bool IsExact = Shr->isExact();
+  Type *ShrTy = Shr->getType();
+  // TODO: If we could guarantee that InstSimplify would handle all of the
+  // constant-value-based preconditions in the folds below, then we could assert
+  // those conditions rather than checking them. This is difficult because of
+  // undef/poison (PR34838).
+  if (IsAShr) {
+    if (Pred == CmpInst::ICMP_SLT || (Pred == CmpInst::ICMP_SGT && IsExact)) {
+      // icmp slt (ashr X, ShAmtC), C --> icmp slt X, (C << ShAmtC)
+      // icmp sgt (ashr exact X, ShAmtC), C --> icmp sgt X, (C << ShAmtC)
+      APInt ShiftedC = C.shl(ShAmtVal);
+      if (ShiftedC.ashr(ShAmtVal) == C)
+        return new ICmpInst(Pred, X, ConstantInt::get(ShrTy, ShiftedC));
+    }
+    if (Pred == CmpInst::ICMP_SGT) {
+      // icmp sgt (ashr X, ShAmtC), C --> icmp sgt X, ((C + 1) << ShAmtC) - 1
+      APInt ShiftedC = (C + 1).shl(ShAmtVal) - 1;
+      if (!C.isMaxSignedValue() && !(C + 1).shl(ShAmtVal).isMinSignedValue() &&
+          (ShiftedC + 1).ashr(ShAmtVal) == (C + 1))
+        return new ICmpInst(Pred, X, ConstantInt::get(ShrTy, ShiftedC));
+    }
+  } else {
+    if (Pred == CmpInst::ICMP_ULT || (Pred == CmpInst::ICMP_UGT && IsExact)) {
+      // icmp ult (lshr X, ShAmtC), C --> icmp ult X, (C << ShAmtC)
+      // icmp ugt (lshr exact X, ShAmtC), C --> icmp ugt X, (C << ShAmtC)
+      APInt ShiftedC = C.shl(ShAmtVal);
+      if (ShiftedC.lshr(ShAmtVal) == C)
+        return new ICmpInst(Pred, X, ConstantInt::get(ShrTy, ShiftedC));
+    }
+    if (Pred == CmpInst::ICMP_UGT) {
+      // icmp ugt (lshr X, ShAmtC), C --> icmp ugt X, ((C + 1) << ShAmtC) - 1
+      APInt ShiftedC = (C + 1).shl(ShAmtVal) - 1;
+      if ((ShiftedC + 1).lshr(ShAmtVal) == (C + 1))
+        return new ICmpInst(Pred, X, ConstantInt::get(ShrTy, ShiftedC));
+    }
   }
+
+  if (!Cmp.isEquality())
+    return nullptr;
 
   // Handle equality comparisons of shift-by-constant.
 
@@ -2059,17 +2069,16 @@ Instruction *InstCombiner::foldICmpShrConstant(ICmpInst &Cmp,
 
   // If the bits shifted out are known zero, compare the unshifted value:
   //  (X & 4) >> 1 == 2  --> (X & 4) == 4.
-  Constant *ShiftedCmpRHS = ConstantInt::get(Shr->getType(), C << ShAmtVal);
   if (Shr->isExact())
-    return new ICmpInst(Pred, X, ShiftedCmpRHS);
+    return new ICmpInst(Pred, X, ConstantInt::get(ShrTy, C << ShAmtVal));
 
   if (Shr->hasOneUse()) {
     // Canonicalize the shift into an 'and':
     // icmp eq/ne (shr X, ShAmt), C --> icmp eq/ne (and X, HiMask), (C << ShAmt)
     APInt Val(APInt::getHighBitsSet(TypeBits, TypeBits - ShAmtVal));
-    Constant *Mask = ConstantInt::get(Shr->getType(), Val);
+    Constant *Mask = ConstantInt::get(ShrTy, Val);
     Value *And = Builder.CreateAnd(X, Mask, Shr->getName() + ".mask");
-    return new ICmpInst(Pred, And, ShiftedCmpRHS);
+    return new ICmpInst(Pred, And, ConstantInt::get(ShrTy, C << ShAmtVal));
   }
 
   return nullptr;
@@ -4458,6 +4467,10 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
       if ((SI->getOperand(1) == Op0 && SI->getOperand(2) == Op1) ||
           (SI->getOperand(2) == Op0 && SI->getOperand(1) == Op1))
         return nullptr;
+
+  // Do this after checking for min/max to prevent infinite looping.
+  if (Instruction *Res = foldICmpWithZero(I))
+    return Res;
 
   // FIXME: We only do this after checking for min/max to prevent infinite
   // looping caused by a reverse canonicalization of these patterns for min/max.

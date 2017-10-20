@@ -134,7 +134,7 @@ bool DWARFVerifier::verifyUnitHeader(const DWARFDataExtractor DebugInfoData,
     UnitType = DebugInfoData.getU8(Offset);
     AddrSize = DebugInfoData.getU8(Offset);
     AbbrOffset = DebugInfoData.getU32(Offset);
-    ValidType = DWARFUnit::isValidUnitType(UnitType);
+    ValidType = dwarf::isUnitType(UnitType);
   } else {
     UnitType = 0;
     AbbrOffset = DebugInfoData.getU32(Offset);
@@ -169,7 +169,7 @@ bool DWARFVerifier::verifyUnitHeader(const DWARFDataExtractor DebugInfoData,
   return Success;
 }
 
-bool DWARFVerifier::verifyUnitContents(DWARFUnit Unit) {
+bool DWARFVerifier::verifyUnitContents(DWARFUnit Unit, uint8_t UnitType) {
   uint32_t NumUnitErrors = 0;
   unsigned NumDies = Unit.getNumDIEs();
   for (unsigned I = 0; I < NumDies; ++I) {
@@ -182,13 +182,29 @@ bool DWARFVerifier::verifyUnitContents(DWARFUnit Unit) {
     }
   }
 
-  if (DWARFDie Die = Unit.getUnitDIE(/* ExtractUnitDIEOnly = */ false)) {
-    DieRangeInfo RI;
-    NumUnitErrors += verifyDieRanges(Die, RI);
-  } else {
-    error() << "Compilation unit without unit DIE.\n";
+  DWARFDie Die = Unit.getUnitDIE(/* ExtractUnitDIEOnly = */ false);
+  if (!Die) {
+    error() << "Compilation unit without DIE.\n";
+    NumUnitErrors++;
+    return NumUnitErrors == 0;
+  }
+
+  if (!dwarf::isUnitType(Die.getTag())) {
+    error() << "Compilation unit root DIE is not a unit DIE: "
+            << dwarf::TagString(Die.getTag()) << ".\n";
     NumUnitErrors++;
   }
+
+  if (UnitType != 0 &&
+      !DWARFUnit::isMatchingUnitTypeAndTag(UnitType, Die.getTag())) {
+    error() << "Compilation unit type (" << dwarf::UnitTypeString(UnitType)
+            << ") and root DIE (" << dwarf::TagString(Die.getTag())
+            << ") do not match.\n";
+    NumUnitErrors++;
+  }
+
+  DieRangeInfo RI;
+  NumUnitErrors += verifyDieRanges(Die, RI);
 
   return NumUnitErrors == 0;
 }
@@ -246,6 +262,8 @@ bool DWARFVerifier::handleDebugInfo() {
   bool isUnitDWARF64 = false;
   bool isHeaderChainValid = true;
   bool hasDIE = DebugInfoData.isValidOffset(Offset);
+  DWARFUnitSection<DWARFTypeUnit> TUSection{};
+  DWARFUnitSection<DWARFCompileUnit> CUSection{};
   while (hasDIE) {
     OffsetStart = Offset;
     if (!verifyUnitHeader(DebugInfoData, &Offset, UnitIdx, UnitType,
@@ -258,7 +276,6 @@ bool DWARFVerifier::handleDebugInfo() {
       switch (UnitType) {
       case dwarf::DW_UT_type:
       case dwarf::DW_UT_split_type: {
-        DWARFUnitSection<DWARFTypeUnit> TUSection{};
         Unit.reset(new DWARFTypeUnit(
             DCtx, DObj.getInfoSection(), DCtx.getDebugAbbrev(),
             &DObj.getRangeSection(), DObj.getStringSection(),
@@ -274,7 +291,6 @@ bool DWARFVerifier::handleDebugInfo() {
       // UnitType = 0 means that we are
       // verifying a compile unit in DWARF v4.
       case 0: {
-        DWARFUnitSection<DWARFCompileUnit> CUSection{};
         Unit.reset(new DWARFCompileUnit(
             DCtx, DObj.getInfoSection(), DCtx.getDebugAbbrev(),
             &DObj.getRangeSection(), DObj.getStringSection(),
@@ -286,7 +302,7 @@ bool DWARFVerifier::handleDebugInfo() {
       default: { llvm_unreachable("Invalid UnitType."); }
       }
       Unit->extract(DebugInfoData, &OffsetStart);
-      if (!verifyUnitContents(*Unit))
+      if (!verifyUnitContents(*Unit, UnitType))
         ++NumDebugInfoErrors;
     }
     hasDIE = DebugInfoData.isValidOffset(Offset);

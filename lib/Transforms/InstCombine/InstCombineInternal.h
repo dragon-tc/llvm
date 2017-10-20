@@ -277,7 +277,7 @@ public:
   Instruction *visitURem(BinaryOperator &I);
   Instruction *visitSRem(BinaryOperator &I);
   Instruction *visitFRem(BinaryOperator &I);
-  bool SimplifyDivRemOfSelect(BinaryOperator &I);
+  bool simplifyDivRemOfSelectWithZeroOp(BinaryOperator &I);
   Instruction *commonRemTransforms(BinaryOperator &I);
   Instruction *commonIRemTransforms(BinaryOperator &I);
   Instruction *commonDivTransforms(BinaryOperator &I);
@@ -663,6 +663,8 @@ private:
   /// This is a convenience wrapper function for the above two functions.
   Instruction *foldOpWithConstantIntoOperand(BinaryOperator &I);
 
+  Instruction *foldAddWithConstant(BinaryOperator &Add);
+
   /// \brief Try to rotate an operation below a PHI node, using PHI nodes for
   /// its operands.
   Instruction *FoldPHIArgOpIntoPHI(PHINode &PN);
@@ -670,6 +672,10 @@ private:
   Instruction *FoldPHIArgGEPIntoPHI(PHINode &PN);
   Instruction *FoldPHIArgLoadIntoPHI(PHINode &PN);
   Instruction *FoldPHIArgZextsIntoPHI(PHINode &PN);
+  /// If an integer typed PHI has only one use which is an IntToPtr operation,
+  /// replace the PHI with an existing pointer typed PHI if it exists. Otherwise
+  /// insert a new pointer typed PHI and replace the original one.
+  Instruction *FoldIntegerTypedPHI(PHINode &PN);
 
   /// Helper function for FoldPHIArgXIntoPHI() to set debug location for the
   /// folded operation.
@@ -694,6 +700,7 @@ private:
   Instruction *foldICmpInstWithConstantNotInt(ICmpInst &Cmp);
   Instruction *foldICmpBinOp(ICmpInst &Cmp);
   Instruction *foldICmpEquality(ICmpInst &Cmp);
+  Instruction *foldICmpWithZero(ICmpInst &Cmp);
 
   Instruction *foldICmpSelectConstant(ICmpInst &Cmp, SelectInst *Select,
                                       ConstantInt *C);

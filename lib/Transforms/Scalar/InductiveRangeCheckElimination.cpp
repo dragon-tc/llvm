@@ -176,6 +176,7 @@ public:
     Type *getType() const { return Begin->getType(); }
     const SCEV *getBegin() const { return Begin; }
     const SCEV *getEnd() const { return End; }
+    bool isEmpty() const { return Begin == End; }
   };
 
   /// This is the value the condition of the branch needs to evaluate to for the
@@ -1654,9 +1655,14 @@ static Optional<InductiveRangeCheck::Range>
 IntersectRange(ScalarEvolution &SE,
                const Optional<InductiveRangeCheck::Range> &R1,
                const InductiveRangeCheck::Range &R2) {
+  if (R2.isEmpty())
+    return None;
   if (!R1.hasValue())
     return R2;
   auto &R1Value = R1.getValue();
+  // We never return empty ranges from this function, and R1 is supposed to be
+  // a result of intersection. Thus, R1 is never empty.
+  assert(!R1Value.isEmpty() && "We should never have empty R1!");
 
   // TODO: we could widen the smaller range and have this work; but for now we
   // bail out to keep things simple.
@@ -1666,7 +1672,11 @@ IntersectRange(ScalarEvolution &SE,
   const SCEV *NewBegin = SE.getSMaxExpr(R1Value.getBegin(), R2.getBegin());
   const SCEV *NewEnd = SE.getSMinExpr(R1Value.getEnd(), R2.getEnd());
 
-  return InductiveRangeCheck::Range(NewBegin, NewEnd);
+  // If the resulting range is empty, just return None.
+  auto Ret = InductiveRangeCheck::Range(NewBegin, NewEnd);
+  if (Ret.isEmpty())
+    return None;
+  return Ret;
 }
 
 bool InductiveRangeCheckElimination::runOnLoop(Loop *L, LPPassManager &LPM) {
@@ -1735,6 +1745,8 @@ bool InductiveRangeCheckElimination::runOnLoop(Loop *L, LPPassManager &LPM) {
       auto MaybeSafeIterRange =
           IntersectRange(SE, SafeIterRange, Result.getValue());
       if (MaybeSafeIterRange.hasValue()) {
+        assert(!MaybeSafeIterRange.getValue().isEmpty() &&
+               "We should never return empty ranges!");
         RangeChecksToEliminate.push_back(IRC);
         SafeIterRange = MaybeSafeIterRange.getValue();
       }

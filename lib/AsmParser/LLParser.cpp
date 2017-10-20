@@ -241,6 +241,7 @@ bool LLParser::ValidateEndOfModule() {
     llvm::UpgradeDebugInfo(*M);
 
   UpgradeModuleFlags(*M);
+  UpgradeSectionAttributes(*M);
 
   if (!Slots)
     return false;
@@ -4777,7 +4778,6 @@ bool LLParser::ParseFunctionHeader(Function *&Fn, bool isDefine) {
   unsigned Alignment;
   std::string GC;
   GlobalValue::UnnamedAddr UnnamedAddr = GlobalValue::UnnamedAddr::None;
-  LocTy UnnamedAddrLoc;
   Constant *Prefix = nullptr;
   Constant *Prologue = nullptr;
   Constant *PersonalityFn = nullptr;
@@ -5571,7 +5571,6 @@ bool LLParser::ParseCatchRet(Instruction *&Inst, PerFunctionState &PFS) {
 ///   ::= 'catchswitch' within Parent
 bool LLParser::ParseCatchSwitch(Instruction *&Inst, PerFunctionState &PFS) {
   Value *ParentPad;
-  LocTy BBLoc;
 
   if (ParseToken(lltok::kw_within, "expected 'within' after catchswitch"))
     return true;
@@ -6075,7 +6074,7 @@ bool LLParser::ParseCall(Instruction *&Inst, PerFunctionState &PFS,
 
 /// ParseAlloc
 ///   ::= 'alloca' 'inalloca'? 'swifterror'? Type (',' TypeAndValue)?
-///       (',' 'align' i32)?
+///       (',' 'align' i32)? (',', 'addrspace(n))?
 int LLParser::ParseAlloc(Instruction *&Inst, PerFunctionState &PFS) {
   Value *Size = nullptr;
   LocTy SizeLoc, TyLoc, ASLoc;
@@ -6105,11 +6104,22 @@ int LLParser::ParseAlloc(Instruction *&Inst, PerFunctionState &PFS) {
     } else if (Lex.getKind() == lltok::MetadataVar) {
       AteExtraComma = true;
     } else {
-      if (ParseTypeAndValue(Size, SizeLoc, PFS) ||
-          ParseOptionalCommaAlign(Alignment, AteExtraComma) ||
-          (!AteExtraComma &&
-           ParseOptionalCommaAddrSpace(AddrSpace, ASLoc, AteExtraComma)))
+      if (ParseTypeAndValue(Size, SizeLoc, PFS))
         return true;
+      if (EatIfPresent(lltok::comma)) {
+        if (Lex.getKind() == lltok::kw_align) {
+          if (ParseOptionalAlignment(Alignment))
+            return true;
+          if (ParseOptionalCommaAddrSpace(AddrSpace, ASLoc, AteExtraComma))
+            return true;
+        } else if (Lex.getKind() == lltok::kw_addrspace) {
+          ASLoc = Lex.getLoc();
+          if (ParseOptionalAddrSpace(AddrSpace))
+            return true;
+        } else if (Lex.getKind() == lltok::MetadataVar) {
+          AteExtraComma = true;
+        }
+      }
     }
   }
 

@@ -1027,7 +1027,7 @@ SDValue SelectionDAG::getZeroExtendInReg(SDValue Op, const SDLoc &DL, EVT VT) {
   assert(!VT.isVector() &&
          "getZeroExtendInReg should use the vector element type instead of "
          "the vector type!");
-  if (Op.getValueType() == VT) return Op;
+  if (Op.getValueType().getScalarType() == VT) return Op;
   unsigned BitWidth = Op.getScalarValueSizeInBits();
   APInt Imm = APInt::getLowBitsSet(BitWidth,
                                    VT.getSizeInBits());
@@ -1486,7 +1486,8 @@ SDValue SelectionDAG::getVectorShuffle(EVT VT, const SDLoc &dl, SDValue N1,
   // Validate that all indices in Mask are within the range of the elements
   // input to the shuffle.
   int NElts = Mask.size();
-  assert(llvm::all_of(Mask, [&](int M) { return M < (NElts * 2); }) &&
+  assert(llvm::all_of(Mask,
+                      [&](int M) { return M < (NElts * 2) && M >= -1; }) &&
          "Index out of range");
 
   // Copy the mask so we can do any needed cleanup.
@@ -2128,7 +2129,7 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
       Known.Zero &= Known2.Zero;
 
       // If we don't know any bits, early out.
-      if (!Known.One && !Known.Zero)
+      if (Known.isUnknown())
         break;
     }
     break;
@@ -2166,7 +2167,7 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
       Known.Zero &= Known2.Zero;
     }
     // If we don't know any bits, early out.
-    if (!Known.One && !Known.Zero)
+    if (Known.isUnknown())
       break;
     if (!!DemandedRHS) {
       SDValue RHS = Op.getOperand(1);
@@ -2192,7 +2193,7 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
         Known.Zero &= Known2.Zero;
       }
       // If we don't know any bits, early out.
-      if (!Known.One && !Known.Zero)
+      if (Known.isUnknown())
         break;
     }
     break;
@@ -2276,7 +2277,7 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
           Known.One &= Known2.One.lshr(Offset).trunc(BitWidth);
           Known.Zero &= Known2.Zero.lshr(Offset).trunc(BitWidth);
           // If we don't know any bits, early out.
-          if (!Known.One && !Known.Zero)
+          if (Known.isUnknown())
             break;
         }
     }
@@ -2349,7 +2350,7 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
   case ISD::SELECT:
     computeKnownBits(Op.getOperand(2), Known, Depth+1);
     // If we don't know any bits, early out.
-    if (!Known.One && !Known.Zero)
+    if (Known.isUnknown())
       break;
     computeKnownBits(Op.getOperand(1), Known2, Depth+1);
 
@@ -2360,7 +2361,7 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
   case ISD::SELECT_CC:
     computeKnownBits(Op.getOperand(3), Known, Depth+1);
     // If we don't know any bits, early out.
-    if (!Known.One && !Known.Zero)
+    if (Known.isUnknown())
       break;
     computeKnownBits(Op.getOperand(2), Known2, Depth+1);
 
@@ -2838,7 +2839,7 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
     computeKnownBits(Op.getOperand(0), Known, DemandedElts,
                      Depth + 1);
     // If we don't know any bits, early out.
-    if (!Known.One && !Known.Zero)
+    if (Known.isUnknown())
       break;
     computeKnownBits(Op.getOperand(1), Known2, DemandedElts, Depth + 1);
     Known.Zero &= Known2.Zero;
@@ -2866,7 +2867,7 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
     break;
   }
 
-  assert((Known.Zero & Known.One) == 0 && "Bits known to be one AND zero?");
+  assert(!Known.hasConflict() && "Bits known to be one AND zero?");
 }
 
 SelectionDAG::OverflowKind SelectionDAG::computeOverflowKind(SDValue N0,

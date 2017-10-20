@@ -647,6 +647,15 @@ enum {
 #include "ELFRelocs/WebAssembly.def"
 };
 
+// AMDGPU specific e_flags.
+enum : unsigned {
+  // AMDGPU machine architectures.
+  EF_AMDGPU_ARCH_NONE = 0x00000000, // None/unknown.
+  EF_AMDGPU_ARCH_R600 = 0x00000001, // AMD HD2XXX-HD6XXX GPUs.
+  EF_AMDGPU_ARCH_GCN = 0x00000002,  // AMD GCN GFX6+ GPUs.
+  EF_AMDGPU_ARCH = 0x0000000f       // EF_AMDGPU_ARCH_XXX selection mask.
+};
+
 // ELF Relocation types for AMDGPU
 enum {
 #include "ELFRelocs/AMDGPU.def"
@@ -1358,6 +1367,14 @@ enum {
   NT_GNU_HWCAP = 2,
   NT_GNU_BUILD_ID = 3,
   NT_GNU_GOLD_VERSION = 4,
+};
+
+// AMDGPU specific notes.
+enum {
+  // Note types with values between 0 and 9 (inclusive) are reserved.
+  NT_AMD_AMDGPU_HSA_METADATA = 10,
+  NT_AMD_AMDGPU_ISA = 11,
+  NT_AMD_AMDGPU_PAL_METADATA = 12
 };
 
 enum {
