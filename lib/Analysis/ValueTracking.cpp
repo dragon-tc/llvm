@@ -83,12 +83,6 @@ const unsigned MaxDepth = 6;
 static cl::opt<unsigned> DomConditionsMaxUses("dom-conditions-max-uses",
                                               cl::Hidden, cl::init(20));
 
-// This optimization is known to cause performance regressions is some cases,
-// keep it under a temporary flag for now.
-static cl::opt<bool>
-DontImproveNonNegativePhiBits("dont-improve-non-negative-phi-bits",
-                              cl::Hidden, cl::init(true));
-
 /// Returns the bitwidth of the given scalar or pointer type. For vector types,
 /// returns the element type's bitwidth.
 static unsigned getBitWidth(Type *Ty, const DataLayout &DL) {
@@ -1289,9 +1283,6 @@ static void computeKnownBitsFromOperator(const Operator *I, KnownBits &Known,
           Known.Zero.setLowBits(std::min(Known2.countMinTrailingZeros(),
                                          Known3.countMinTrailingZeros()));
 
-          if (DontImproveNonNegativePhiBits)
-            break;
-
           auto *OverflowOp = dyn_cast<OverflowingBinaryOperator>(LU);
           if (OverflowOp && OverflowOp->hasNoSignedWrap()) {
             // If initial value of recurrence is nonnegative, and we are adding
@@ -1516,9 +1507,8 @@ void computeKnownBits(const Value *V, KnownBits &Known, unsigned Depth,
     // We know that CDS must be a vector of integers. Take the intersection of
     // each element.
     Known.Zero.setAllBits(); Known.One.setAllBits();
-    APInt Elt(BitWidth, 0);
     for (unsigned i = 0, e = CDS->getNumElements(); i != e; ++i) {
-      Elt = CDS->getElementAsInteger(i);
+      APInt Elt = CDS->getElementAsAPInt(i);
       Known.Zero &= ~Elt;
       Known.One &= Elt;
     }
@@ -1529,7 +1519,6 @@ void computeKnownBits(const Value *V, KnownBits &Known, unsigned Depth,
     // We know that CV must be a vector of integers. Take the intersection of
     // each element.
     Known.Zero.setAllBits(); Known.One.setAllBits();
-    APInt Elt(BitWidth, 0);
     for (unsigned i = 0, e = CV->getNumOperands(); i != e; ++i) {
       Constant *Element = CV->getAggregateElement(i);
       auto *ElementCI = dyn_cast_or_null<ConstantInt>(Element);
@@ -1537,7 +1526,7 @@ void computeKnownBits(const Value *V, KnownBits &Known, unsigned Depth,
         Known.resetAll();
         return;
       }
-      Elt = ElementCI->getValue();
+      const APInt &Elt = ElementCI->getValue();
       Known.Zero &= ~Elt;
       Known.One &= Elt;
     }
@@ -2108,11 +2097,7 @@ static unsigned computeNumSignBitsVectorConstant(const Value *V,
     if (!Elt)
       return 0;
 
-    // If the sign bit is 1, flip the bits, so we always count leading zeros.
-    APInt EltVal = Elt->getValue();
-    if (EltVal.isNegative())
-      EltVal = ~EltVal;
-    MinSignBits = std::min(MinSignBits, EltVal.countLeadingZeros());
+    MinSignBits = std::min(MinSignBits, Elt->getValue().getNumSignBits());
   }
 
   return MinSignBits;
@@ -4078,21 +4063,19 @@ static SelectPatternResult matchFastFloatClamp(CmpInst::Predicate Pred,
   return {SPF_UNKNOWN, SPNB_NA, false};
 }
 
-/// Match non-obvious integer minimum and maximum sequences.
-static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
-                                       Value *CmpLHS, Value *CmpRHS,
-                                       Value *TrueVal, Value *FalseVal,
-                                       Value *&LHS, Value *&RHS) {
-  // Assume success. If there's no match, callers should not use these anyway.
-  LHS = TrueVal;
-  RHS = FalseVal;
-
-  // Recognize variations of:
-  // CLAMP(v,l,h) ==> ((v) < (l) ? (l) : ((v) > (h) ? (h) : (v)))
+/// Recognize variations of:
+///   CLAMP(v,l,h) ==> ((v) < (l) ? (l) : ((v) > (h) ? (h) : (v)))
+static SelectPatternResult matchClamp(CmpInst::Predicate Pred,
+                                      Value *CmpLHS, Value *CmpRHS,
+                                      Value *TrueVal, Value *FalseVal) {
+  // Swap the select operands and predicate to match the patterns below.
+  if (CmpRHS != TrueVal) {
+    Pred = ICmpInst::getSwappedPredicate(Pred);
+    std::swap(TrueVal, FalseVal);
+  }
   const APInt *C1;
   if (CmpRHS == TrueVal && match(CmpRHS, m_APInt(C1))) {
     const APInt *C2;
-
     // (X <s C1) ? C1 : SMIN(X, C2) ==> SMAX(SMIN(X, C2), C1)
     if (match(FalseVal, m_SMin(m_Specific(CmpLHS), m_APInt(C2))) &&
         C1->slt(*C2) && Pred == CmpInst::ICMP_SLT)
@@ -4113,6 +4096,21 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
         C1->ugt(*C2) && Pred == CmpInst::ICMP_UGT)
       return {SPF_UMIN, SPNB_NA, false};
   }
+  return {SPF_UNKNOWN, SPNB_NA, false};
+}
+
+/// Match non-obvious integer minimum and maximum sequences.
+static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
+                                       Value *CmpLHS, Value *CmpRHS,
+                                       Value *TrueVal, Value *FalseVal,
+                                       Value *&LHS, Value *&RHS) {
+  // Assume success. If there's no match, callers should not use these anyway.
+  LHS = TrueVal;
+  RHS = FalseVal;
+
+  SelectPatternResult SPR = matchClamp(Pred, CmpLHS, CmpRHS, TrueVal, FalseVal);
+  if (SPR.Flavor != SelectPatternFlavor::SPF_UNKNOWN)
+    return SPR;
 
   if (Pred != CmpInst::ICMP_SGT && Pred != CmpInst::ICMP_SLT)
     return {SPF_UNKNOWN, SPNB_NA, false};
@@ -4131,6 +4129,7 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
       match(TrueVal, m_NSWSub(m_Specific(CmpLHS), m_Specific(CmpRHS))))
     return {Pred == CmpInst::ICMP_SGT ? SPF_SMAX : SPF_SMIN, SPNB_NA, false};
 
+  const APInt *C1;
   if (!match(CmpRHS, m_APInt(C1)))
     return {SPF_UNKNOWN, SPNB_NA, false};
 

@@ -1,10 +1,13 @@
 add_library(LLVMCFIVerify
   STATIC
   FileAnalysis.cpp
-  FileAnalysis.h)
+  FileAnalysis.h
+  GraphBuilder.cpp
+  GraphBuilder.h)
 
 llvm_update_compile_flags(LLVMCFIVerify)
 llvm_map_components_to_libnames(libs
+  DebugInfoDWARF
   MC
   MCParser
   Object

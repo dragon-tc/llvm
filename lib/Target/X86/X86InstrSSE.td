@@ -3186,7 +3186,7 @@ let Predicates = prds in {
 /// sse2_fp_unop_p - SSE2 unops in vector forms.
 multiclass sse2_fp_unop_p<bits<8> opc, string OpcodeStr,
                           SDNode OpNode, OpndItins itins> {
-let Predicates = [HasAVX] in {
+let Predicates = [HasAVX, NoVLX] in {
   def V#NAME#PDr : PDI<opc, MRMSrcReg, (outs VR128:$dst), (ins VR128:$src),
                        !strconcat("v", OpcodeStr,
                                   "pd\t{$src, $dst|$dst, $src}"),
@@ -3245,7 +3245,7 @@ multiclass sse2_fp_unop_s<bits<8> opc, string OpcodeStr, SDNode OpNode,
 
 // Square root.
 defm SQRT  : sse1_fp_unop_s<0x51, "sqrt", fsqrt, SSE_SQRTSS>,
-             sse1_fp_unop_p<0x51, "sqrt", fsqrt, SSE_SQRTPS, [HasAVX]>,
+             sse1_fp_unop_p<0x51, "sqrt", fsqrt, SSE_SQRTPS, [HasAVX, NoVLX]>,
              sse2_fp_unop_s<0x51, "sqrt", fsqrt, SSE_SQRTSD>,
              sse2_fp_unop_p<0x51, "sqrt", fsqrt, SSE_SQRTPD>;
 
@@ -5529,8 +5529,8 @@ multiclass SS41I_extract8<bits<8> opc, string OpcodeStr> {
                  (ins i8mem:$dst, VR128:$src1, u8imm:$src2),
                  !strconcat(OpcodeStr,
                             "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
-                 [(store (i8 (trunc (assertzext (X86pextrb (v16i8 VR128:$src1),
-                                                 imm:$src2)))), addr:$dst)]>;
+                 [(store (i8 (trunc (X86pextrb (v16i8 VR128:$src1), imm:$src2))),
+                          addr:$dst)]>;
 }
 
 let Predicates = [HasAVX, NoBWI] in
@@ -5554,8 +5554,8 @@ multiclass SS41I_extract16<bits<8> opc, string OpcodeStr> {
                  (ins i16mem:$dst, VR128:$src1, u8imm:$src2),
                  !strconcat(OpcodeStr,
                   "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
-                 [(store (i16 (trunc (assertzext (X86pextrw (v8i16 VR128:$src1),
-                                                  imm:$src2)))), addr:$dst)]>;
+                 [(store (i16 (trunc (X86pextrw (v8i16 VR128:$src1), imm:$src2))),
+                          addr:$dst)]>;
 }
 
 let Predicates = [HasAVX, NoBWI] in
@@ -5961,7 +5961,7 @@ let Predicates = [HasAVX] in {
   defm VROUND  : sse41_fp_binop_s<0x0A, 0x0B, "vround",
                                  int_x86_sse41_round_ss,
                                  int_x86_sse41_round_sd, 0>, VEX_4V, VEX_LIG, VEX_WIG;
-  defm VROUND  : avx_fp_unop_rm<0x0A, 0x0B, "vround">, VEX_4V, VEX_LIG;
+  defm VROUND  : avx_fp_unop_rm<0x0A, 0x0B, "vround">, VEX_4V, VEX_LIG, VEX_WIG;
 }
 
 let Predicates = [UseAVX] in {

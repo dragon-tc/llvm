@@ -1203,10 +1203,10 @@ SDValue DAGCombiner::PromoteIntBinOp(SDValue Op) {
     Replace0 &= !N0->hasOneUse();
     Replace1 &= (N0 != N1) && !N1->hasOneUse();
 
-    // Combine Op here so it is presreved past replacements.
+    // Combine Op here so it is preserved past replacements.
     CombineTo(Op.getNode(), RV);
 
-    // If operands have a use ordering, make sur we deal with
+    // If operands have a use ordering, make sure we deal with
     // predecessor first.
     if (Replace0 && Replace1 && N0.getNode()->isPredecessorOf(N1.getNode())) {
       std::swap(N0, N1);
@@ -8274,10 +8274,14 @@ SDValue DAGCombiner::visitSIGN_EXTEND_INREG(SDNode *N) {
   }
 
   // fold (sext_inreg (extload x)) -> (sextload x)
+  // If sextload is not supported by target, we can only do the combine when
+  // load has one use. Doing otherwise can block folding the extload with other
+  // extends that the target does support.
   if (ISD::isEXTLoad(N0.getNode()) &&
       ISD::isUNINDEXEDLoad(N0.getNode()) &&
       EVT == cast<LoadSDNode>(N0)->getMemoryVT() &&
-      ((!LegalOperations && !cast<LoadSDNode>(N0)->isVolatile()) ||
+      ((!LegalOperations && !cast<LoadSDNode>(N0)->isVolatile() &&
+        N0.hasOneUse()) ||
        TLI.isLoadExtLegal(ISD::SEXTLOAD, VT, EVT))) {
     LoadSDNode *LN0 = cast<LoadSDNode>(N0);
     SDValue ExtLoad = DAG.getExtLoad(ISD::SEXTLOAD, SDLoc(N), VT,
@@ -10122,6 +10126,14 @@ SDValue DAGCombiner::visitFMA(SDNode *N) {
       AddToWorklist(RHSNeg.getNode());
       // TODO: The FMA node should have flags that propagate to this node.
       return DAG.getNode(ISD::FADD, DL, VT, N2, RHSNeg);
+    }
+
+    // fma (fneg x), K, y -> fma x -K, y
+    if (N0.getOpcode() == ISD::FNEG &&
+        (TLI.isOperationLegal(ISD::ConstantFP, VT) ||
+         (N1.hasOneUse() && !TLI.isFPImmLegal(N1CFP->getValueAPF(), VT)))) {
+      return DAG.getNode(ISD::FMA, DL, VT, N0.getOperand(0),
+                         DAG.getNode(ISD::FNEG, DL, VT, N1, Flags), N2);
     }
   }
 
@@ -15453,7 +15465,7 @@ static SDValue partitionShuffleOfConcats(SDNode *N, SelectionDAG &DAG) {
 //
 // To deal with this, we currently use a bunch of mostly arbitrary heuristics.
 // We don't fold shuffles where one side is a non-zero constant, and we don't
-// fold shuffles if the resulting BUILD_VECTOR would have duplicate
+// fold shuffles if the resulting (non-splat) BUILD_VECTOR would have duplicate
 // non-constant operands. This seems to work out reasonably well in practice.
 static SDValue combineShuffleOfScalars(ShuffleVectorSDNode *SVN,
                                        SelectionDAG &DAG,
@@ -15477,6 +15489,15 @@ static SDValue combineShuffleOfScalars(ShuffleVectorSDNode *SVN,
       return SDValue();
   }
 
+  // If both inputs are splats of the same value then we can safely merge this
+  // to a single BUILD_VECTOR with undef elements based on the shuffle mask.
+  bool IsSplat = false;
+  auto *BV0 = dyn_cast<BuildVectorSDNode>(N0);
+  auto *BV1 = dyn_cast<BuildVectorSDNode>(N1);
+  if (BV0 && BV1)
+    if (SDValue Splat0 = BV0->getSplatValue())
+      IsSplat = (Splat0 == BV1->getSplatValue());
+
   SmallVector<SDValue, 8> Ops;
   SmallSet<SDValue, 16> DuplicateOps;
   for (int M : SVN->getMask()) {
@@ -15495,11 +15516,12 @@ static SDValue combineShuffleOfScalars(ShuffleVectorSDNode *SVN,
       }
     }
 
-    // Don't duplicate a non-constant BUILD_VECTOR operand; semantically, this is
-    // fine, but it's likely to generate low-quality code if the target can't
-    // reconstruct an appropriate shuffle.
+    // Don't duplicate a non-constant BUILD_VECTOR operand unless we're
+    // generating a splat; semantically, this is fine, but it's likely to
+    // generate low-quality code if the target can't reconstruct an appropriate
+    // shuffle.
     if (!Op.isUndef() && !isa<ConstantSDNode>(Op) && !isa<ConstantFPSDNode>(Op))
-      if (!DuplicateOps.insert(Op).second)
+      if (!IsSplat && !DuplicateOps.insert(Op).second)
         return SDValue();
 
     Ops.push_back(Op);

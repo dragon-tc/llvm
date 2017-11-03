@@ -16,6 +16,7 @@
 #ifndef LLVM_CODEGEN_GLOBALISEL_INSTRUCTIONSELECTOR_H
 #define LLVM_CODEGEN_GLOBALISEL_INSTRUCTIONSELECTOR_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Optional.h"
 #include <bitset>
@@ -187,6 +188,13 @@ enum {
   /// - OldInsnID - Instruction ID to copy from
   /// - OpIdx - The operand to copy
   GIR_Copy,
+  /// Copy an operand to the specified instruction or add a zero register if the
+  /// operand is a zero immediate.
+  /// - NewInsnID - Instruction ID to modify
+  /// - OldInsnID - Instruction ID to copy from
+  /// - OpIdx - The operand to copy
+  /// - ZeroReg - The zero register to use
+  GIR_CopyOrAddZeroReg,
   /// Copy an operand to the specified instruction
   /// - NewInsnID - Instruction ID to modify
   /// - OldInsnID - Instruction ID to copy from
@@ -205,6 +213,10 @@ enum {
   /// - InsnID - Instruction ID to modify
   /// - RegNum - The register to add
   GIR_AddRegister,
+  /// Add a a temporary register to the specified instruction
+  /// - InsnID - Instruction ID to modify
+  /// - TempRegID - The temporary register ID to add
+  GIR_AddTempRegister,
   /// Add an immediate to the specified instruction
   /// - InsnID - Instruction ID to modify
   /// - Imm - The immediate to add
@@ -243,6 +255,10 @@ enum {
   /// Erase from parent.
   /// - InsnID - Instruction ID to erase
   GIR_EraseFromParent,
+  /// Create a new temporary register that's not constrained.
+  /// - TempRegID - The temporary register ID to initialize.
+  /// - Expected type
+  GIR_MakeTempReg,
 
   /// A successful emission
   GIR_Done,
@@ -276,14 +292,15 @@ public:
   virtual bool select(MachineInstr &I) const = 0;
 
 protected:
-  using ComplexRendererFn =
+  using ComplexRendererFns =
       Optional<SmallVector<std::function<void(MachineInstrBuilder &)>, 4>>;
   using RecordedMIVector = SmallVector<MachineInstr *, 4>;
   using NewMIVector = SmallVector<MachineInstrBuilder, 4>;
 
   struct MatcherState {
-    std::vector<ComplexRendererFn::value_type> Renderers;
+    std::vector<ComplexRendererFns::value_type> Renderers;
     RecordedMIVector MIs;
+    DenseMap<unsigned, unsigned> TempRegisters;
 
     MatcherState(unsigned MaxRenderers);
   };

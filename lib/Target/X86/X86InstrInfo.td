@@ -82,6 +82,9 @@ def SDTLockBinaryArithWithFlags : SDTypeProfile<1, 2, [SDTCisVT<0, i32>,
                                                        SDTCisPtrTy<1>,
                                                        SDTCisInt<2>]>;
 
+def SDTLockUnaryArithWithFlags : SDTypeProfile<1, 1, [SDTCisVT<0, i32>,
+                                                      SDTCisPtrTy<1>]>;
+
 def SDTX86Ret     : SDTypeProfile<0, -1, [SDTCisVT<0, i32>]>;
 
 def SDT_X86CallSeqStart : SDCallSeqStart<[SDTCisVT<0, i32>,
@@ -268,6 +271,13 @@ def X86lock_xor  : SDNode<"X86ISD::LXOR",  SDTLockBinaryArithWithFlags,
                           [SDNPHasChain, SDNPMayStore, SDNPMayLoad,
                            SDNPMemOperand]>;
 def X86lock_and  : SDNode<"X86ISD::LAND",  SDTLockBinaryArithWithFlags,
+                          [SDNPHasChain, SDNPMayStore, SDNPMayLoad,
+                           SDNPMemOperand]>;
+
+def X86lock_inc  : SDNode<"X86ISD::LINC",  SDTLockUnaryArithWithFlags,
+                          [SDNPHasChain, SDNPMayStore, SDNPMayLoad,
+                           SDNPMemOperand]>;
+def X86lock_dec  : SDNode<"X86ISD::LDEC",  SDTLockUnaryArithWithFlags,
                           [SDNPHasChain, SDNPMayStore, SDNPMayLoad,
                            SDNPMemOperand]>;
 
@@ -2180,13 +2190,13 @@ let Predicates = [HasMOVBE] in {
 let Predicates = [HasRDRAND], Defs = [EFLAGS] in {
   def RDRAND16r : I<0xC7, MRM6r, (outs GR16:$dst), (ins),
                     "rdrand{w}\t$dst",
-                    [(set GR16:$dst, EFLAGS, (X86rdrand))]>, OpSize16, TB;
+                    [(set GR16:$dst, EFLAGS, (X86rdrand))]>, OpSize16, PS;
   def RDRAND32r : I<0xC7, MRM6r, (outs GR32:$dst), (ins),
                     "rdrand{l}\t$dst",
-                    [(set GR32:$dst, EFLAGS, (X86rdrand))]>, OpSize32, TB;
+                    [(set GR32:$dst, EFLAGS, (X86rdrand))]>, OpSize32, PS;
   def RDRAND64r : RI<0xC7, MRM6r, (outs GR64:$dst), (ins),
                      "rdrand{q}\t$dst",
-                     [(set GR64:$dst, EFLAGS, (X86rdrand))]>, TB;
+                     [(set GR64:$dst, EFLAGS, (X86rdrand))]>, PS;
 }
 
 //===----------------------------------------------------------------------===//
@@ -2195,13 +2205,13 @@ let Predicates = [HasRDRAND], Defs = [EFLAGS] in {
 let Predicates = [HasRDSEED], Defs = [EFLAGS] in {
   def RDSEED16r : I<0xC7, MRM7r, (outs GR16:$dst), (ins),
                     "rdseed{w}\t$dst",
-                    [(set GR16:$dst, EFLAGS, (X86rdseed))]>, OpSize16, TB;
+                    [(set GR16:$dst, EFLAGS, (X86rdseed))]>, OpSize16, PS;
   def RDSEED32r : I<0xC7, MRM7r, (outs GR32:$dst), (ins),
                     "rdseed{l}\t$dst",
-                    [(set GR32:$dst, EFLAGS, (X86rdseed))]>, OpSize32, TB;
+                    [(set GR32:$dst, EFLAGS, (X86rdseed))]>, OpSize32, PS;
   def RDSEED64r : RI<0xC7, MRM7r, (outs GR64:$dst), (ins),
                      "rdseed{q}\t$dst",
-                     [(set GR64:$dst, EFLAGS, (X86rdseed))]>, TB;
+                     [(set GR64:$dst, EFLAGS, (X86rdseed))]>, PS;
 }
 
 //===----------------------------------------------------------------------===//
