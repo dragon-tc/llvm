@@ -530,13 +530,8 @@ Instruction *InstCombiner::FoldShiftByConstant(Value *Op0, Constant *Op1,
         return BinaryOperator::CreateMul(BO->getOperand(0),
                                          ConstantExpr::getShl(BOOp, Op1));
 
-  // Try to fold constant and into select arguments.
-  if (SelectInst *SI = dyn_cast<SelectInst>(Op0))
-    if (Instruction *R = FoldOpIntoSelect(I, SI))
-      return R;
-  if (isa<PHINode>(Op0))
-    if (Instruction *NV = FoldOpIntoPhi(I))
-      return NV;
+  if (Instruction *FoldedShift = foldOpWithConstantIntoOperand(I))
+    return FoldedShift;
 
   // Fold shift2(trunc(shift1(x,c1)), c2) -> trunc(shift2(shift1(x,c1),c2))
   if (TruncInst *TI = dyn_cast<TruncInst>(Op0)) {
@@ -730,6 +725,25 @@ Instruction *InstCombiner::visitShl(BinaryOperator &I) {
 
   if (ConstantInt *Op1C = dyn_cast<ConstantInt>(I.getOperand(1))) {
     unsigned ShAmt = Op1C->getZExtValue();
+
+    // Turn:
+    //  %zext = zext i32 %V to i64
+    //  %res = shl i64 %V, 8
+    //
+    // Into:
+    //  %shl = shl i32 %V, 8
+    //  %res = zext i32 %shl to i64
+    //
+    // This is only valid if %V would have zeros shifted out.
+    if (auto *ZI = dyn_cast<ZExtInst>(I.getOperand(0))) {
+      unsigned SrcBitWidth = ZI->getSrcTy()->getScalarSizeInBits();
+      if (ShAmt < SrcBitWidth &&
+          MaskedValueIsZero(ZI->getOperand(0),
+                            APInt::getHighBitsSet(SrcBitWidth, ShAmt), 0, &I)) {
+        auto *Shl = Builder->CreateShl(ZI->getOperand(0), ShAmt);
+        return new ZExtInst(Shl, I.getType());
+      }
+    }
 
     // If the shifted-out value is known-zero, then this is a NUW shift.
     if (!I.hasNoUnsignedWrap() &&

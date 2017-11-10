@@ -207,7 +207,7 @@ enum DiscriminantList {
 };
 
 /// Line Number Standard Opcode Encodings.
-enum LineNumberOps {
+enum LineNumberOps : uint8_t {
 #define HANDLE_DW_LNS(ID, NAME) DW_LNS_##NAME = ID,
 #include "llvm/Support/Dwarf.def"
 };
@@ -423,7 +423,9 @@ struct PubIndexEntryDescriptor {
                                             KIND_OFFSET)),
         Linkage(static_cast<GDBIndexEntryLinkage>((Value & LINKAGE_MASK) >>
                                                   LINKAGE_OFFSET)) {}
-  uint8_t toBits() { return Kind << KIND_OFFSET | Linkage << LINKAGE_OFFSET; }
+  uint8_t toBits() const {
+    return Kind << KIND_OFFSET | Linkage << LINKAGE_OFFSET;
+  }
 
 private:
   enum {

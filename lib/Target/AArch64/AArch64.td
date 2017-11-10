@@ -85,9 +85,8 @@ def FeaturePostRAScheduler : SubtargetFeature<"use-postra-scheduler",
 def FeatureSlowMisaligned128Store : SubtargetFeature<"slow-misaligned-128store",
     "Misaligned128StoreIsSlow", "true", "Misaligned 128 bit stores are slow">;
 
-def FeatureAvoidQuadLdStPairs : SubtargetFeature<"no-quad-ldst-pairs",
-    "AvoidQuadLdStPairs", "true",
-    "Do not form quad load/store pair operations">;
+def FeatureSlowPaired128 : SubtargetFeature<"slow-paired-128",
+    "Paired128IsSlow", "true", "Paired 128 bit loads and stores are slow">;
 
 def FeatureAlternateSExtLoadCVTF32Pattern : SubtargetFeature<
     "alternate-sextload-cvt-f32-pattern", "UseAlternateSExtLoadCVTF32Pattern",
@@ -222,7 +221,7 @@ def ProcCyclone : SubtargetFeature<"cyclone", "ARMProcFamily", "Cyclone",
 
 def ProcExynosM1 : SubtargetFeature<"exynosm1", "ARMProcFamily", "ExynosM1",
                                     "Samsung Exynos-M1 processors",
-                                    [FeatureAvoidQuadLdStPairs,
+                                    [FeatureSlowPaired128,
                                      FeatureCRC,
                                      FeatureCrypto,
                                      FeatureCustomCheapAsMoveHandling,
@@ -230,12 +229,13 @@ def ProcExynosM1 : SubtargetFeature<"exynosm1", "ARMProcFamily", "ExynosM1",
                                      FeatureNEON,
                                      FeaturePerfMon,
                                      FeaturePostRAScheduler,
+                                     FeatureSlowMisaligned128Store,
                                      FeatureUseRSqrt,
                                      FeatureZCZeroing]>;
 
 def ProcExynosM2 : SubtargetFeature<"exynosm2", "ARMProcFamily", "ExynosM1",
-                                    "Samsung Exynos-M2 processors",
-                                    [FeatureAvoidQuadLdStPairs,
+                                    "Samsung Exynos-M2/M3 processors",
+                                    [FeatureSlowPaired128,
                                      FeatureCRC,
                                      FeatureCrypto,
                                      FeatureCustomCheapAsMoveHandling,
@@ -243,6 +243,7 @@ def ProcExynosM2 : SubtargetFeature<"exynosm2", "ARMProcFamily", "ExynosM1",
                                      FeatureNEON,
                                      FeaturePerfMon,
                                      FeaturePostRAScheduler,
+                                     FeatureSlowMisaligned128Store,
                                      FeatureZCZeroing]>;
 
 def ProcKryo    : SubtargetFeature<"kryo", "ARMProcFamily", "Kryo",
@@ -262,9 +263,13 @@ def ProcFalkor  : SubtargetFeature<"falkor", "ARMProcFamily", "Falkor",
                                    "Qualcomm Falkor processors", [
                                    FeatureCRC,
                                    FeatureCrypto,
+                                   FeatureCustomCheapAsMoveHandling,
                                    FeatureFPARMv8,
                                    FeatureNEON,
-                                   FeaturePerfMon
+                                   FeaturePerfMon,
+                                   FeaturePostRAScheduler,
+                                   FeaturePredictableSelectIsExpensive,
+                                   FeatureZCZeroing
                                    ]>;
 
 def ProcVulcan  : SubtargetFeature<"vulcan", "ARMProcFamily", "Vulcan",
@@ -296,6 +301,7 @@ def : ProcessorModel<"cortex-a73", CortexA57Model, [ProcA73]>;
 def : ProcessorModel<"cyclone", CycloneModel, [ProcCyclone]>;
 def : ProcessorModel<"exynos-m1", ExynosM1Model, [ProcExynosM1]>;
 def : ProcessorModel<"exynos-m2", ExynosM1Model, [ProcExynosM2]>;
+def : ProcessorModel<"exynos-m3", ExynosM1Model, [ProcExynosM2]>;
 def : ProcessorModel<"falkor", FalkorModel, [ProcFalkor]>;
 def : ProcessorModel<"kryo", KryoModel, [ProcKryo]>;
 def : ProcessorModel<"vulcan", VulcanModel, [ProcVulcan]>;

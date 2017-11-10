@@ -511,9 +511,6 @@ private:
   void visitSelectInst(SelectInst &I);
   void visitBinaryOperator(Instruction &I);
   void visitCmpInst(CmpInst &I);
-  void visitExtractElementInst(ExtractElementInst &I);
-  void visitInsertElementInst(InsertElementInst &I);
-  void visitShuffleVectorInst(ShuffleVectorInst &I);
   void visitExtractValueInst(ExtractValueInst &EVI);
   void visitInsertValueInst(InsertValueInst &IVI);
   void visitLandingPadInst(LandingPadInst &I) { markAnythingOverdefined(&I); }
@@ -549,7 +546,7 @@ private:
 
   void visitInstruction(Instruction &I) {
     // If a new instruction is added to LLVM that we don't handle.
-    dbgs() << "SCCP: Don't know how to handle: " << I << '\n';
+    DEBUG(dbgs() << "SCCP: Don't know how to handle: " << I << '\n');
     markAnythingOverdefined(&I);   // Just in case
   }
 };
@@ -968,21 +965,6 @@ void SCCPSolver::visitCmpInst(CmpInst &I) {
     return;
 
   markOverdefined(&I);
-}
-
-void SCCPSolver::visitExtractElementInst(ExtractElementInst &I) {
-  // TODO : SCCP does not handle vectors properly.
-  return markOverdefined(&I);
-}
-
-void SCCPSolver::visitInsertElementInst(InsertElementInst &I) {
-  // TODO : SCCP does not handle vectors properly.
-  return markOverdefined(&I);
-}
-
-void SCCPSolver::visitShuffleVectorInst(ShuffleVectorInst &I) {
-  // TODO : SCCP does not handle vectors properly.
-  return markOverdefined(&I);
 }
 
 // Handle getelementptr instructions.  If all operands are constants then we
@@ -1723,7 +1705,10 @@ static bool runIPSCCP(Module &M, const DataLayout &DL,
 
     // If this is an exact definition of this function, then we can propagate
     // information about its result into callsites of it.
-    if (F.hasExactDefinition())
+    // Don't touch naked functions. They may contain asm returning a
+    // value we don't see, so we may end up interprocedurally propagating
+    // the return value incorrectly.
+    if (F.hasExactDefinition() && !F.hasFnAttribute(Attribute::Naked))
       Solver.AddTrackedFunction(&F);
 
     // If this function only has direct calls that we can see, we can track its

@@ -326,7 +326,7 @@ def immZExt16  : PatLeaf<(imm), [{
   // field.  Used by instructions like 'ori'.
   return (uint64_t)N->getZExtValue() == (unsigned short)N->getZExtValue();
 }], LO16>;
-def immSExt8 : ImmLeaf<i32, [{ return isInt<8>(Imm); }]>;
+def immAnyExt8 : ImmLeaf<i32, [{ return isInt<8>(Imm) || isUInt<8>(Imm); }]>;
 def immSExt5NonZero : ImmLeaf<i32, [{ return Imm && isInt<5>(Imm); }]>;
 
 // imm16Shifted* - These match immediates where the low 16-bits are zero.  There
@@ -1508,8 +1508,14 @@ def DCBTST : DCB_Form_hint<246, (outs), (ins u5imm:$TH, memrr:$dst),
                       PPC970_DGroup_Single;
 } // hasSideEffects = 0
 
+def ICBLC  : XForm_icbt<31, 230, (outs), (ins u4imm:$CT, memrr:$src),
+                       "icblc $CT, $src", IIC_LdStStore>, Requires<[HasICBT]>;
+def ICBLQ  : XForm_icbt<31, 198, (outs), (ins u4imm:$CT, memrr:$src),
+                       "icblq. $CT, $src", IIC_LdStLoad>, Requires<[HasICBT]>;
 def ICBT  : XForm_icbt<31, 22, (outs), (ins u4imm:$CT, memrr:$src),
                        "icbt $CT, $src", IIC_LdStLoad>, Requires<[HasICBT]>;
+def ICBTLS : XForm_icbt<31, 486, (outs), (ins u4imm:$CT, memrr:$src),
+                       "icbtls $CT, $src", IIC_LdStLoad>, Requires<[HasICBT]>;
 
 def : Pat<(int_ppc_dcbt xoaddr:$dst),
           (DCBT 0, xoaddr:$dst)>;
@@ -2172,10 +2178,18 @@ let isCompare = 1, hasSideEffects = 0 in {
                         "fcmpu $crD, $fA, $fB", IIC_FPCompare>;
 }
 
+def FTDIV: XForm_17<63, 128, (outs crrc:$crD), (ins f8rc:$fA, f8rc:$fB),
+                      "ftdiv $crD, $fA, $fB", IIC_FPCompare>;
+def FTSQRT: XForm_17a<63, 160, (outs crrc:$crD), (ins f8rc:$fB),
+                      "ftsqrt $crD, $fB", IIC_FPCompare>;
+
 let Uses = [RM] in {
   let hasSideEffects = 0 in {
   defm FCTIW  : XForm_26r<63, 14, (outs f8rc:$frD), (ins f8rc:$frB),
                           "fctiw", "$frD, $frB", IIC_FPGeneral,
+                          []>;
+  defm FCTIWU  : XForm_26r<63, 142, (outs f8rc:$frD), (ins f8rc:$frB),
+                          "fctiwu", "$frD, $frB", IIC_FPGeneral,
                           []>;
   defm FCTIWZ : XForm_26r<63, 15, (outs f8rc:$frD), (ins f8rc:$frB),
                           "fctiwz", "$frD, $frB", IIC_FPGeneral,
@@ -2372,6 +2386,13 @@ def MTSPR : XFXForm_1<31, 467, (outs), (ins i32imm:$SPR, gprc:$RT),
 
 def MFTB : XFXForm_1<31, 371, (outs gprc:$RT), (ins i32imm:$SPR),
                      "mftb $RT, $SPR", IIC_SprMFTB>;
+
+def MFPMR : XFXForm_1<31, 334, (outs gprc:$RT), (ins i32imm:$SPR),
+                     "mfpmr $RT, $SPR", IIC_SprMFPMR>;
+
+def MTPMR : XFXForm_1<31, 462, (outs), (ins i32imm:$SPR, gprc:$RT),
+                     "mtpmr $SPR, $RT", IIC_SprMTPMR>;
+
 
 // A pseudo-instruction used to implement the read of the 64-bit cycle counter
 // on a 32-bit target.

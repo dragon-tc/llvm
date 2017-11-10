@@ -172,20 +172,53 @@ static bool needToInsertPhisForLCSSA(Loop *L, std::vector<BasicBlock *> Blocks,
   return false;
 }
 
+/// Adds ClonedBB to LoopInfo, creates a new loop for ClonedBB if necessary
+/// and adds a mapping from the original loop to the new loop to NewLoops.
+/// Returns nullptr if no new loop was created and a pointer to the
+/// original loop OriginalBB was part of otherwise.
+const Loop* llvm::addClonedBlockToLoopInfo(BasicBlock *OriginalBB,
+                                           BasicBlock *ClonedBB, LoopInfo *LI,
+                                           NewLoopsMap &NewLoops) {
+  // Figure out which loop New is in.
+  const Loop *OldLoop = LI->getLoopFor(OriginalBB);
+  assert(OldLoop && "Should (at least) be in the loop being unrolled!");
+
+  Loop *&NewLoop = NewLoops[OldLoop];
+  if (!NewLoop) {
+    // Found a new sub-loop.
+    assert(OriginalBB == OldLoop->getHeader() &&
+           "Header should be first in RPO");
+
+    NewLoop = new Loop();
+    Loop *NewLoopParent = NewLoops.lookup(OldLoop->getParentLoop());
+
+    if (NewLoopParent)
+      NewLoopParent->addChildLoop(NewLoop);
+    else
+      LI->addTopLevelLoop(NewLoop);
+
+    NewLoop->addBasicBlockToLoop(ClonedBB, *LI);
+    return OldLoop;
+  } else {
+    NewLoop->addBasicBlockToLoop(ClonedBB, *LI);
+    return nullptr;
+  }
+}
+
 /// Unroll the given loop by Count. The loop must be in LCSSA form. Returns true
 /// if unrolling was successful, or false if the loop was unmodified. Unrolling
 /// can only fail when the loop's latch block is not terminated by a conditional
 /// branch instruction. However, if the trip count (and multiple) are not known,
 /// loop unrolling will mostly produce more code that is no faster.
 ///
-/// TripCount is generally defined as the number of times the loop header
-/// executes. UnrollLoop relaxes the definition to permit early exits: here
-/// TripCount is the iteration on which control exits LatchBlock if no early
-/// exits were taken. Note that UnrollLoop assumes that the loop counter test
-/// terminates LatchBlock in order to remove unnecesssary instances of the
-/// test. In other words, control may exit the loop prior to TripCount
-/// iterations via an early branch, but control may not exit the loop from the
-/// LatchBlock's terminator prior to TripCount iterations.
+/// TripCount is the upper bound of the iteration on which control exits
+/// LatchBlock. Control may exit the loop prior to TripCount iterations either
+/// via an early branch in other loop block or via LatchBlock terminator. This
+/// is relaxed from the general definition of trip count which is the number of
+/// times the loop header executes. Note that UnrollLoop assumes that the loop
+/// counter test is in LatchBlock in order to remove unnecesssary instances of
+/// the test.  If control can exit the loop from the LatchBlock's terminator
+/// prior to TripCount iterations, flag PreserveCondBr needs to be set.
 ///
 /// PreserveCondBr indicates whether the conditional branch of the LatchBlock
 /// needs to be preserved.  It is needed when we use trip count upper bound to
@@ -428,28 +461,14 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
         assert(LI->getLoopFor(*BB) == L && "Header should not be in a sub-loop");
         L->addBasicBlockToLoop(New, *LI);
       } else {
-        // Figure out which loop New is in.
-        const Loop *OldLoop = LI->getLoopFor(*BB);
-        assert(OldLoop && "Should (at least) be in the loop being unrolled!");
-
-        Loop *&NewLoop = NewLoops[OldLoop];
-        if (!NewLoop) {
-          // Found a new sub-loop.
-          assert(*BB == OldLoop->getHeader() &&
-                 "Header should be first in RPO");
-
-          Loop *NewLoopParent = NewLoops.lookup(OldLoop->getParentLoop());
-          assert(NewLoopParent &&
-                 "Expected parent loop before sub-loop in RPO");
-          NewLoop = new Loop;
-          NewLoopParent->addChildLoop(NewLoop);
-          LoopsToSimplify.insert(NewLoop);
+        const Loop *OldLoop = addClonedBlockToLoopInfo(*BB, New, LI, NewLoops);
+        if (OldLoop) {
+          LoopsToSimplify.insert(NewLoops[OldLoop]);
 
           // Forget the old loop, since its inputs may have changed.
           if (SE)
             SE->forgetLoop(OldLoop);
         }
-        NewLoop->addBasicBlockToLoop(New, *LI);
       }
 
       if (*BB == Header)
@@ -672,6 +691,11 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
         BB->getInstList().erase(Inst);
     }
   }
+
+  // TODO: after peeling or unrolling, previously loop variant conditions are
+  // likely to fold to constants, eagerly propagating those here will require
+  // fewer cleanup passes to be run.  Alternatively, a LoopEarlyCSE might be
+  // appropriate.
 
   NumCompletelyUnrolled += CompletelyUnroll;
   ++NumUnrolled;

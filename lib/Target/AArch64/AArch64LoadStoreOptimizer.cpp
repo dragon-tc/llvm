@@ -687,9 +687,30 @@ AArch64LoadStoreOpt::mergePairedInsns(MachineBasicBlock::iterator I,
   MachineInstrBuilder MIB;
   DebugLoc DL = I->getDebugLoc();
   MachineBasicBlock *MBB = I->getParent();
+  MachineOperand RegOp0 = getLdStRegOp(*RtMI);
+  MachineOperand RegOp1 = getLdStRegOp(*Rt2MI);
+  // Kill flags may become invalid when moving stores for pairing.
+  if (RegOp0.isUse()) {
+    if (!MergeForward) {
+      // Clear kill flags on store if moving upwards. Example:
+      //   STRWui %w0, ...
+      //   USE %w1
+      //   STRWui kill %w1  ; need to clear kill flag when moving STRWui upwards
+      RegOp0.setIsKill(false);
+      RegOp1.setIsKill(false);
+    } else {
+      // Clear kill flags of the first stores register. Example:
+      //   STRWui %w1, ...
+      //   USE kill %w1   ; need to clear kill flag when moving STRWui downwards
+      //   STRW %w0
+      unsigned Reg = getLdStRegOp(*I).getReg();
+      for (MachineInstr &MI : make_range(std::next(I), Paired))
+        MI.clearRegisterKills(Reg, TRI);
+    }
+  }
   MIB = BuildMI(*MBB, InsertionPoint, DL, TII->get(getMatchingPairOpcode(Opc)))
-            .addOperand(getLdStRegOp(*RtMI))
-            .addOperand(getLdStRegOp(*Rt2MI))
+            .addOperand(RegOp0)
+            .addOperand(RegOp1)
             .addOperand(BaseRegOp)
             .addImm(OffsetImm)
             .setMemRefs(I->mergeMemRefsWith(*Paired));
@@ -767,6 +788,7 @@ AArch64LoadStoreOpt::promoteLoadFromStore(MachineBasicBlock::iterator LoadI,
     // Remove the load, if the destination register of the loads is the same
     // register for stored value.
     if (StRt == LdRt && LoadSize == 8) {
+      StoreI->clearRegisterKills(StRt, TRI);
       DEBUG(dbgs() << "Remove load instruction:\n    ");
       DEBUG(LoadI->print(dbgs()));
       DEBUG(dbgs() << "\n");
@@ -831,7 +853,11 @@ AArch64LoadStoreOpt::promoteLoadFromStore(MachineBasicBlock::iterator LoadI,
               .addImm(Imms);
     }
   }
-  (void)BitExtMI;
+
+  // Clear kill flags between store and load.
+  for (MachineInstr &MI : make_range(StoreI->getIterator(),
+                                     BitExtMI->getIterator()))
+    MI.clearRegisterKills(StRt, TRI);
 
   DEBUG(dbgs() << "Promoting load by replacing :\n    ");
   DEBUG(StoreI->print(dbgs()));
@@ -1467,6 +1493,9 @@ bool AArch64LoadStoreOpt::tryToPairLdStInst(MachineBasicBlock::iterator &MBBI) {
   bool IsUnscaled = TII->isUnscaledLdSt(MI);
   int Offset = getLdStOffsetOp(MI).getImm();
   int OffsetStride = IsUnscaled ? getMemScale(MI) : 1;
+  // Allow one more for offset.
+  if (Offset > 0)
+    Offset -= OffsetStride;
   if (!inBoundsForPair(IsUnscaled, Offset, OffsetStride))
     return false;
 

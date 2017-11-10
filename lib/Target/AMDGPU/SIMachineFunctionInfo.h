@@ -23,6 +23,54 @@ namespace llvm {
 
 class MachineRegisterInfo;
 
+class AMDGPUImagePseudoSourceValue : public PseudoSourceValue {
+public:
+  explicit AMDGPUImagePseudoSourceValue() :
+    PseudoSourceValue(PseudoSourceValue::TargetCustom) { }
+
+  bool isConstant(const MachineFrameInfo *) const override {
+    // This should probably be true for most images, but we will start by being
+    // conservative.
+    return false;
+  }
+
+  bool isAliased(const MachineFrameInfo *) const override {
+    // FIXME: If we ever change image intrinsics to accept fat pointers, then
+    // this could be true for some cases.
+    return false;
+  }
+
+  bool mayAlias(const MachineFrameInfo*) const override {
+    // FIXME: If we ever change image intrinsics to accept fat pointers, then
+    // this could be true for some cases.
+    return false;
+  }
+};
+
+class AMDGPUBufferPseudoSourceValue : public PseudoSourceValue {
+public:
+  explicit AMDGPUBufferPseudoSourceValue() :
+    PseudoSourceValue(PseudoSourceValue::TargetCustom) { }
+
+  bool isConstant(const MachineFrameInfo *) const override {
+    // This should probably be true for most images, but we will start by being
+    // conservative.
+    return false;
+  }
+
+  bool isAliased(const MachineFrameInfo *) const override {
+    // FIXME: If we ever change image intrinsics to accept fat pointers, then
+    // this could be true for some cases.
+    return false;
+  }
+
+  bool mayAlias(const MachineFrameInfo*) const override {
+    // FIXME: If we ever change image intrinsics to accept fat pointers, then
+    // this could be true for some cases.
+    return false;
+  }
+};
+
 /// This class keeps track of the SPI_SP_INPUT_ADDR config register, which
 /// tells the hardware which interpolation parameters to load.
 class SIMachineFunctionInfo final : public AMDGPUMachineFunction {
@@ -35,6 +83,9 @@ class SIMachineFunctionInfo final : public AMDGPUMachineFunction {
   // as the input registers.
   unsigned ScratchRSrcReg;
   unsigned ScratchWaveOffsetReg;
+
+  // Input registers for non-HSA ABI
+  unsigned PrivateMemoryPtrUserSGPR;
 
   // Input registers setup for the HSA ABI.
   // User SGPRs in allocation order.
@@ -72,6 +123,9 @@ class SIMachineFunctionInfo final : public AMDGPUMachineFunction {
   std::array<int, 3> DebuggerWorkGroupIDStackObjectIndices;
   // Stack object indices for work item IDs.
   std::array<int, 3> DebuggerWorkItemIDStackObjectIndices;
+
+  AMDGPUBufferPseudoSourceValue BufferPSV;
+  AMDGPUImagePseudoSourceValue ImagePSV;
 
 public:
   // FIXME: Make private
@@ -112,6 +166,11 @@ private:
   bool WorkItemIDY : 1;
   bool WorkItemIDZ : 1;
 
+  // Private memory buffer
+  // Compute directly in sgpr[0:1]
+  // Other shaders indirect 64-bits at sgpr[0:1]
+  bool PrivateMemoryInputPtr : 1;
+
   MCPhysReg getNextUserSGPR() const {
     assert(NumSystemSGPRs == 0 && "System SGPRs must be added after user SGPRs");
     return AMDGPU::SGPR0 + NumUserSGPRs;
@@ -147,6 +206,7 @@ public:
   unsigned addKernargSegmentPtr(const SIRegisterInfo &TRI);
   unsigned addDispatchID(const SIRegisterInfo &TRI);
   unsigned addFlatScratchInit(const SIRegisterInfo &TRI);
+  unsigned addPrivateMemoryPtr(const SIRegisterInfo &TRI);
 
   // Add system SGPRs.
   unsigned addWorkGroupIDX() {
@@ -251,6 +311,10 @@ public:
     return WorkItemIDZ;
   }
 
+  bool hasPrivateMemoryInputPtr() const {
+    return PrivateMemoryInputPtr;
+  }
+
   unsigned getNumUserSGPRs() const {
     return NumUserSGPRs;
   }
@@ -285,6 +349,10 @@ public:
 
   unsigned getQueuePtrUserSGPR() const {
     return QueuePtrUserSGPR;
+  }
+
+  unsigned getPrivateMemoryPtrUserSGPR() const {
+    return PrivateMemoryPtrUserSGPR;
   }
 
   bool hasSpilledSGPRs() const {
@@ -433,6 +501,14 @@ public:
       return AMDGPU::VGPR2;
     }
     llvm_unreachable("unexpected dimension");
+  }
+
+  const AMDGPUBufferPseudoSourceValue *getBufferPSV() const {
+    return &BufferPSV;
+  }
+
+  const AMDGPUImagePseudoSourceValue *getImagePSV() const {
+    return &ImagePSV;
   }
 };
 

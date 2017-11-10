@@ -41,7 +41,7 @@ class MetadataLoader {
 public:
   ~MetadataLoader();
   MetadataLoader(BitstreamCursor &Stream, Module &TheModule,
-                 BitcodeReaderValueList &ValueList,
+                 BitcodeReaderValueList &ValueList, bool IsImporting,
                  std::function<Type *(unsigned)> getTypeByID);
   MetadataLoader &operator=(MetadataLoader &&);
   MetadataLoader(MetadataLoader &&);
@@ -52,12 +52,18 @@ public:
   // Parse a function metadata block
   Error parseFunctionMetadata() { return parseMetadata(false); }
 
+  /// Set the mode to strip TBAA metadata on load.
+  void setStripTBAA(bool StripTBAA = true);
+
+  /// Return true if the Loader is stripping TBAA metadata.
+  bool isStrippingTBAA();
+
   // Return true there are remaining unresolved forward references.
   bool hasFwdRefs() const;
 
   /// Return the given metadata, creating a replaceable forward reference if
   /// necessary.
-  Metadata *getMetadataFwdRef(unsigned Idx);
+  Metadata *getMetadataFwdRefOrLoad(unsigned Idx);
 
   MDNode *getMDNodeFwdRefOrNull(unsigned Idx);
 

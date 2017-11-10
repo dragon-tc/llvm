@@ -84,6 +84,7 @@ protected:
   SDValue performCtlzCombine(const SDLoc &SL, SDValue Cond, SDValue LHS,
                              SDValue RHS, DAGCombinerInfo &DCI) const;
   SDValue performSelectCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+  SDValue performFNegCombine(SDNode *N, DAGCombinerInfo &DCI) const;
 
   static EVT getEquivalentMemType(LLVMContext &Context, EVT VT);
 
@@ -117,6 +118,16 @@ protected:
 
 public:
   AMDGPUTargetLowering(const TargetMachine &TM, const AMDGPUSubtarget &STI);
+
+  bool mayIgnoreSignedZero(SDValue Op) const {
+    if (getTargetMachine().Options.UnsafeFPMath) // FIXME: nsz only
+      return true;
+
+    if (const auto *BO = dyn_cast<BinaryWithFlagsSDNode>(Op))
+      return BO->Flags.hasNoSignedZeros();
+
+    return false;
+  }
 
   bool isFAbsFree(EVT VT) const override;
   bool isFNegFree(EVT VT) const override;
@@ -313,11 +324,13 @@ enum NodeType : unsigned {
   /// Pointer to the start of the shader's constant data.
   CONST_DATA_PTR,
   SENDMSG,
+  SENDMSGHALT,
   INTERP_MOV,
   INTERP_P1,
   INTERP_P2,
   PC_ADD_REL_OFFSET,
   KILL,
+  DUMMY_CHAIN,
   FIRST_MEM_OPCODE_NUMBER = ISD::FIRST_TARGET_MEMORY_OPCODE,
   STORE_MSKOR,
   LOAD_CONSTANT,
@@ -325,6 +338,8 @@ enum NodeType : unsigned {
   ATOMIC_CMP_SWAP,
   ATOMIC_INC,
   ATOMIC_DEC,
+  BUFFER_LOAD,
+  BUFFER_LOAD_FORMAT,
   LAST_AMDGPU_ISD_NUMBER
 };
 

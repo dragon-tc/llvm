@@ -16,6 +16,7 @@
 #include "X86RegisterInfo.h"
 #include "X86ShuffleDecodeConstantPool.h"
 #include "InstPrinter/X86ATTInstPrinter.h"
+#include "InstPrinter/X86InstComments.h"
 #include "MCTargetDesc/X86BaseInfo.h"
 #include "Utils/X86ShuffleDecode.h"
 #include "llvm/ADT/Optional.h"
@@ -497,16 +498,11 @@ ReSimplify:
     break;
   }
 
-  // TAILJMPd, TAILJMPd64, TailJMPd_cc - Lower to the correct jump instruction.
+  // TAILJMPd, TAILJMPd64 - Lower to the correct jump instruction.
   { unsigned Opcode;
   case X86::TAILJMPr:   Opcode = X86::JMP32r; goto SetTailJmpOpcode;
   case X86::TAILJMPd:
   case X86::TAILJMPd64: Opcode = X86::JMP_1;  goto SetTailJmpOpcode;
-  case X86::TAILJMPd_CC:
-  case X86::TAILJMPd64_CC:
-    Opcode = X86::GetCondBranchFromCond(
-        static_cast<X86::CondCode>(MI->getOperand(1).getImm()));
-    goto SetTailJmpOpcode;
 
   SetTailJmpOpcode:
     MCOperand Saved = OutMI.getOperand(0);
@@ -1114,56 +1110,6 @@ void X86AsmPrinter::LowerPATCHABLE_TAIL_CALL(const MachineInstr &MI, X86MCInstLo
   OutStreamer->EmitInstruction(TC, getSubtargetInfo());
 }
 
-void X86AsmPrinter::EmitXRayTable() {
-  if (Sleds.empty())
-    return;
-  
-  auto PrevSection = OutStreamer->getCurrentSectionOnly();
-  auto Fn = MF->getFunction();
-  MCSection *Section = nullptr;
-  if (Subtarget->isTargetELF()) {
-    if (Fn->hasComdat()) {
-      Section = OutContext.getELFSection("xray_instr_map", ELF::SHT_PROGBITS,
-                                         ELF::SHF_ALLOC | ELF::SHF_GROUP, 0,
-                                         Fn->getComdat()->getName());
-    } else {
-      Section = OutContext.getELFSection("xray_instr_map", ELF::SHT_PROGBITS,
-                                         ELF::SHF_ALLOC);
-    }
-  } else if (Subtarget->isTargetMachO()) {
-    Section = OutContext.getMachOSection("__DATA", "xray_instr_map", 0,
-                                         SectionKind::getReadOnlyWithRel());
-  } else {
-    llvm_unreachable("Unsupported target");
-  }
-
-  // Before we switch over, we force a reference to a label inside the
-  // xray_instr_map section. Since EmitXRayTable() is always called just
-  // before the function's end, we assume that this is happening after the
-  // last return instruction.
-  //
-  // We then align the reference to 16 byte boundaries, which we determined
-  // experimentally to be beneficial to avoid causing decoder stalls.
-  MCSymbol *Tmp = OutContext.createTempSymbol("xray_synthetic_", true);
-  OutStreamer->EmitCodeAlignment(16);
-  OutStreamer->EmitSymbolValue(Tmp, 8, false);
-  OutStreamer->SwitchSection(Section);
-  OutStreamer->EmitLabel(Tmp);
-  for (const auto &Sled : Sleds) {
-    OutStreamer->EmitSymbolValue(Sled.Sled, 8);
-    OutStreamer->EmitSymbolValue(CurrentFnSym, 8);
-    auto Kind = static_cast<uint8_t>(Sled.Kind);
-    OutStreamer->EmitBytes(
-        StringRef(reinterpret_cast<const char *>(&Kind), 1));
-    OutStreamer->EmitBytes(
-        StringRef(reinterpret_cast<const char *>(&Sled.AlwaysInstrument), 1));
-    OutStreamer->EmitZeros(14);
-  }
-  OutStreamer->SwitchSection(PrevSection);
-
-  Sleds.clear();
-}
-
 // Returns instruction preceding MBBI in MachineFunction.
 // If MBBI is the first instruction of the first basic block, returns null.
 static MachineBasicBlock::const_iterator
@@ -1290,6 +1236,13 @@ void X86AsmPrinter::EmitInstruction(const MachineInstr *MI) {
   X86MCInstLower MCInstLowering(*MF, *this);
   const X86RegisterInfo *RI = MF->getSubtarget<X86Subtarget>().getRegisterInfo();
 
+  // Add a comment about EVEX-2-VEX compression for AVX-512 instrs that
+  // are compressed from EVEX encoding to VEX encoding.
+  if (TM.Options.MCOptions.ShowMCEncoding) {
+    if (MI->getAsmPrinterFlags() & AC_EVEX_2_VEX)
+      OutStreamer->AddComment("EVEX TO VEX Compression ", false);
+  }
+
   switch (MI->getOpcode()) {
   case TargetOpcode::DBG_VALUE:
     llvm_unreachable("Should be handled target independently");
@@ -1323,11 +1276,9 @@ void X86AsmPrinter::EmitInstruction(const MachineInstr *MI) {
   case X86::TAILJMPr:
   case X86::TAILJMPm:
   case X86::TAILJMPd:
-  case X86::TAILJMPd_CC:
   case X86::TAILJMPr64:
   case X86::TAILJMPm64:
   case X86::TAILJMPd64:
-  case X86::TAILJMPd64_CC:
   case X86::TAILJMPr64_REX:
   case X86::TAILJMPm64_REX:
     // Lower these as normal, but add some comments.

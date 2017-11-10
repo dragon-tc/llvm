@@ -1027,7 +1027,8 @@ const TargetRegisterClass *SIRegisterInfo::getSubRegClass(
     return RC;
 
   // We can assume that each lane corresponds to one 32-bit register.
-  unsigned Count = countPopulation(getSubRegIndexLaneMask(SubIdx));
+  LaneBitmask::Type Mask = getSubRegIndexLaneMask(SubIdx).getAsInteger();
+  unsigned Count = countPopulation(Mask);
   if (isSGPRClass(RC)) {
     switch (Count) {
     case 1:
@@ -1107,10 +1108,12 @@ unsigned SIRegisterInfo::getPreloadedValue(const MachineFunction &MF,
   case SIRegisterInfo::PRIVATE_SEGMENT_WAVE_BYTE_OFFSET:
     return MFI->PrivateSegmentWaveByteOffsetSystemSGPR;
   case SIRegisterInfo::PRIVATE_SEGMENT_BUFFER:
-    assert(ST.isAmdCodeObjectV2() &&
-           "Non-CodeObjectV2 ABI currently uses relocations");
-    assert(MFI->hasPrivateSegmentBuffer());
-    return MFI->PrivateSegmentBufferUserSGPR;
+    if (ST.isAmdCodeObjectV2(MF)) {
+      assert(MFI->hasPrivateSegmentBuffer());
+      return MFI->PrivateSegmentBufferUserSGPR;
+    }
+    assert(MFI->hasPrivateMemoryInputPtr());
+    return MFI->PrivateMemoryPtrUserSGPR;
   case SIRegisterInfo::KERNARG_SEGMENT_PTR:
     assert(MFI->hasKernargSegmentPtr());
     return MFI->KernargSegmentPtrUserSGPR;

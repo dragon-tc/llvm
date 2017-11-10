@@ -179,9 +179,9 @@ bool Loop::isLCSSAForm(DominatorTree &DT) const {
 }
 
 bool Loop::isRecursivelyLCSSAForm(DominatorTree &DT, const LoopInfo &LI) const {
-  // For each block we check that it doesn't have any uses outside of it's
-  // innermost loop. This process will transitivelly guarntee that current loop 
-  // and all of the nested loops are in the LCSSA form.
+  // For each block we check that it doesn't have any uses outside of its
+  // innermost loop. This process will transitively guarantee that the current
+  // loop and all of the nested loops are in LCSSA form.
   return all_of(this->blocks(), [&](const BasicBlock *BB) {
     return isBlockInLCSSAForm(*LI.getLoopFor(BB), *BB, DT);
   });
@@ -689,18 +689,13 @@ PreservedAnalyses LoopPrinterPass::run(Function &F,
   return PreservedAnalyses::all();
 }
 
-PrintLoopPass::PrintLoopPass() : OS(dbgs()) {}
-PrintLoopPass::PrintLoopPass(raw_ostream &OS, const std::string &Banner)
-    : OS(OS), Banner(Banner) {}
-
-PreservedAnalyses PrintLoopPass::run(Loop &L, AnalysisManager<Loop> &) {
+void llvm::printLoop(Loop &L, raw_ostream &OS, const std::string &Banner) {
   OS << Banner;
   for (auto *Block : L.blocks())
     if (Block)
       Block->print(OS);
     else
       OS << "Printing <null> block";
-  return PreservedAnalyses::all();
 }
 
 //===----------------------------------------------------------------------===//

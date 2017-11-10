@@ -119,7 +119,7 @@ void AMDGPUAsmPrinter::EmitStartOfAsmFile(Module &M) {
                                     "AMD", "AMDGPU");
 
   // Emit runtime metadata.
-  TS->emitRuntimeMetadataAsNoteElement(M);
+  TS->EmitRuntimeMetadata(M);
 }
 
 bool AMDGPUAsmPrinter::isBlockOnlyReachableByFallthrough(
@@ -140,7 +140,7 @@ bool AMDGPUAsmPrinter::isBlockOnlyReachableByFallthrough(
 void AMDGPUAsmPrinter::EmitFunctionBodyStart() {
   const AMDGPUSubtarget &STM = MF->getSubtarget<AMDGPUSubtarget>();
   SIProgramInfo KernelInfo;
-  if (STM.isAmdCodeObjectV2()) {
+  if (STM.isAmdCodeObjectV2(*MF)) {
     getSIProgramInfo(KernelInfo, *MF);
     EmitAmdKernelCodeT(*MF, KernelInfo);
   }
@@ -149,7 +149,7 @@ void AMDGPUAsmPrinter::EmitFunctionBodyStart() {
 void AMDGPUAsmPrinter::EmitFunctionEntryLabel() {
   const SIMachineFunctionInfo *MFI = MF->getInfo<SIMachineFunctionInfo>();
   const AMDGPUSubtarget &STM = MF->getSubtarget<AMDGPUSubtarget>();
-  if (MFI->isKernel() && STM.isAmdCodeObjectV2()) {
+  if (MFI->isKernel() && STM.isAmdCodeObjectV2(*MF)) {
     AMDGPUTargetStreamer *TS =
         static_cast<AMDGPUTargetStreamer *>(OutStreamer->getTargetStreamer());
     SmallString<128> SymbolName;
@@ -176,12 +176,14 @@ bool AMDGPUAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
 
   SetupMachineFunction(MF);
 
-  MCContext &Context = getObjFileLowering().getContext();
-  MCSectionELF *ConfigSection =
-      Context.getELFSection(".AMDGPU.config", ELF::SHT_PROGBITS, 0);
-  OutStreamer->SwitchSection(ConfigSection);
-
   const AMDGPUSubtarget &STM = MF.getSubtarget<AMDGPUSubtarget>();
+  MCContext &Context = getObjFileLowering().getContext();
+  if (!STM.isAmdHsaOS()) {
+    MCSectionELF *ConfigSection =
+        Context.getELFSection(".AMDGPU.config", ELF::SHT_PROGBITS, 0);
+    OutStreamer->SwitchSection(ConfigSection);
+  }
+
   SIProgramInfo KernelInfo;
   if (STM.getGeneration() >= AMDGPUSubtarget::SOUTHERN_ISLANDS) {
     getSIProgramInfo(KernelInfo, MF);
@@ -777,7 +779,7 @@ void AMDGPUAsmPrinter::EmitAmdKernelCodeT(const MachineFunction &MF,
 
   // FIXME: Should use getKernArgSize
   header.kernarg_segment_byte_size =
-      STM.getKernArgSegmentSize(MFI->getABIArgOffset());
+    STM.getKernArgSegmentSize(MF, MFI->getABIArgOffset());
   header.wavefront_sgpr_count = KernelInfo.NumSGPR;
   header.workitem_vgpr_count = KernelInfo.NumVGPR;
   header.workitem_private_segment_byte_size = KernelInfo.ScratchSize;
@@ -824,4 +826,3 @@ bool AMDGPUAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
                    *TM.getSubtargetImpl(*MF->getFunction())->getRegisterInfo());
   return false;
 }
-
