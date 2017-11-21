@@ -2,8 +2,6 @@
 ; RUN: opt -O1 -S < %s                    | FileCheck %s --check-prefix=ALL --check-prefix=OLDPM
 ; RUN: opt -passes='default<O1>' -S < %s  | FileCheck %s --check-prefix=ALL --check-prefix=NEWPM
 
-declare void @foo()
-
 ; Don't simplify unconditional branches from empty blocks in simplifyCFG
 ; until late in the pipeline because it can destroy canonical loop structure.
 
@@ -63,6 +61,8 @@ if.end:
   %changed.1.off0 = phi i1 [ true, %if.then ], [ %changed.0.off0, %for.body ]
   br label %for.cond
 }
+
+declare void @foo()
 
 ; PR34603 - https://bugs.llvm.org/show_bug.cgi?id=34603
 ; We should have a select of doubles, not a select of double pointers.

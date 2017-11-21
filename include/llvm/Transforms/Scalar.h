@@ -73,6 +73,14 @@ FunctionPass *createDeadCodeEliminationPass();
 //
 FunctionPass *createDeadStoreEliminationPass();
 
+
+//===----------------------------------------------------------------------===//
+//
+// CallSiteSplitting - This pass split call-site based on its known argument
+// values.
+FunctionPass *createCallSiteSplittingPass();
+
+
 //===----------------------------------------------------------------------===//
 //
 // AggressiveDCE - This pass uses the SSA based Aggressive DCE algorithm.  This
@@ -422,7 +430,7 @@ Pass *createLowerGuardIntrinsicPass();
 
 //===----------------------------------------------------------------------===//
 //
-// MergeICmps - Merge integer comparison chains
+// MergeICmps - Merge integer comparison chains into a memcmp
 //
 Pass *createMergeICmpsPass();
 
@@ -574,6 +582,16 @@ ModulePass *createNameAnonGlobalPass();
 // used.
 //
 FunctionPass *createLibCallsShrinkWrapPass();
+
+//===----------------------------------------------------------------------===//
+//
+// EntryExitInstrumenter pass - Instrument function entry/exit with calls to
+// mcount(), @__cyg_profile_func_{enter,exit} and the like. There are two
+// variants, intended to run pre- and post-inlining, respectively.
+//
+FunctionPass *createEntryExitInstrumenterPass();
+FunctionPass *createPostInlineEntryExitInstrumenterPass();
+
 } // End llvm namespace
 
 #endif

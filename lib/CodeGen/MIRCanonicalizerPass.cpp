@@ -26,12 +26,12 @@
 
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/Passes.h"
+#include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetInstrInfo.h"
 
 #include <queue>
 
@@ -101,10 +101,10 @@ char MIRCanonicalizer::ID;
 char &llvm::MIRCanonicalizerID = MIRCanonicalizer::ID;
 
 INITIALIZE_PASS_BEGIN(MIRCanonicalizer, "mir-canonicalizer",
-                      "Rename Register Operands Canonically", false, false);
+                      "Rename Register Operands Canonically", false, false)
 
 INITIALIZE_PASS_END(MIRCanonicalizer, "mir-canonicalizer",
-                    "Rename Register Operands Canonically", false, false);
+                    "Rename Register Operands Canonically", false, false)
 
 static std::vector<MachineBasicBlock *> GetRPOList(MachineFunction &MF) {
   ReversePostOrderTraversal<MachineBasicBlock *> RPOT(&*MF.begin());

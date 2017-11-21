@@ -578,7 +578,7 @@ private:
 
   // Returns true when the values are flowing out to each edge.
   bool valueAnticipable(CHIArgs C, TerminatorInst *TI) const {
-    if (TI->getNumSuccessors() > std::distance(C.begin(), C.end()))
+    if (TI->getNumSuccessors() > (unsigned)std::distance(C.begin(), C.end()))
       return false; // Not enough args in this CHI.
 
     for (auto CHI : C) {
@@ -1110,7 +1110,8 @@ private:
         else if (auto *Call = dyn_cast<CallInst>(&I1)) {
           if (auto *Intr = dyn_cast<IntrinsicInst>(Call)) {
             if (isa<DbgInfoIntrinsic>(Intr) ||
-                Intr->getIntrinsicID() == Intrinsic::assume)
+                Intr->getIntrinsicID() == Intrinsic::assume ||
+                Intr->getIntrinsicID() == Intrinsic::sideeffect)
               continue;
           }
           if (Call->mayHaveSideEffects())

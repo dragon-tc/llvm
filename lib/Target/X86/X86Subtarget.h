@@ -24,10 +24,10 @@
 #include "llvm/CodeGen/GlobalISel/InstructionSelector.h"
 #include "llvm/CodeGen/GlobalISel/LegalizerInfo.h"
 #include "llvm/CodeGen/GlobalISel/RegisterBankInfo.h"
+#include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/MC/MCInstrItineraries.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetSubtargetInfo.h"
 #include <memory>
 
 #define GET_SUBTARGETINFO_HEADER
@@ -51,17 +51,9 @@ enum Style {
 } // end namespace PICStyles
 
 class X86Subtarget final : public X86GenSubtargetInfo {
-protected:
-  enum X86SSEEnum {
-    NoSSE, SSE1, SSE2, SSE3, SSSE3, SSE41, SSE42, AVX, AVX2, AVX512F
-  };
-
-  enum X863DNowEnum {
-    NoThreeDNow, MMX, ThreeDNow, ThreeDNowA
-  };
-
+public:  
   enum X86ProcFamilyEnum {
-    Others, 
+    Others,
     IntelAtom,
     IntelSLM,
     IntelGLM,
@@ -70,7 +62,17 @@ protected:
     IntelSkylake,
     IntelKNL,
     IntelSKX,
-    IntelCannonlake
+    IntelCannonlake,
+    IntelIcelake,
+  };
+
+protected:
+  enum X86SSEEnum {
+    NoSSE, SSE1, SSE2, SSE3, SSSE3, SSE41, SSE42, AVX, AVX2, AVX512F
+  };
+
+  enum X863DNowEnum {
+    NoThreeDNow, MMX, ThreeDNow, ThreeDNowA
   };
 
   /// X86 processor family: Intel Atom, and others
@@ -463,7 +465,7 @@ public:
   bool hasPCLMUL() const { return HasPCLMUL; }
   // Prefer FMA4 to FMA - its better for commutation/memory folding and
   // has equal or better performance on all supported targets.
-  bool hasFMA() const { return (HasFMA || hasAVX512()) && !HasFMA4; }
+  bool hasFMA() const { return HasFMA && !HasFMA4; }
   bool hasFMA4() const { return HasFMA4; }
   bool hasAnyFMA() const { return hasFMA() || hasFMA4(); }
   bool hasXOP() const { return HasXOP; }

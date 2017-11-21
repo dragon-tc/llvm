@@ -889,7 +889,9 @@ static GlobalValueSummary::GVFlags getDecodedGVSummaryFlags(uint64_t RawFlags,
   // to work correctly on earlier versions, we must conservatively treat all
   // values as live.
   bool Live = (RawFlags & 0x2) || Version < 3;
-  return GlobalValueSummary::GVFlags(Linkage, NotEligibleToImport, Live);
+  bool Local = (RawFlags & 0x4);
+
+  return GlobalValueSummary::GVFlags(Linkage, NotEligibleToImport, Live, Local);
 }
 
 static GlobalValue::VisibilityTypes getDecodedVisibility(unsigned Val) {
@@ -1044,8 +1046,8 @@ static Comdat::SelectionKind getDecodedComdatSelectionKind(unsigned Val) {
 
 static FastMathFlags getDecodedFastMathFlags(unsigned Val) {
   FastMathFlags FMF;
-  if (0 != (Val & FastMathFlags::UnsafeAlgebra))
-    FMF.setUnsafeAlgebra();
+  if (0 != (Val & FastMathFlags::AllowReassoc))
+    FMF.setAllowReassoc();
   if (0 != (Val & FastMathFlags::NoNaNs))
     FMF.setNoNaNs();
   if (0 != (Val & FastMathFlags::NoInfs))
@@ -1056,6 +1058,8 @@ static FastMathFlags getDecodedFastMathFlags(unsigned Val) {
     FMF.setAllowReciprocal();
   if (0 != (Val & FastMathFlags::AllowContract))
     FMF.setAllowContract(true);
+  if (0 != (Val & FastMathFlags::ApproxFunc))
+    FMF.setApproxFunc();
   return FMF;
 }
 
@@ -1821,10 +1825,10 @@ Expected<Value *> BitcodeReader::recordValue(SmallVectorImpl<uint64_t> &Record,
   auto *GO = dyn_cast<GlobalObject>(V);
   if (GO) {
     if (GO->getComdat() == reinterpret_cast<Comdat *>(1)) {
-      if (TT.isOSBinFormatMachO())
-        GO->setComdat(nullptr);
-      else
+      if (TT.supportsCOMDAT())
         GO->setComdat(TheModule->getOrInsertComdat(V->getName()));
+      else
+        GO->setComdat(nullptr);
     }
   }
   return V;

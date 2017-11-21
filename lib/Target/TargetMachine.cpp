@@ -14,6 +14,9 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/TargetLowering.h"
+#include "llvm/CodeGen/TargetLoweringObjectFile.h"
+#include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/GlobalValue.h"
@@ -26,9 +29,6 @@
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCTargetOptions.h"
 #include "llvm/MC/SectionKind.h"
-#include "llvm/Target/TargetLowering.h"
-#include "llvm/Target/TargetLoweringObjectFile.h"
-#include "llvm/Target/TargetSubtargetInfo.h"
 using namespace llvm;
 
 //---------------------------------------------------------------------------
@@ -166,6 +166,13 @@ bool TargetMachine::shouldAssumeDSOLocal(const Module &M,
     // If the symbol is defined, it cannot be preempted.
     if (GV && !GV->isDeclarationForLinker())
       return true;
+
+    // A symbol marked nonlazybind should not be accessed with a plt. If the
+    // symbol turns out to be external, the linker will convert a direct
+    // access to an access via the plt, so don't assume it is local.
+    const Function *F = dyn_cast_or_null<Function>(GV);
+    if (F && F->hasFnAttribute(Attribute::NonLazyBind))
+      return false;
 
     bool IsTLS = GV && GV->isThreadLocal();
     bool IsAccessViaCopyRelocs =

@@ -433,6 +433,7 @@ static bool isAssumeLikeIntrinsic(const Instruction *I) {
       default: break;
       // FIXME: This list is repeated from NoTTI::getIntrinsicCost.
       case Intrinsic::assume:
+      case Intrinsic::sideeffect:
       case Intrinsic::dbg_declare:
       case Intrinsic::dbg_value:
       case Intrinsic::invariant_start:
@@ -2579,9 +2580,7 @@ Intrinsic::ID llvm::getIntrinsicForCallSite(ImmutableCallSite ICS,
   case LibFunc_sqrt:
   case LibFunc_sqrtf:
   case LibFunc_sqrtl:
-    if (ICS->hasNoNaNs())
-      return Intrinsic::sqrt;
-    return Intrinsic::not_intrinsic;
+    return Intrinsic::sqrt;
   }
 
   return Intrinsic::not_intrinsic;
@@ -2594,38 +2593,38 @@ Intrinsic::ID llvm::getIntrinsicForCallSite(ImmutableCallSite ICS,
 /// rounding modes!
 bool llvm::CannotBeNegativeZero(const Value *V, const TargetLibraryInfo *TLI,
                                 unsigned Depth) {
-  if (const ConstantFP *CFP = dyn_cast<ConstantFP>(V))
+  if (auto *CFP = dyn_cast<ConstantFP>(V))
     return !CFP->getValueAPF().isNegZero();
 
+  // Limit search depth.
   if (Depth == MaxDepth)
-    return false;  // Limit search depth.
+    return false;
 
-  const Operator *I = dyn_cast<Operator>(V);
-  if (!I) return false;
+  auto *Op = dyn_cast<Operator>(V);
+  if (!Op)
+    return false;
 
-  // Check if the nsz fast-math flag is set
-  if (const FPMathOperator *FPO = dyn_cast<FPMathOperator>(I))
+  // Check if the nsz fast-math flag is set.
+  if (auto *FPO = dyn_cast<FPMathOperator>(Op))
     if (FPO->hasNoSignedZeros())
       return true;
 
-  // (add x, 0.0) is guaranteed to return +0.0, not -0.0.
-  if (I->getOpcode() == Instruction::FAdd)
-    if (ConstantFP *CFP = dyn_cast<ConstantFP>(I->getOperand(1)))
-      if (CFP->isNullValue())
-        return true;
-
-  // sitofp and uitofp turn into +0.0 for zero.
-  if (isa<SIToFPInst>(I) || isa<UIToFPInst>(I))
+  // (fadd x, 0.0) is guaranteed to return +0.0, not -0.0.
+  if (match(Op, m_FAdd(m_Value(), m_Zero())))
     return true;
 
-  if (const CallInst *CI = dyn_cast<CallInst>(I)) {
-    Intrinsic::ID IID = getIntrinsicForCallSite(CI, TLI);
+  // sitofp and uitofp turn into +0.0 for zero.
+  if (isa<SIToFPInst>(Op) || isa<UIToFPInst>(Op))
+    return true;
+
+  if (auto *Call = dyn_cast<CallInst>(Op)) {
+    Intrinsic::ID IID = getIntrinsicForCallSite(Call, TLI);
     switch (IID) {
     default:
       break;
     // sqrt(-0.0) = -0.0, no other negative results are possible.
     case Intrinsic::sqrt:
-      return CannotBeNegativeZero(CI->getArgOperand(0), TLI, Depth + 1);
+      return CannotBeNegativeZero(Call->getArgOperand(0), TLI, Depth + 1);
     // fabs(x) != -0.0
     case Intrinsic::fabs:
       return true;
@@ -3859,7 +3858,8 @@ bool llvm::isGuaranteedToTransferExecutionToSuccessor(const Instruction *I) {
     // FIXME: This isn't aggressive enough; a call which only writes to a global
     // is guaranteed to return.
     return CS.onlyReadsMemory() || CS.onlyAccessesArgMemory() ||
-           match(I, m_Intrinsic<Intrinsic::assume>());
+           match(I, m_Intrinsic<Intrinsic::assume>()) ||
+           match(I, m_Intrinsic<Intrinsic::sideeffect>());
   }
 
   // Other instructions return normally.
@@ -4140,7 +4140,8 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
     // Is the sign bit set?
     // (X <s 0) ? X : MAXVAL ==> (X >u MAXVAL) ? X : MAXVAL ==> UMAX
     // (X <s 0) ? MAXVAL : X ==> (X >u MAXVAL) ? MAXVAL : X ==> UMIN
-    if (Pred == CmpInst::ICMP_SLT && *C1 == 0 && C2->isMaxSignedValue())
+    if (Pred == CmpInst::ICMP_SLT && C1->isNullValue() &&
+        C2->isMaxSignedValue())
       return {CmpLHS == TrueVal ? SPF_UMAX : SPF_UMIN, SPNB_NA, false};
 
     // Is the sign bit clear?
@@ -4272,13 +4273,15 @@ static SelectPatternResult matchSelectPattern(CmpInst::Predicate Pred,
 
       // ABS(X) ==> (X >s 0) ? X : -X and (X >s -1) ? X : -X
       // NABS(X) ==> (X >s 0) ? -X : X and (X >s -1) ? -X : X
-      if (Pred == ICmpInst::ICMP_SGT && (*C1 == 0 || C1->isAllOnesValue())) {
+      if (Pred == ICmpInst::ICMP_SGT &&
+          (C1->isNullValue() || C1->isAllOnesValue())) {
         return {(CmpLHS == TrueVal) ? SPF_ABS : SPF_NABS, SPNB_NA, false};
       }
 
       // ABS(X) ==> (X <s 0) ? -X : X and (X <s 1) ? -X : X
       // NABS(X) ==> (X <s 0) ? X : -X and (X <s 1) ? X : -X
-      if (Pred == ICmpInst::ICMP_SLT && (*C1 == 0 || *C1 == 1)) {
+      if (Pred == ICmpInst::ICMP_SLT &&
+          (C1->isNullValue() || C1->isOneValue())) {
         return {(CmpLHS == FalseVal) ? SPF_ABS : SPF_NABS, SPNB_NA, false};
       }
     }

@@ -138,7 +138,7 @@ tools = [
 tools.extend([
     'lli', 'lli-child-target', 'llvm-ar', 'llvm-as', 'llvm-bcanalyzer', 'llvm-config', 'llvm-cov',
     'llvm-cxxdump', 'llvm-cvtres', 'llvm-diff', 'llvm-dis', 'llvm-dsymutil',
-    'llvm-dwarfdump', 'llvm-extract', 'llvm-isel-fuzzer', 'llvm-lib',
+    'llvm-dwarfdump', 'llvm-extract', 'llvm-isel-fuzzer', 'llvm-opt-fuzzer', 'llvm-lib',
     'llvm-link', 'llvm-lto', 'llvm-lto2', 'llvm-mc', 'llvm-mcmarkup',
     'llvm-modextract', 'llvm-nm', 'llvm-objcopy', 'llvm-objdump',
     'llvm-pdbutil', 'llvm-profdata', 'llvm-ranlib', 'llvm-readobj',
@@ -169,7 +169,8 @@ for arch in config.targets_to_build.split():
 
 # Features
 known_arches = ["x86_64", "mips64", "ppc64", "aarch64"]
-if any(config.llvm_host_triple.startswith(x) for x in known_arches):
+if (config.host_ldflags.find("-m32") < 0
+    and any(config.llvm_host_triple.startswith(x) for x in known_arches)):
   config.available_features.add("llvm-64-bits")
 
 # Others/can-execute.txt

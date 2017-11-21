@@ -144,15 +144,6 @@ X86Subtarget::classifyGlobalFunctionReference(const GlobalValue *GV) const {
 unsigned char
 X86Subtarget::classifyGlobalFunctionReference(const GlobalValue *GV,
                                               const Module &M) const {
-  const Function *F = dyn_cast_or_null<Function>(GV);
-
-  // Do not use the PLT when explicitly told to do so for ELF 64-bit
-  // target.
-  if (isTargetELF() && is64Bit() && F &&
-      F->hasFnAttribute(Attribute::NonLazyBind) &&
-      GV->isDeclarationForLinker())
-    return X86II::MO_GOTPCREL;
-
   if (TM.shouldAssumeDSOLocal(M, GV))
     return X86II::MO_NO_FLAG;
 
@@ -162,11 +153,15 @@ X86Subtarget::classifyGlobalFunctionReference(const GlobalValue *GV,
     return X86II::MO_DLLIMPORT;
   }
 
+  const Function *F = dyn_cast_or_null<Function>(GV);
+
   if (isTargetELF()) {
     if (is64Bit() && F && (CallingConv::X86_RegCall == F->getCallingConv()))
       // According to psABI, PLT stub clobbers XMM8-XMM15.
       // In Regcall calling convention those registers are used for passing
       // parameters. Thus we need to prevent lazy binding in Regcall.
+      return X86II::MO_GOTPCREL;
+    if (F && F->hasFnAttribute(Attribute::NonLazyBind) && is64Bit())
       return X86II::MO_GOTPCREL;
     return X86II::MO_PLT;
   }
@@ -274,13 +269,14 @@ void X86Subtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
   else if (isTargetDarwin() || isTargetLinux() || isTargetSolaris() ||
            isTargetKFreeBSD() || In64BitMode)
     stackAlignment = 16;
- 
-  // Gather is available since Haswell (AVX2 set). So technically, we can generate Gathers 
-  // on all AVX2 processors. But the overhead on HSW is high. Skylake Client processor has
-  // faster Gathers than HSW and performance is similar to Skylake Server (AVX-512). 
-  // The specified overhead is relative to the Load operation."2" is the number provided 
-  // by Intel architects, This parameter is used for cost estimation of Gather Op and 
-  // comparison with other alternatives.
+
+  // Gather is available since Haswell (AVX2 set). So technically, we can
+  // generate Gathers on all AVX2 processors. But the overhead on HSW is high.
+  // Skylake Client processor has faster Gathers than HSW and performance is
+  // similar to Skylake Server (AVX-512). The specified overhead is relative to
+  // the Load operation. "2" is the number provided by Intel architects. This
+  // parameter is used for cost estimation of Gather Op and comparison with
+  // other alternatives.
   if (X86ProcFamily == IntelSkylake || hasAVX512())
     GatherOverhead = 2;
   if (hasAVX512())
