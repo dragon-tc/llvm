@@ -208,6 +208,7 @@ StringRef sys::detail::getHostCPUNameForARM(
             .Case("0x06f", "krait") // APQ8064
             .Case("0x201", "kryo")
             .Case("0x205", "kryo")
+            .Case("0xc00", "falkor")
             .Default("generic");
 
   return "generic";
@@ -250,6 +251,8 @@ StringRef sys::detail::getHostCPUNameForS390x(
         Pos += sizeof("machine = ") - 1;
         unsigned int Id;
         if (!Lines[I].drop_front(Pos).getAsInteger(10, Id)) {
+          if (Id >= 3906 && HaveVectorSupport)
+            return "z14";
           if (Id >= 2964 && HaveVectorSupport)
             return "z13";
           if (Id >= 2827)
@@ -460,8 +463,8 @@ static bool getX86CpuIDAndInfo(unsigned value, unsigned *rEAX, unsigned *rEBX,
 static bool getX86CpuIDAndInfoEx(unsigned value, unsigned subleaf,
                                  unsigned *rEAX, unsigned *rEBX, unsigned *rECX,
                                  unsigned *rEDX) {
-#if defined(__x86_64__) || defined(_M_X64)
 #if defined(__GNUC__) || defined(__clang__)
+#if defined(__x86_64__)
   // gcc doesn't know cpuid would clobber ebx/rbx. Preserve it manually.
   // FIXME: should we save this for Clang?
   __asm__("movq\t%%rbx, %%rsi\n\t"
@@ -470,6 +473,16 @@ static bool getX86CpuIDAndInfoEx(unsigned value, unsigned subleaf,
           : "=a"(*rEAX), "=S"(*rEBX), "=c"(*rECX), "=d"(*rEDX)
           : "a"(value), "c"(subleaf));
   return false;
+#elif defined(__i386__)
+  __asm__("movl\t%%ebx, %%esi\n\t"
+          "cpuid\n\t"
+          "xchgl\t%%ebx, %%esi\n\t"
+          : "=a"(*rEAX), "=S"(*rEBX), "=c"(*rECX), "=d"(*rEDX)
+          : "a"(value), "c"(subleaf));
+  return false;
+#else
+  return true;
+#endif
 #elif defined(_MSC_VER)
   int registers[4];
   __cpuidex(registers, value, subleaf);
@@ -478,35 +491,6 @@ static bool getX86CpuIDAndInfoEx(unsigned value, unsigned subleaf,
   *rECX = registers[2];
   *rEDX = registers[3];
   return false;
-#else
-  return true;
-#endif
-#elif defined(__i386__) || defined(_M_IX86)
-#if defined(__GNUC__) || defined(__clang__)
-  __asm__("movl\t%%ebx, %%esi\n\t"
-          "cpuid\n\t"
-          "xchgl\t%%ebx, %%esi\n\t"
-          : "=a"(*rEAX), "=S"(*rEBX), "=c"(*rECX), "=d"(*rEDX)
-          : "a"(value), "c"(subleaf));
-  return false;
-#elif defined(_MSC_VER)
-  __asm {
-      mov   eax,value
-      mov   ecx,subleaf
-      cpuid
-      mov   esi,rEAX
-      mov   dword ptr [esi],eax
-      mov   esi,rEBX
-      mov   dword ptr [esi],ebx
-      mov   esi,rECX
-      mov   dword ptr [esi],ecx
-      mov   esi,rEDX
-      mov   dword ptr [esi],edx
-  }
-  return false;
-#else
-  return true;
-#endif
 #else
   return true;
 #endif

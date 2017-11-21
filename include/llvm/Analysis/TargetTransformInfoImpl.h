@@ -120,6 +120,10 @@ public:
     return SI.getNumCases();
   }
 
+  int getExtCost(const Instruction *I, const Value *Src) {
+    return TTI::TCC_Basic;
+  }
+
   unsigned getCallCost(FunctionType *FTy, int NumArgs) {
     assert(FTy && "FunctionType must be provided to this routine.");
 
@@ -648,6 +652,12 @@ public:
 
     auto GTI = gep_type_begin(PointeeType, Operands);
     Type *TargetType;
+
+    // Handle the case where the GEP instruction has a single operand,
+    // the basis, therefore TargetType is a nullptr.
+    if (Operands.empty())
+      return !BaseGV ? TTI::TCC_Free : TTI::TCC_Basic;
+
     for (auto I = Operands.begin(); I != Operands.end(); ++I, ++GTI) {
       TargetType = GTI.getIndexedType();
       // We assume that the cost of Scalar GEP with constant index and the
@@ -728,6 +738,8 @@ public:
       // nop on most sane targets.
       if (isa<CmpInst>(CI->getOperand(0)))
         return TTI::TCC_Free;
+      if (isa<SExtInst>(CI) || isa<ZExtInst>(CI) || isa<FPExtInst>(CI))
+        return static_cast<T *>(this)->getExtCost(CI, Operands.back());
     }
 
     return static_cast<T *>(this)->getOperationCost(
