@@ -175,6 +175,7 @@ defm : ZnWriteResFpuPair<WriteCvtF2I,    ZnFPU3,  5>;
 defm : ZnWriteResFpuPair<WriteFDiv,      ZnFPU3, 15>;
 defm : ZnWriteResFpuPair<WriteFShuffle,  ZnFPU12, 1>;
 defm : ZnWriteResFpuPair<WriteFMul,      ZnFPU0,  5>;
+defm : ZnWriteResFpuPair<WriteFMA,       ZnFPU03, 5>;
 defm : ZnWriteResFpuPair<WriteFRcp,      ZnFPU01, 5>;
 defm : ZnWriteResFpuPair<WriteFRsqrt,    ZnFPU01, 5>;
 defm : ZnWriteResFpuPair<WriteFSqrt,     ZnFPU3, 20>;
@@ -760,7 +761,7 @@ def : InstRW<[ZnWriteFPU3], (instregex "LD_F1")>;
 // FLDPI FLDL2E etc.
 def : InstRW<[ZnWriteFPU3], (instregex "FLDPI", "FLDL2(T|E)" "FLDL(G|N)2")>;
 
-def : InstRW<[WriteMicrocoded], (instregex "CMOV(B|BE|P|NB|NBE|NE|NP)_F")>;
+def : InstRW<[WriteMicrocoded], (instregex "CMOV(B|BE|E|P|NB|NBE|NE|NP)_F")>;
 
 // FNSTSW.
 // AX.

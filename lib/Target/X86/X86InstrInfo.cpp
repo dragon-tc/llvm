@@ -47,8 +47,9 @@ using namespace llvm;
 #include "X86GenInstrInfo.inc"
 
 static cl::opt<bool>
-NoFusing("disable-spill-fusing",
-         cl::desc("Disable fusing of spill code into instructions"));
+    NoFusing("disable-spill-fusing",
+             cl::desc("Disable fusing of spill code into instructions"),
+             cl::Hidden);
 static cl::opt<bool>
 PrintFailedFusing("print-failed-fuse-candidates",
                   cl::desc("Print instructions that the allocator wants to"
@@ -4468,7 +4469,7 @@ MachineInstr *X86InstrInfo::convertToThreeAddressWithLEA(
     unsigned leaInReg2 = 0;
     MachineInstr *InsMI2 = nullptr;
     if (Src == Src2) {
-      // ADD16rr %reg1028<kill>, %reg1028
+      // ADD16rr killed %reg1028, %reg1028
       // just a single insert_subreg.
       addRegReg(MIB, leaInReg, true, leaInReg, false);
     } else {
@@ -7632,7 +7633,7 @@ MachineInstr *X86InstrInfo::optimizeLoadInstr(MachineInstr &MI,
 /// This is used for mapping:
 ///   %xmm4 = V_SET0
 /// to:
-///   %xmm4 = PXORrr %xmm4<undef>, %xmm4<undef>
+///   %xmm4 = PXORrr undef %xmm4, undef %xmm4
 ///
 static bool Expand2AddrUndef(MachineInstrBuilder &MIB,
                              const MCInstrDesc &Desc) {
@@ -7759,6 +7760,18 @@ static void expandLoadStackGuard(MachineInstrBuilder &MIB,
   MIB->setDebugLoc(DL);
   MIB->setDesc(TII.get(X86::MOV64rm));
   MIB.addReg(Reg, RegState::Kill).addImm(1).addReg(0).addImm(0).addReg(0);
+}
+
+static bool expandXorFP(MachineInstrBuilder &MIB, const TargetInstrInfo &TII) {
+  MachineBasicBlock &MBB = *MIB->getParent();
+  MachineFunction &MF = *MBB.getParent();
+  const X86Subtarget &Subtarget = MF.getSubtarget<X86Subtarget>();
+  const X86RegisterInfo *TRI = Subtarget.getRegisterInfo();
+  unsigned XorOp =
+      MIB->getOpcode() == X86::XOR64_FP ? X86::XOR64rr : X86::XOR32rr;
+  MIB->setDesc(TII.get(XorOp));
+  MIB.addReg(TRI->getFrameRegister(MF), RegState::Undef);
+  return true;
 }
 
 // This is used to handle spills for 128/256-bit registers when we have AVX512,
@@ -7955,6 +7968,9 @@ bool X86InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case TargetOpcode::LOAD_STACK_GUARD:
     expandLoadStackGuard(MIB, *this);
     return true;
+  case X86::XOR64_FP:
+  case X86::XOR32_FP:
+    return expandXorFP(MIB, *this);
   }
   return false;
 }
@@ -8181,12 +8197,12 @@ static bool hasUndefRegUpdate(unsigned Opcode) {
 ///
 /// This catches the VCVTSI2SD family of instructions:
 ///
-/// vcvtsi2sdq %rax, %xmm0<undef>, %xmm14
+/// vcvtsi2sdq %rax, undef %xmm0, %xmm14
 ///
 /// We should to be careful *not* to catch VXOR idioms which are presumably
 /// handled specially in the pipeline:
 ///
-/// vxorps %xmm1<undef>, %xmm1<undef>, %xmm1
+/// vxorps undef %xmm1, undef %xmm1, %xmm1
 ///
 /// Like getPartialRegUpdateClearance, this makes a strong assumption that the
 /// high bits that are passed-through are not live.
@@ -10879,7 +10895,7 @@ X86InstrInfo::getOutliningType(MachineInstr &MI) const {
   // FIXME: There are instructions which are being manually built without
   // explicit uses/defs so we also have to check the MCInstrDesc. We should be
   // able to remove the extra checks once those are fixed up. For example,
-  // sometimes we might get something like %RAX<def> = POP64r 1. This won't be
+  // sometimes we might get something like %rax = POP64r 1. This won't be
   // caught by modifiesRegister or readsRegister even though the instruction
   // really ought to be formed so that modifiesRegister/readsRegister would
   // catch it.

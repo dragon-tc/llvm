@@ -115,6 +115,7 @@ struct WasmImport {
   StringRef FieldName;
   unsigned Kind;
   int32_t Type;
+  bool IsMutable;
 };
 
 // A wasm function to be written into the function section.
@@ -286,8 +287,7 @@ private:
   void writeDataRelocSection();
   void writeLinkingMetaDataSection(
       ArrayRef<WasmDataSegment> Segments, uint32_t DataSize,
-      SmallVector<std::pair<StringRef, uint32_t>, 4> SymbolFlags,
-      bool HasStackPointer, uint32_t StackPointerGlobal);
+      SmallVector<std::pair<StringRef, uint32_t>, 4> SymbolFlags);
 
   uint32_t getProvisionalValue(const WasmRelocationEntry &RelEntry);
   void applyRelocations(ArrayRef<WasmRelocationEntry> Relocations,
@@ -681,7 +681,7 @@ void WasmObjectWriter::writeImportSection(ArrayRef<WasmImport> Imports) {
       break;
     case wasm::WASM_EXTERNAL_GLOBAL:
       encodeSLEB128(int32_t(Import.Type), getStream());
-      encodeULEB128(0, getStream()); // mutability
+      encodeULEB128(int32_t(Import.IsMutable), getStream());
       break;
     default:
       llvm_unreachable("unsupported import kind");
@@ -928,17 +928,10 @@ void WasmObjectWriter::writeDataRelocSection() {
 
 void WasmObjectWriter::writeLinkingMetaDataSection(
     ArrayRef<WasmDataSegment> Segments, uint32_t DataSize,
-    SmallVector<std::pair<StringRef, uint32_t>, 4> SymbolFlags,
-    bool HasStackPointer, uint32_t StackPointerGlobal) {
+    SmallVector<std::pair<StringRef, uint32_t>, 4> SymbolFlags) {
   SectionBookkeeping Section;
   startSection(Section, wasm::WASM_SEC_CUSTOM, "linking");
   SectionBookkeeping SubSection;
-
-  if (HasStackPointer) {
-    startSection(SubSection, wasm::WASM_STACK_POINTER);
-    encodeULEB128(StackPointerGlobal, getStream()); // id
-    endSection(SubSection);
-  }
 
   if (SymbolFlags.size() != 0) {
     startSection(SubSection, wasm::WASM_SYMBOL_INFO);
@@ -1010,9 +1003,7 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
   SmallPtrSet<const MCSymbolWasm *, 4> IsAddressTaken;
   unsigned NumFuncImports = 0;
   SmallVector<WasmDataSegment, 4> DataSegments;
-  uint32_t StackPointerGlobal = 0;
   uint32_t DataSize = 0;
-  bool HasStackPointer = false;
 
   // Populate the IsAddressTaken set.
   for (const WasmRelocationEntry &RelEntry : CodeRelocations) {
@@ -1033,38 +1024,6 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
       break;
     default:
       break;
-    }
-  }
-
-  // Populate FunctionTypeIndices and Imports.
-  for (const MCSymbol &S : Asm.symbols()) {
-    const auto &WS = static_cast<const MCSymbolWasm &>(S);
-
-    if (WS.isTemporary())
-      continue;
-
-    if (WS.isFunction())
-      registerFunctionType(WS);
-
-    // If the symbol is not defined in this translation unit, import it.
-    if (!WS.isDefined(/*SetUsed=*/false)) {
-      WasmImport Import;
-      Import.ModuleName = WS.getModuleName();
-      Import.FieldName = WS.getName();
-
-      if (WS.isFunction()) {
-        Import.Kind = wasm::WASM_EXTERNAL_FUNCTION;
-        Import.Type = getFunctionType(WS);
-        SymbolIndices[&WS] = NumFuncImports;
-        ++NumFuncImports;
-      } else {
-        Import.Kind = wasm::WASM_EXTERNAL_GLOBAL;
-        Import.Type = int32_t(PtrType);
-        SymbolIndices[&WS] = NumGlobalImports;
-        ++NumGlobalImports;
-      }
-
-      Imports.push_back(Import);
     }
   }
 
@@ -1126,24 +1085,46 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
     }
   }
 
-  // In the special .stack_pointer section, we've encoded the stack pointer
-  // index.
-  MCSectionWasm *StackPtr =
-      Ctx.getWasmSection(".stack_pointer", SectionKind::getMetadata());
-  if (!StackPtr->getFragmentList().empty()) {
-    if (StackPtr->getFragmentList().size() != 1)
-      report_fatal_error("only one .stack_pointer fragment supported");
-    const MCFragment &Frag = *StackPtr->begin();
-    if (Frag.hasInstructions() || Frag.getKind() != MCFragment::FT_Data)
-      report_fatal_error("only data supported in .stack_pointer");
-    const auto &DataFrag = cast<MCDataFragment>(Frag);
-    if (!DataFrag.getFixups().empty())
-      report_fatal_error("fixups not supported in .stack_pointer");
-    const SmallVectorImpl<char> &Contents = DataFrag.getContents();
-    if (Contents.size() != 4)
-      report_fatal_error("only one entry supported in .stack_pointer");
-    HasStackPointer = true;
-    StackPointerGlobal = NumGlobalImports + *(const int32_t *)Contents.data();
+  // Populate FunctionTypeIndices and Imports.
+  for (const MCSymbol &S : Asm.symbols()) {
+    const auto &WS = static_cast<const MCSymbolWasm &>(S);
+
+    // Register types for all functions, including those with private linkage
+    // (making them
+    // because wasm always needs a type signature.
+    if (WS.isFunction())
+      registerFunctionType(WS);
+
+    if (WS.isTemporary())
+      continue;
+
+    // If the symbol is not defined in this translation unit, import it.
+    if (!WS.isDefined(/*SetUsed=*/false)) {
+      WasmImport Import;
+      Import.ModuleName = WS.getModuleName();
+      Import.FieldName = WS.getName();
+
+      if (WS.isFunction()) {
+        Import.Kind = wasm::WASM_EXTERNAL_FUNCTION;
+        Import.Type = getFunctionType(WS);
+        SymbolIndices[&WS] = NumFuncImports;
+        ++NumFuncImports;
+      } else {
+        Import.Kind = wasm::WASM_EXTERNAL_GLOBAL;
+        Import.Type = int32_t(PtrType);
+        Import.IsMutable = false;
+        SymbolIndices[&WS] = NumGlobalImports;
+
+        // If this global is the stack pointer, make it mutable and remember it
+        // so that we can emit metadata for it.
+        if (WS.getName() == "__stack_pointer")
+          Import.IsMutable = true;
+
+        ++NumGlobalImports;
+      }
+
+      Imports.push_back(Import);
+    }
   }
 
   for (MCSection &Sec : Asm) {
@@ -1177,10 +1158,14 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
                  << S.isExternal() << " isTemporary=" << S.isTemporary()
                  << " isFunction=" << WS.isFunction()
                  << " isWeak=" << WS.isWeak()
+                 << " isHidden=" << WS.isHidden()
                  << " isVariable=" << WS.isVariable() << "\n");
 
-    if (WS.isWeak())
-      SymbolFlags.emplace_back(WS.getName(), wasm::WASM_SYMBOL_BINDING_WEAK);
+    if (WS.isWeak() || WS.isHidden()) {
+      uint32_t Flags = (WS.isWeak() ? wasm::WASM_SYMBOL_BINDING_WEAK : 0) |
+          (WS.isHidden() ? wasm::WASM_SYMBOL_VISIBILITY_HIDDEN : 0);
+      SymbolFlags.emplace_back(WS.getName(), Flags);
+    }
 
     if (WS.isVariable())
       continue;
@@ -1323,8 +1308,7 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
   writeNameSection(Functions, Imports, NumFuncImports);
   writeCodeRelocSection();
   writeDataRelocSection();
-  writeLinkingMetaDataSection(DataSegments, DataSize, SymbolFlags,
-                              HasStackPointer, StackPointerGlobal);
+  writeLinkingMetaDataSection(DataSegments, DataSize, SymbolFlags);
 
   // TODO: Translate the .comment section to the output.
   // TODO: Translate debug sections to the output.

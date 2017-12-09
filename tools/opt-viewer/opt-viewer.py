@@ -34,6 +34,13 @@ class Context:
 
 context = Context()
 
+def suppress(remark):
+    if remark.Name == 'sil.Specialized':
+        return remark.getArgDict()['Function'][0].startswith('\"Swift.')
+    elif remark.Name == 'sil.Inlined':
+        return remark.getArgDict()['Callee'][0].startswith(('\"Swift.', '\"specialized Swift.'))
+    return False
+
 class SourceFileRenderer:
     def __init__(self, source_dir, output_dir, filename):
         existing_filename = None
@@ -60,19 +67,23 @@ class SourceFileRenderer:
 
     def render_source_lines(self, stream, line_remarks):
         file_text = stream.read()
-        html_highlighted = highlight(
+
+        if args.no_highlight:
+            html_highlighted = file_text
+        else:
+            html_highlighted = highlight(
             file_text,
-            self.cpp_lexer,
-            self.html_formatter)
+                self.cpp_lexer,
+                self.html_formatter)
 
-        # On Python 3, pygments.highlight() returns a bytes object, not a str.
-        if sys.version_info >= (3, 0):
-          html_highlighted = html_highlighted.decode('utf-8')
+            # On Python 3, pygments.highlight() returns a bytes object, not a str.
+            if sys.version_info >= (3, 0):
+              html_highlighted = html_highlighted.decode('utf-8')
 
-        # Take off the header and footer, these must be
-        #   reapplied line-wise, within the page structure
-        html_highlighted = html_highlighted.replace('<div class="highlight"><pre>', '')
-        html_highlighted = html_highlighted.replace('</pre></div>', '')
+            # Take off the header and footer, these must be
+            #   reapplied line-wise, within the page structure
+            html_highlighted = html_highlighted.replace('<div class="highlight"><pre>', '')
+            html_highlighted = html_highlighted.replace('</pre></div>', '')
 
         for (linenum, html_line) in enumerate(html_highlighted.split('\n'), start=1):
             print('''
@@ -84,7 +95,8 @@ class SourceFileRenderer:
 </tr>'''.format(**locals()), file=self.stream)
 
             for remark in line_remarks.get(linenum, []):
-                self.render_inline_remarks(remark, html_line)
+                if not suppress(remark):
+                    self.render_inline_remarks(remark, html_line)
 
     def render_inline_remarks(self, r, line):
         inlining_context = r.DemangledFunctionName
@@ -175,7 +187,8 @@ class IndexRenderer:
             max_entries = args.max_hottest_remarks_on_index
 
         for i, remark in enumerate(all_remarks[:max_entries]):
-            self.render_entry(remark, i % 2)
+            if not suppress(remark):
+                self.render_entry(remark, i % 2)
         print('''
 </table>
 </body>
@@ -258,7 +271,7 @@ if __name__ == '__main__':
         type=int,
         help='Max job count (defaults to %(default)s, the current CPU count)')
     parser.add_argument(
-        '-source-dir',
+        '--source-dir',
         '-s',
         default='',
         help='set source directory')
@@ -274,9 +287,19 @@ if __name__ == '__main__':
         default=1000,
         type=int,
         help='Maximum number of the hottest remarks to appear on the index page')
+    parser.add_argument(
+        '--no-highlight',
+        action='store_true',
+        default=False,
+        help='Do not use a syntax highlighter when rendering the source code')
+    parser.add_argument(
+        '--demangler',
+        help='Set the demangler to be used (defaults to %s)' % optrecord.Remark.default_demangler)
     args = parser.parse_args()
 
     print_progress = not args.no_progress_indicator
+    if args.demangler:
+        optrecord.Remark.set_demangler(args.demangler)
 
     files = optrecord.find_opt_files(*args.yaml_dirs_or_files)
     if not files:

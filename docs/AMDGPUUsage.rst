@@ -1295,6 +1295,16 @@ non-AMD key names should be prefixed by "*vendor-name*.".
                                                            code is capable of
                                                            supporting XNACK. See
                                                            :ref:`amdgpu-target-features`.
+     "NumSpilledSGPRs"            integer                  Number of stores from
+                                                           a scalar register to
+                                                           a register allocator
+                                                           created spill
+                                                           location.
+     "NumSpilledVGPRs"            integer                  Number of stores from
+                                                           a vector register to
+                                                           a register allocator
+                                                           created spill
+                                                           location.
      ============================ ============== ========= =====================
 
 ..
@@ -1539,7 +1549,7 @@ CP microcode requires the Kernel descritor to be allocated on 64 byte alignment.
                                                      must be executed with the
                                                      specified work-group size
                                                      for Z.
-     383:271 14                                      Reserved, must be 0.
+     383:272 14                                      Reserved, must be 0.
              bytes
      415:384 4 bytes ComputePgmRsrc1                 Compute Shader (CS)
                                                      program settings used by
