@@ -212,7 +212,7 @@ namespace llvm {
       IS.OptLevel = NewOptLevel;
       IS.TM.setOptLevel(NewOptLevel);
       DEBUG(dbgs() << "\nChanging optimization level for Function "
-            << IS.MF->getFunction()->getName() << "\n");
+            << IS.MF->getFunction().getName() << "\n");
       DEBUG(dbgs() << "\tBefore: -O" << SavedOptLevel
             << " ; After: -O" << NewOptLevel << "\n");
       SavedFastISel = IS.TM.Options.EnableFastISel;
@@ -228,7 +228,7 @@ namespace llvm {
       if (IS.OptLevel == SavedOptLevel)
         return;
       DEBUG(dbgs() << "\nRestoring optimization level for Function "
-            << IS.MF->getFunction()->getName() << "\n");
+            << IS.MF->getFunction().getName() << "\n");
       DEBUG(dbgs() << "\tBefore: -O" << IS.OptLevel
             << " ; After: -O" << SavedOptLevel << "\n");
       IS.OptLevel = SavedOptLevel;
@@ -384,7 +384,7 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
   assert((!EnableFastISelAbort || TM.Options.EnableFastISel) &&
          "-fast-isel-abort > 0 requires -fast-isel");
 
-  const Function &Fn = *mf.getFunction();
+  const Function &Fn = mf.getFunction();
   MF = &mf;
 
   // Reset the target options before resetting the optimization
@@ -3759,6 +3759,25 @@ void SelectionDAGISel::SelectCodeCommon(SDNode *NodeToMatch,
       MatchScopes.pop_back();
     }
   }
+}
+
+bool SelectionDAGISel::isOrEquivalentToAdd(const SDNode *N) const {
+  assert(N->getOpcode() == ISD::OR && "Unexpected opcode");
+  auto *C = dyn_cast<ConstantSDNode>(N->getOperand(1));
+  if (!C)
+    return false;
+
+  // Detect when "or" is used to add an offset to a stack object.
+  if (auto *FN = dyn_cast<FrameIndexSDNode>(N->getOperand(0))) {
+    MachineFrameInfo &MFI = MF->getFrameInfo();
+    unsigned A = MFI.getObjectAlignment(FN->getIndex());
+    assert(isPowerOf2_32(A) && "Unexpected alignment");
+    int32_t Off = C->getSExtValue();
+    // If the alleged offset fits in the zero bits guaranteed by
+    // the alignment, then this or is really an add.
+    return (Off >= 0) && (((A - 1) & Off) == unsigned(Off));
+  }
+  return false;
 }
 
 void SelectionDAGISel::CannotYetSelect(SDNode *N) {

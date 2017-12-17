@@ -4636,18 +4636,19 @@ ScalarEvolution::createAddRecFromPHIWithCastsImpl(const SCEVUnknown *SymbolicPHI
 
   // Construct the extended SCEV: (Ext ix (Trunc iy (Expr) to ix) to iy)
   // for each of StartVal and Accum
-  auto GetExtendedExpr = [&](const SCEV *Expr) -> const SCEV * {
+  auto getExtendedExpr = [&](const SCEV *Expr, 
+                             bool CreateSignExtend) -> const SCEV * {
     assert(isLoopInvariant(Expr, L) && "Expr is expected to be invariant");
     const SCEV *TruncatedExpr = getTruncateExpr(Expr, TruncTy);
     const SCEV *ExtendedExpr =
-        Signed ? getSignExtendExpr(TruncatedExpr, Expr->getType())
-               : getZeroExtendExpr(TruncatedExpr, Expr->getType());
+        CreateSignExtend ? getSignExtendExpr(TruncatedExpr, Expr->getType())
+                         : getZeroExtendExpr(TruncatedExpr, Expr->getType());
     return ExtendedExpr;
   };
 
   // Given:
   //  ExtendedExpr = (Ext ix (Trunc iy (Expr) to ix) to iy
-  //               = GetExtendedExpr(Expr)
+  //               = getExtendedExpr(Expr)
   // Determine whether the predicate P: Expr == ExtendedExpr
   // is known to be false at compile time
   auto PredIsKnownFalse = [&](const SCEV *Expr,
@@ -4656,13 +4657,15 @@ ScalarEvolution::createAddRecFromPHIWithCastsImpl(const SCEVUnknown *SymbolicPHI
            isKnownPredicate(ICmpInst::ICMP_NE, Expr, ExtendedExpr);
   };
 
-  const SCEV *StartExtended = GetExtendedExpr(StartVal);
+  const SCEV *StartExtended = getExtendedExpr(StartVal, Signed);
   if (PredIsKnownFalse(StartVal, StartExtended)) {
     DEBUG(dbgs() << "P2 is compile-time false\n";);
     return None;
   }
 
-  const SCEV *AccumExtended = GetExtendedExpr(Accum);
+  // The Step is always Signed (because the overflow checks are either
+  // NSSW or NUSW)
+  const SCEV *AccumExtended = getExtendedExpr(Accum, /*CreateSignExtend=*/true);
   if (PredIsKnownFalse(Accum, AccumExtended)) {
     DEBUG(dbgs() << "P3 is compile-time false\n";);
     return None;
@@ -4727,6 +4730,30 @@ ScalarEvolution::createAddRecFromPHIWithCasts(const SCEVUnknown *SymbolicPHI) {
   }
 
   return Rewrite;
+}
+
+// FIXME: This utility is currently required because the Rewriter currently 
+// does not rewrite this expression: 
+// {0, +, (sext ix (trunc iy to ix) to iy)} 
+// into {0, +, %step},
+// even when the following Equal predicate exists: 
+// "%step == (sext ix (trunc iy to ix) to iy)".
+bool PredicatedScalarEvolution::areAddRecsEqualWithPreds(
+    const SCEVAddRecExpr *AR1, const SCEVAddRecExpr *AR2) const {
+  if (AR1 == AR2)
+    return true;
+
+  auto areExprsEqual = [&](const SCEV *Expr1, const SCEV *Expr2) -> bool {
+    if (Expr1 != Expr2 && !Preds.implies(SE.getEqualPredicate(Expr1, Expr2)) &&
+        !Preds.implies(SE.getEqualPredicate(Expr2, Expr1)))
+      return false;
+    return true;
+  };
+
+  if (!areExprsEqual(AR1->getStart(), AR2->getStart()) ||
+      !areExprsEqual(AR1->getStepRecurrence(SE), AR2->getStepRecurrence(SE)))
+    return false;
+  return true;
 }
 
 /// A helper function for createAddRecFromPHI to handle simple cases.
@@ -4871,33 +4898,33 @@ const SCEV *ScalarEvolution::createAddRecFromPHI(PHINode *PN) {
           // indices form a positive value.
           if (GEP->isInBounds() && GEP->getOperand(0) == PN) {
             Flags = setFlags(Flags, SCEV::FlagNW);
-  
+
             const SCEV *Ptr = getSCEV(GEP->getPointerOperand());
             if (isKnownPositive(getMinusSCEV(getSCEV(GEP), Ptr)))
               Flags = setFlags(Flags, SCEV::FlagNUW);
           }
-  
+
           // We cannot transfer nuw and nsw flags from subtraction
           // operations -- sub nuw X, Y is not the same as add nuw X, -Y
           // for instance.
         }
-  
+
         const SCEV *StartVal = getSCEV(StartValueV);
         const SCEV *PHISCEV = getAddRecExpr(StartVal, Accum, L, Flags);
-  
+
         // Okay, for the entire analysis of this edge we assumed the PHI
         // to be symbolic.  We now need to go back and purge all of the
         // entries for the scalars that use the symbolic expression.
         forgetSymbolicName(PN, SymbolicName);
         ValueExprMap[SCEVCallbackVH(PN, this)] = PHISCEV;
-  
+
         // We can add Flags to the post-inc expression only if we
         // know that it is *undefined behavior* for BEValueV to
         // overflow.
         if (auto *BEInst = dyn_cast<Instruction>(BEValueV))
           if (isLoopInvariant(Accum, L) && isAddRecNeverPoison(BEInst, L))
             (void)getAddRecExpr(getAddExpr(StartVal, Accum), Accum, L, Flags);
-  
+
         return PHISCEV;
       }
     }

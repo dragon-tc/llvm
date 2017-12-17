@@ -377,7 +377,7 @@ define float @test_cmpss(float %a0, float %a1, float *%a2) {
 ; GENERIC-LABEL: test_cmpss:
 ; GENERIC:       # %bb.0:
 ; GENERIC-NEXT:    cmpeqss %xmm1, %xmm0 # sched: [3:1.00]
-; GENERIC-NEXT:    cmpeqss (%rdi), %xmm0 # sched: [7:1.00]
+; GENERIC-NEXT:    cmpeqss (%rdi), %xmm0 # sched: [9:1.00]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; ATOM-LABEL: test_cmpss:
@@ -395,7 +395,7 @@ define float @test_cmpss(float %a0, float %a1, float *%a2) {
 ; SANDY-LABEL: test_cmpss:
 ; SANDY:       # %bb.0:
 ; SANDY-NEXT:    vcmpeqss %xmm1, %xmm0, %xmm0 # sched: [3:1.00]
-; SANDY-NEXT:    vcmpeqss (%rdi), %xmm0, %xmm0 # sched: [7:1.00]
+; SANDY-NEXT:    vcmpeqss (%rdi), %xmm0, %xmm0 # sched: [9:1.00]
 ; SANDY-NEXT:    retq # sched: [1:1.00]
 ;
 ; HASWELL-LABEL: test_cmpss:
@@ -412,14 +412,14 @@ define float @test_cmpss(float %a0, float %a1, float *%a2) {
 ;
 ; SKYLAKE-LABEL: test_cmpss:
 ; SKYLAKE:       # %bb.0:
-; SKYLAKE-NEXT:    vcmpeqss %xmm1, %xmm0, %xmm0 # sched: [3:1.00]
-; SKYLAKE-NEXT:    vcmpeqss (%rdi), %xmm0, %xmm0 # sched: [8:1.00]
+; SKYLAKE-NEXT:    vcmpeqss %xmm1, %xmm0, %xmm0 # sched: [4:0.33]
+; SKYLAKE-NEXT:    vcmpeqss (%rdi), %xmm0, %xmm0 # sched: [9:0.50]
 ; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_cmpss:
 ; SKX:       # %bb.0:
-; SKX-NEXT:    vcmpeqss %xmm1, %xmm0, %xmm0 # sched: [3:1.00]
-; SKX-NEXT:    vcmpeqss (%rdi), %xmm0, %xmm0 # sched: [8:1.00]
+; SKX-NEXT:    vcmpeqss %xmm1, %xmm0, %xmm0 # sched: [4:0.33]
+; SKX-NEXT:    vcmpeqss (%rdi), %xmm0, %xmm0 # sched: [9:0.50]
 ; SKX-NEXT:    retq # sched: [7:1.00]
 ;
 ; BTVER2-LABEL: test_cmpss:
@@ -784,8 +784,8 @@ define i32 @test_cvtss2si(float %a0, float *%a1) {
 ;
 ; BROADWELL-LABEL: test_cvtss2si:
 ; BROADWELL:       # %bb.0:
-; BROADWELL-NEXT:    vcvtss2si %xmm0, %ecx # sched: [4:1.00]
 ; BROADWELL-NEXT:    vcvtss2si (%rdi), %eax # sched: [9:1.00]
+; BROADWELL-NEXT:    vcvtss2si %xmm0, %ecx # sched: [4:1.00]
 ; BROADWELL-NEXT:    addl %ecx, %eax # sched: [1:0.25]
 ; BROADWELL-NEXT:    retq # sched: [7:1.00]
 ;
@@ -864,8 +864,8 @@ define i64 @test_cvtss2siq(float %a0, float *%a1) {
 ;
 ; BROADWELL-LABEL: test_cvtss2siq:
 ; BROADWELL:       # %bb.0:
-; BROADWELL-NEXT:    vcvtss2si %xmm0, %rcx # sched: [4:1.00]
 ; BROADWELL-NEXT:    vcvtss2si (%rdi), %rax # sched: [9:1.00]
+; BROADWELL-NEXT:    vcvtss2si %xmm0, %rcx # sched: [4:1.00]
 ; BROADWELL-NEXT:    addq %rcx, %rax # sched: [1:0.25]
 ; BROADWELL-NEXT:    retq # sched: [7:1.00]
 ;
@@ -944,8 +944,8 @@ define i32 @test_cvttss2si(float %a0, float *%a1) {
 ;
 ; BROADWELL-LABEL: test_cvttss2si:
 ; BROADWELL:       # %bb.0:
-; BROADWELL-NEXT:    vcvttss2si %xmm0, %ecx # sched: [4:1.00]
 ; BROADWELL-NEXT:    vcvttss2si (%rdi), %eax # sched: [9:1.00]
+; BROADWELL-NEXT:    vcvttss2si %xmm0, %ecx # sched: [4:1.00]
 ; BROADWELL-NEXT:    addl %ecx, %eax # sched: [1:0.25]
 ; BROADWELL-NEXT:    retq # sched: [7:1.00]
 ;
@@ -1021,8 +1021,8 @@ define i64 @test_cvttss2siq(float %a0, float *%a1) {
 ;
 ; BROADWELL-LABEL: test_cvttss2siq:
 ; BROADWELL:       # %bb.0:
-; BROADWELL-NEXT:    vcvttss2si %xmm0, %rcx # sched: [4:1.00]
 ; BROADWELL-NEXT:    vcvttss2si (%rdi), %rax # sched: [9:1.00]
+; BROADWELL-NEXT:    vcvttss2si %xmm0, %rcx # sched: [4:1.00]
 ; BROADWELL-NEXT:    addq %rcx, %rax # sched: [1:0.25]
 ; BROADWELL-NEXT:    retq # sched: [7:1.00]
 ;
@@ -2134,7 +2134,7 @@ define <4 x float> @test_movss_reg(<4 x float> %a0, <4 x float> %a1) {
 ;
 ; SKX-LABEL: test_movss_reg:
 ; SKX:       # %bb.0:
-; SKX-NEXT:    vmovss {{.*#+}} xmm0 = xmm1[0],xmm0[1,2,3] sched: [1:1.00]
+; SKX-NEXT:    vmovss {{.*#+}} xmm0 = xmm1[0],xmm0[1,2,3] sched: [1:0.33]
 ; SKX-NEXT:    retq # sched: [7:1.00]
 ;
 ; BTVER2-LABEL: test_movss_reg:
@@ -2432,66 +2432,109 @@ define <4 x float> @test_orps(<4 x float> %a0, <4 x float> %a1, <4 x float> *%a2
   ret <4 x float> %7
 }
 
-define void @test_prefetchnta(i8* %a0) {
-; GENERIC-LABEL: test_prefetchnta:
+define void @test_prefetch(i8* %a0) optsize {
+; GENERIC-LABEL: test_prefetch:
 ; GENERIC:       # %bb.0:
+; GENERIC-NEXT:    #APP
 ; GENERIC-NEXT:    prefetchnta (%rdi) # sched: [5:0.50]
+; GENERIC-NEXT:    prefetcht0 (%rdi) # sched: [5:0.50]
+; GENERIC-NEXT:    prefetcht1 (%rdi) # sched: [5:0.50]
+; GENERIC-NEXT:    prefetcht2 (%rdi) # sched: [5:0.50]
+; GENERIC-NEXT:    #NO_APP
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
-; ATOM-LABEL: test_prefetchnta:
+; ATOM-LABEL: test_prefetch:
 ; ATOM:       # %bb.0:
+; ATOM-NEXT:    #APP
 ; ATOM-NEXT:    prefetchnta (%rdi) # sched: [1:1.00]
-; ATOM-NEXT:    nop # sched: [1:0.50]
-; ATOM-NEXT:    nop # sched: [1:0.50]
-; ATOM-NEXT:    nop # sched: [1:0.50]
-; ATOM-NEXT:    nop # sched: [1:0.50]
-; ATOM-NEXT:    nop # sched: [1:0.50]
-; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    prefetcht0 (%rdi) # sched: [1:1.00]
+; ATOM-NEXT:    prefetcht1 (%rdi) # sched: [1:1.00]
+; ATOM-NEXT:    prefetcht2 (%rdi) # sched: [1:1.00]
+; ATOM-NEXT:    #NO_APP
 ; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
-; SLM-LABEL: test_prefetchnta:
+; SLM-LABEL: test_prefetch:
 ; SLM:       # %bb.0:
+; SLM-NEXT:    #APP
 ; SLM-NEXT:    prefetchnta (%rdi) # sched: [3:1.00]
+; SLM-NEXT:    prefetcht0 (%rdi) # sched: [3:1.00]
+; SLM-NEXT:    prefetcht1 (%rdi) # sched: [3:1.00]
+; SLM-NEXT:    prefetcht2 (%rdi) # sched: [3:1.00]
+; SLM-NEXT:    #NO_APP
 ; SLM-NEXT:    retq # sched: [4:1.00]
 ;
-; SANDY-LABEL: test_prefetchnta:
+; SANDY-LABEL: test_prefetch:
 ; SANDY:       # %bb.0:
+; SANDY-NEXT:    #APP
 ; SANDY-NEXT:    prefetchnta (%rdi) # sched: [5:0.50]
+; SANDY-NEXT:    prefetcht0 (%rdi) # sched: [5:0.50]
+; SANDY-NEXT:    prefetcht1 (%rdi) # sched: [5:0.50]
+; SANDY-NEXT:    prefetcht2 (%rdi) # sched: [5:0.50]
+; SANDY-NEXT:    #NO_APP
 ; SANDY-NEXT:    retq # sched: [1:1.00]
 ;
-; HASWELL-LABEL: test_prefetchnta:
+; HASWELL-LABEL: test_prefetch:
 ; HASWELL:       # %bb.0:
+; HASWELL-NEXT:    #APP
 ; HASWELL-NEXT:    prefetchnta (%rdi) # sched: [5:0.50]
+; HASWELL-NEXT:    prefetcht0 (%rdi) # sched: [5:0.50]
+; HASWELL-NEXT:    prefetcht1 (%rdi) # sched: [5:0.50]
+; HASWELL-NEXT:    prefetcht2 (%rdi) # sched: [5:0.50]
+; HASWELL-NEXT:    #NO_APP
 ; HASWELL-NEXT:    retq # sched: [7:1.00]
 ;
-; BROADWELL-LABEL: test_prefetchnta:
+; BROADWELL-LABEL: test_prefetch:
 ; BROADWELL:       # %bb.0:
+; BROADWELL-NEXT:    #APP
 ; BROADWELL-NEXT:    prefetchnta (%rdi) # sched: [5:0.50]
+; BROADWELL-NEXT:    prefetcht0 (%rdi) # sched: [5:0.50]
+; BROADWELL-NEXT:    prefetcht1 (%rdi) # sched: [5:0.50]
+; BROADWELL-NEXT:    prefetcht2 (%rdi) # sched: [5:0.50]
+; BROADWELL-NEXT:    #NO_APP
 ; BROADWELL-NEXT:    retq # sched: [7:1.00]
 ;
-; SKYLAKE-LABEL: test_prefetchnta:
+; SKYLAKE-LABEL: test_prefetch:
 ; SKYLAKE:       # %bb.0:
+; SKYLAKE-NEXT:    #APP
 ; SKYLAKE-NEXT:    prefetchnta (%rdi) # sched: [5:0.50]
+; SKYLAKE-NEXT:    prefetcht0 (%rdi) # sched: [5:0.50]
+; SKYLAKE-NEXT:    prefetcht1 (%rdi) # sched: [5:0.50]
+; SKYLAKE-NEXT:    prefetcht2 (%rdi) # sched: [5:0.50]
+; SKYLAKE-NEXT:    #NO_APP
 ; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
-; SKX-LABEL: test_prefetchnta:
+; SKX-LABEL: test_prefetch:
 ; SKX:       # %bb.0:
+; SKX-NEXT:    #APP
 ; SKX-NEXT:    prefetchnta (%rdi) # sched: [5:0.50]
+; SKX-NEXT:    prefetcht0 (%rdi) # sched: [5:0.50]
+; SKX-NEXT:    prefetcht1 (%rdi) # sched: [5:0.50]
+; SKX-NEXT:    prefetcht2 (%rdi) # sched: [5:0.50]
+; SKX-NEXT:    #NO_APP
 ; SKX-NEXT:    retq # sched: [7:1.00]
 ;
-; BTVER2-LABEL: test_prefetchnta:
+; BTVER2-LABEL: test_prefetch:
 ; BTVER2:       # %bb.0:
+; BTVER2-NEXT:    #APP
 ; BTVER2-NEXT:    prefetchnta (%rdi) # sched: [5:1.00]
+; BTVER2-NEXT:    prefetcht0 (%rdi) # sched: [5:1.00]
+; BTVER2-NEXT:    prefetcht1 (%rdi) # sched: [5:1.00]
+; BTVER2-NEXT:    prefetcht2 (%rdi) # sched: [5:1.00]
+; BTVER2-NEXT:    #NO_APP
 ; BTVER2-NEXT:    retq # sched: [4:1.00]
 ;
-; ZNVER1-LABEL: test_prefetchnta:
+; ZNVER1-LABEL: test_prefetch:
 ; ZNVER1:       # %bb.0:
+; ZNVER1-NEXT:    #APP
 ; ZNVER1-NEXT:    prefetchnta (%rdi) # sched: [8:0.50]
+; ZNVER1-NEXT:    prefetcht0 (%rdi) # sched: [8:0.50]
+; ZNVER1-NEXT:    prefetcht1 (%rdi) # sched: [8:0.50]
+; ZNVER1-NEXT:    prefetcht2 (%rdi) # sched: [8:0.50]
+; ZNVER1-NEXT:    #NO_APP
 ; ZNVER1-NEXT:    retq # sched: [1:0.50]
-  call void @llvm.prefetch(i8* %a0, i32 0, i32 0, i32 1)
+  call void asm sideeffect "prefetchnta $0 \0A\09 prefetcht0 $0 \0A\09 prefetcht1 $0 \0A\09 prefetcht2 $0", "*m"(i8 *%a0)
   ret void
 }
-declare void @llvm.prefetch(i8* nocapture, i32, i32, i32) nounwind readnone
 
 define <4 x float> @test_rcpps(<4 x float> %a0, <4 x float> *%a1) {
 ; GENERIC-LABEL: test_rcpps:

@@ -394,6 +394,8 @@ def IIC_SSE_CVT_SS2SI64_RR : InstrItinClass;
 def IIC_SSE_CVT_SD2SI_RM : InstrItinClass;
 def IIC_SSE_CVT_SD2SI_RR : InstrItinClass;
 
+def IIC_AVX_ZERO : InstrItinClass;
+
 // MMX
 def IIC_MMX_MOV_MM_RM : InstrItinClass;
 def IIC_MMX_MOV_REG_MM : InstrItinClass;
@@ -506,6 +508,7 @@ def IIC_RDPID : InstrItinClass;
 def IIC_RDRAND : InstrItinClass;
 def IIC_RDSEED : InstrItinClass;
 def IIC_RDTSC : InstrItinClass;
+def IIC_RDTSCP : InstrItinClass;
 def IIC_RSM : InstrItinClass;
 def IIC_SIDT : InstrItinClass;
 def IIC_SGDT : InstrItinClass;
@@ -547,6 +550,8 @@ def IIC_PUSH_CS : InstrItinClass;
 def IIC_PUSH_SR : InstrItinClass;
 def IIC_POP_SR : InstrItinClass;
 def IIC_POP_SR_SS : InstrItinClass;
+def IIC_SEGMENT_BASE_R : InstrItinClass;
+def IIC_SEGMENT_BASE_W : InstrItinClass;
 def IIC_VERR : InstrItinClass;
 def IIC_VERW_REG : InstrItinClass;
 def IIC_VERW_MEM : InstrItinClass;
@@ -687,14 +692,4 @@ def GenericModel : GenericX86Model;
 def GenericPostRAModel : GenericX86Model {
   let PostRAScheduler = 1;
 }
-
-include "X86ScheduleAtom.td"
-include "X86SchedSandyBridge.td"
-include "X86SchedHaswell.td"
-include "X86SchedBroadwell.td"
-include "X86ScheduleSLM.td"
-include "X86ScheduleZnver1.td"
-include "X86ScheduleBtVer2.td"
-include "X86SchedSkylakeClient.td"
-include "X86SchedSkylakeServer.td"
 
