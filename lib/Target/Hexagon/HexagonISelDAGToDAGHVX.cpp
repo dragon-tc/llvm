@@ -11,6 +11,7 @@
 #include "HexagonISelDAGToDAG.h"
 #include "HexagonISelLowering.h"
 #include "HexagonTargetMachine.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
 #include "llvm/IR/Intrinsics.h"
@@ -821,7 +822,6 @@ namespace llvm {
                 MutableArrayRef<int> NewMask, unsigned Options = None);
     OpRef packp(ShuffleMask SM, OpRef Va, OpRef Vb, ResultStack &Results,
                 MutableArrayRef<int> NewMask);
-    OpRef zerous(ShuffleMask SM, OpRef Va, ResultStack &Results);
     OpRef vmuxs(ArrayRef<uint8_t> Bytes, OpRef Va, OpRef Vb,
                 ResultStack &Results);
     OpRef vmuxp(ArrayRef<uint8_t> Bytes, OpRef Va, OpRef Vb,
@@ -910,7 +910,7 @@ bool HvxSelector::selectVectorConstants(SDNode *N) {
   // selection algorithm is not aware of them. Select them directly
   // here.
   SmallVector<SDNode*,4> Loads;
-  SmallVector<SDNode*,16> WorkQ;
+  SetVector<SDNode*> WorkQ;
 
   // The DAG can change (due to CSE) during selection, so cache all the
   // unselected nodes first to avoid traversing a mutating DAG.
@@ -926,7 +926,7 @@ bool HvxSelector::selectVectorConstants(SDNode *N) {
     return false;
   };
 
-  WorkQ.push_back(N);
+  WorkQ.insert(N);
   for (unsigned i = 0; i != WorkQ.size(); ++i) {
     SDNode *W = WorkQ[i];
     if (IsLoadToSelect(W)) {
@@ -934,7 +934,7 @@ bool HvxSelector::selectVectorConstants(SDNode *N) {
       continue;
     }
     for (unsigned j = 0, f = W->getNumOperands(); j != f; ++j)
-      WorkQ.push_back(W->getOperand(j).getNode());
+      WorkQ.insert(W->getOperand(j).getNode());
   }
 
   for (SDNode *L : Loads)
@@ -1137,25 +1137,6 @@ OpRef HvxSelector::packp(ShuffleMask SM, OpRef Va, OpRef Vb,
   }
 
   return concat(Out[0], Out[1], Results);
-}
-
-OpRef HvxSelector::zerous(ShuffleMask SM, OpRef Va, ResultStack &Results) {
-  DEBUG_WITH_TYPE("isel", {dbgs() << __func__ << '\n';});
-
-  int VecLen = SM.Mask.size();
-  SmallVector<uint8_t,128> UsedBytes(VecLen);
-  bool HasUnused = false;
-  for (int I = 0; I != VecLen; ++I) {
-    if (SM.Mask[I] != -1)
-      UsedBytes[I] = 0xFF;
-    else
-      HasUnused = true;
-  }
-  if (!HasUnused)
-    return Va;
-  SDValue B = getVectorConstant(UsedBytes, SDLoc(Results.InpNode));
-  Results.push(Hexagon::V6_vand, getSingleVT(MVT::i8), {Va, OpRef(B)});
-  return OpRef::res(Results.top());
 }
 
 OpRef HvxSelector::vmuxs(ArrayRef<uint8_t> Bytes, OpRef Va, OpRef Vb,

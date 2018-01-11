@@ -7,10 +7,15 @@ declare void @func1()
 declare void @func2()
 declare void @func3()
 
-@llvm.global_ctors = appending global [2 x { i32, void ()*, i8* }] [{ i32, void ()*, i8* } { i32 65535, void ()* @func0, i8* null }, { i32, void ()*, i8* } { i32 42, void ()* @func1, i8* null }] 
+@llvm.global_ctors = appending global [2 x { i32, void ()*, i8* }] [
+  { i32, void ()*, i8* } { i32 65535, void ()* @func0, i8* null },
+  { i32, void ()*, i8* } { i32 42,    void ()* @func1, i8* null }
+]
 
-@llvm.global_dtors = appending global [2 x { i32, void ()*, i8* }] [{ i32, void ()*, i8* } { i32 65535, void ()* @func2, i8* null }, { i32, void ()*, i8* } { i32 42, void ()* @func3, i8* null }] 
-  
+@llvm.global_dtors = appending global [2 x { i32, void ()*, i8* }] [
+  { i32, void ()*, i8* } { i32 65535, void ()* @func2, i8* null },
+  { i32, void ()*, i8* } { i32 42,    void ()* @func3, i8* null }
+]
 
 ; CHECK:        - Type:            IMPORT
 ; CHECK-NEXT:     Imports:         
@@ -55,7 +60,8 @@ declare void @func3()
 ; CHECK-NEXT:     FunctionTypes:   [ 0, 1, 0, 1 ]
 ; CHECK-NEXT:   - Type:            GLOBAL
 ; CHECK-NEXT:     Globals:         
-; CHECK-NEXT:       - Type:            I32
+; CHECK-NEXT:       - Index:           1
+; CHECK-NEXT:         Type:            I32
 ; CHECK-NEXT:         Mutable:         false
 ; CHECK-NEXT:         InitExpr:        
 ; CHECK-NEXT:           Opcode:          I32_CONST
@@ -110,14 +116,18 @@ declare void @func3()
 ; CHECK-NEXT:         Index:           1
 ; CHECK-NEXT:         Offset:          0x00000045
 ; CHECK-NEXT:     Functions:       
-; CHECK-NEXT:       - Locals:          
+; CHECK-NEXT:       - Index:           5
+; CHECK-NEXT:         Locals:          
 ; CHECK-NEXT:         Body:            1080808080000B
-; CHECK-NEXT:       - Locals:          
-; CHECK-NEXT:         Body:            0240418080808000410041FFFFFFFF7F1081808080000D000F0B00000B
-; CHECK-NEXT:       - Locals:          
+; CHECK-NEXT:       - Index:           6
+; CHECK-NEXT:         Locals:          
+; CHECK-NEXT:         Body:            024041808080800041004180808080001081808080000D000F0B00000B
+; CHECK-NEXT:       - Index:           7
+; CHECK-NEXT:         Locals:          
 ; CHECK-NEXT:         Body:            1082808080000B
-; CHECK-NEXT:       - Locals:          
-; CHECK-NEXT:         Body:            0240418180808000410041FFFFFFFF7F1081808080000D000F0B00000B
+; CHECK-NEXT:       - Index:           8
+; CHECK-NEXT:         Locals:          
+; CHECK-NEXT:         Body:            024041818080800041004180808080001081808080000D000F0B00000B
 ; CHECK-NEXT:   - Type:            DATA
 ; CHECK-NEXT:     Segments:        
 ; CHECK-NEXT:       - SectionOffset:   6
