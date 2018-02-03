@@ -823,8 +823,8 @@ void CodeViewDebug::switchToDebugSectionForSymbol(const MCSymbol *GVSym) {
 
 void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
                                              FunctionInfo &FI) {
-  // For each function there is a separate subsection
-  // which holds the PC to file:line table.
+  // For each function there is a separate subsection which holds the PC to
+  // file:line table.
   const MCSymbol *Fn = Asm->getSymbol(GV);
   assert(Fn);
 
@@ -1970,6 +1970,7 @@ CodeViewDebug::lowerRecordFieldList(const DICompositeType *Ty) {
           VBTableIndex);
 
       ContinuationBuilder.writeMemberType(VBCR);
+      MemberCount++;
     } else {
       assert(I->getOffsetInBits() % 8 == 0 &&
              "bases must be on byte boundaries");
@@ -1977,6 +1978,7 @@ CodeViewDebug::lowerRecordFieldList(const DICompositeType *Ty) {
                           getTypeIndex(I->getBaseType()),
                           I->getOffsetInBits() / 8);
       ContinuationBuilder.writeMemberType(BCR);
+      MemberCount++;
     }
   }
 

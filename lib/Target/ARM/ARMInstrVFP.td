@@ -23,6 +23,11 @@ def arm_cmpfp0 : SDNode<"ARMISD::CMPFPw0", SDT_CMPFP0, [SDNPOutGlue]>;
 def arm_fmdrr  : SDNode<"ARMISD::VMOVDRR", SDT_VMOVDRR>;
 def arm_fmrrd  : SDNode<"ARMISD::VMOVRRD", SDT_VMOVRRD>;
 
+def SDT_VMOVhr : SDTypeProfile<1, 1, [SDTCisFP<0>, SDTCisVT<1, i32>] >;
+def SDT_VMOVrh : SDTypeProfile<1, 1, [SDTCisVT<0, i32>, SDTCisFP<1>] >;
+def arm_vmovhr : SDNode<"ARMISD::VMOVhr", SDT_VMOVhr>;
+def arm_vmovrh : SDNode<"ARMISD::VMOVrh", SDT_VMOVrh>;
+
 //===----------------------------------------------------------------------===//
 // Operand Definitions.
 //
@@ -674,8 +679,8 @@ def VCVTBHS: ASuI<0b11101, 0b11, 0b0010, 0b01, 0, (outs SPR:$Sd), (ins SPR:$Sm),
                  Requires<[HasFP16]>,
              Sched<[WriteFPCVT]>;
 
-def : Pat<(f32 (fpextend HPR:$Sm)),
-          (VCVTBHS (COPY_TO_REGCLASS HPR:$Sm, SPR))>;
+def : FullFP16Pat<(f32 (fpextend HPR:$Sm)),
+                  (VCVTBHS (COPY_TO_REGCLASS HPR:$Sm, SPR))>;
 
 def VCVTBSH: ASuI<0b11101, 0b11, 0b0011, 0b01, 0, (outs SPR:$Sd), (ins SPR:$Sm),
                  /* FIXME */ IIC_fpCVTHS, "vcvtb", ".f16.f32\t$Sd, $Sm",
@@ -750,17 +755,17 @@ def VCVTTDH : ADuI<0b11101, 0b11, 0b0011, 0b11, 0,
   let Inst{5}     = Dm{4};
 }
 
-def : Pat<(fp_to_f16 SPR:$a),
-          (i32 (COPY_TO_REGCLASS (VCVTBSH SPR:$a), GPR))>;
+def : FP16Pat<(fp_to_f16 SPR:$a),
+              (i32 (COPY_TO_REGCLASS (VCVTBSH SPR:$a), GPR))>;
 
-def : Pat<(fp_to_f16 (f64 DPR:$a)),
-          (i32 (COPY_TO_REGCLASS (VCVTBDH DPR:$a), GPR))>;
+def : FP16Pat<(fp_to_f16 (f64 DPR:$a)),
+              (i32 (COPY_TO_REGCLASS (VCVTBDH DPR:$a), GPR))>;
 
-def : Pat<(f16_to_fp GPR:$a),
-          (VCVTBHS (COPY_TO_REGCLASS GPR:$a, SPR))>;
+def : FP16Pat<(f16_to_fp GPR:$a),
+              (VCVTBHS (COPY_TO_REGCLASS GPR:$a, SPR))>;
 
-def : Pat<(f64 (f16_to_fp GPR:$a)),
-          (VCVTBHD (COPY_TO_REGCLASS GPR:$a, SPR))>;
+def : FP16Pat<(f64 (f16_to_fp GPR:$a)),
+              (VCVTBHD (COPY_TO_REGCLASS GPR:$a, SPR))>;
 
 multiclass vcvt_inst<string opc, bits<2> rm,
                      SDPatternOperator node = null_frag> {
@@ -1171,9 +1176,9 @@ def VMOVSRR : AVConv5I<0b11000100, 0b1010,
 
 // Move H->R, clearing top 16 bits
 def VMOVRH : AVConv2I<0b11100001, 0b1001,
-                      (outs GPR:$Rt), (ins SPR:$Sn),
+                      (outs GPR:$Rt), (ins HPR:$Sn),
                       IIC_fpMOVSI, "vmov", ".f16\t$Rt, $Sn",
-                      []>,
+                      [(set GPR:$Rt, (arm_vmovrh HPR:$Sn))]>,
              Requires<[HasFullFP16]>,
              Sched<[WriteFPMOV]> {
   // Instruction operands.
@@ -1191,9 +1196,9 @@ def VMOVRH : AVConv2I<0b11100001, 0b1001,
 
 // Move R->H, clearing top 16 bits
 def VMOVHR : AVConv4I<0b11100000, 0b1001,
-                      (outs SPR:$Sn), (ins GPR:$Rt),
+                      (outs HPR:$Sn), (ins GPR:$Rt),
                       IIC_fpMOVIS, "vmov", ".f16\t$Sn, $Rt",
-                      []>,
+                      [(set HPR:$Sn, (arm_vmovhr GPR:$Rt))]>,
              Requires<[HasFullFP16]>,
              Sched<[WriteFPMOV]> {
   // Instruction operands.

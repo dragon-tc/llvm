@@ -25,6 +25,7 @@
 #include "llvm/DebugInfo/DWARF/DWARFDebugMacro.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugPubTable.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugRangeList.h"
+#include "llvm/DebugInfo/DWARF/DWARFDebugRnglists.h"
 #include "llvm/DebugInfo/DWARF/DWARFDie.h"
 #include "llvm/DebugInfo/DWARF/DWARFFormValue.h"
 #include "llvm/DebugInfo/DWARF/DWARFGdbIndex.h"
@@ -387,7 +388,7 @@ void DWARFContext::dump(
       if (DumpOffset && Offset != *DumpOffset) {
         // Find the size of this part of the line table section and skip it.
         unsigned OldOffset = Offset;
-        LineTable.Prologue.parse(LineData, &Offset, U);
+        LineTable.Prologue.parse(LineData, &Offset, *this, U);
         Offset = OldOffset + LineTable.Prologue.TotalLength +
                  LineTable.Prologue.sizeofTotalLength();
         continue;
@@ -397,9 +398,9 @@ void DWARFContext::dump(
       OS << "debug_line[" << format("0x%8.8x", Offset) << "]\n";
       unsigned OldOffset = Offset;
       if (DumpOpts.Verbose) {
-        LineTable.parse(LineData, &Offset, U, &OS);
+        LineTable.parse(LineData, &Offset, *this, U, &OS);
       } else {
-        LineTable.parse(LineData, &Offset, U);
+        LineTable.parse(LineData, &Offset, *this, U);
         LineTable.dump(OS);
       }
       // Check for unparseable prologue, to avoid infinite loops.
@@ -422,7 +423,7 @@ void DWARFContext::dump(
         U = It->second;
       DWARFDebugLine::LineTable LineTable;
       unsigned OldOffset = Offset;
-      if (!LineTable.Prologue.parse(LineData, &Offset, U))
+      if (!LineTable.Prologue.parse(LineData, &Offset, *this, U))
         break;
       if (!DumpOffset || OldOffset == *DumpOffset)
         LineTable.dump(OS);
@@ -490,6 +491,27 @@ void DWARFContext::dump(
       rangeList.dump(OS);
   }
 
+  if (shouldDump(Explicit, ".debug_rnglists", DIDT_ID_DebugRnglists,
+                 DObj->getRnglistsSection().Data)) {
+    DWARFDataExtractor rnglistData(*DObj, DObj->getRnglistsSection(),
+                                   isLittleEndian(), 0);
+    uint32_t Offset = 0;
+    while (rnglistData.isValidOffset(Offset)) {
+      DWARFDebugRnglists Rnglists;
+      uint32_t TableOffset = Offset;
+      if (Error Err = Rnglists.extract(rnglistData, &Offset)) {
+        errs() << "error: " + toString(std::move(Err)) << '\n';
+        uint64_t Length = Rnglists.length();
+        // Keep going after an error, if we can, assuming that the length field
+        // could be read. If it couldn't, stop reading the section.
+        if (Length == 0)
+          break;
+        Offset = TableOffset + Length;
+      } else
+        Rnglists.dump(OS);
+    }
+  }
+
   if (shouldDump(Explicit, ".debug_pubnames", DIDT_ID_DebugPubnames,
                  DObj->getPubNamesSection()))
     DWARFDebugPubTable(DObj->getPubNamesSection(), isLittleEndian(), false)
@@ -545,6 +567,9 @@ void DWARFContext::dump(
   if (shouldDump(Explicit, ".apple_objc", DIDT_ID_AppleObjC,
                  DObj->getAppleObjCSection().Data))
     getAppleObjC().dump(OS);
+  if (shouldDump(Explicit, ".debug_names", DIDT_ID_DebugNames,
+                 DObj->getDebugNamesSection().Data))
+    getDebugNames().dump(OS);
 }
 
 DWARFCompileUnit *DWARFContext::getDWOCompileUnitForHash(uint64_t Hash) {
@@ -713,18 +738,23 @@ const DWARFDebugMacro *DWARFContext::getDebugMacro() {
   return Macro.get();
 }
 
-static AppleAcceleratorTable &
-getAccelTable(std::unique_ptr<AppleAcceleratorTable> &Cache,
-              const DWARFObject &Obj, const DWARFSection &Section,
-              StringRef StringSection, bool IsLittleEndian) {
+template <typename T>
+static T &getAccelTable(std::unique_ptr<T> &Cache, const DWARFObject &Obj,
+                        const DWARFSection &Section, StringRef StringSection,
+                        bool IsLittleEndian) {
   if (Cache)
     return *Cache;
   DWARFDataExtractor AccelSection(Obj, Section, IsLittleEndian, 0);
   DataExtractor StrData(StringSection, IsLittleEndian, 0);
-  Cache.reset(new AppleAcceleratorTable(AccelSection, StrData));
+  Cache.reset(new T(AccelSection, StrData));
   if (Error E = Cache->extract())
     llvm::consumeError(std::move(E));
   return *Cache;
+}
+
+const DWARFDebugNames &DWARFContext::getDebugNames() {
+  return getAccelTable(Names, *DObj, DObj->getDebugNamesSection(),
+                       DObj->getStringSection(), isLittleEndian());
 }
 
 const AppleAcceleratorTable &DWARFContext::getAppleNames() {
@@ -773,7 +803,7 @@ DWARFContext::getLineTableForUnit(DWARFUnit *U) {
   // We have to parse it first.
   DWARFDataExtractor lineData(*DObj, U->getLineSection(), isLittleEndian(),
                               U->getAddressByteSize());
-  return Line->getOrParseLineTable(lineData, stmtOffset, U);
+  return Line->getOrParseLineTable(lineData, stmtOffset, *this, U);
 }
 
 void DWARFContext::parseCompileUnits() {
@@ -1156,6 +1186,7 @@ class DWARFObjInMemory final : public DWARFObject {
   DWARFSectionMap LocSection;
   DWARFSectionMap LineSection;
   DWARFSectionMap RangeSection;
+  DWARFSectionMap RnglistsSection;
   DWARFSectionMap StringOffsetSection;
   DWARFSectionMap InfoDWOSection;
   DWARFSectionMap LineDWOSection;
@@ -1167,6 +1198,7 @@ class DWARFObjInMemory final : public DWARFObject {
   DWARFSectionMap AppleTypesSection;
   DWARFSectionMap AppleNamespacesSection;
   DWARFSectionMap AppleObjCSection;
+  DWARFSectionMap DebugNamesSection;
 
   DWARFSectionMap *mapNameToDWARFSection(StringRef Name) {
     return StringSwitch<DWARFSectionMap *>(Name)
@@ -1175,9 +1207,11 @@ class DWARFObjInMemory final : public DWARFObject {
         .Case("debug_line", &LineSection)
         .Case("debug_str_offsets", &StringOffsetSection)
         .Case("debug_ranges", &RangeSection)
+        .Case("debug_rnglists", &RnglistsSection)
         .Case("debug_info.dwo", &InfoDWOSection)
         .Case("debug_loc.dwo", &LocDWOSection)
         .Case("debug_line.dwo", &LineDWOSection)
+        .Case("debug_names", &DebugNamesSection)
         .Case("debug_str_offsets.dwo", &StringOffsetDWOSection)
         .Case("debug_addr", &AddrSection)
         .Case("apple_names", &AppleNamesSection)
@@ -1465,6 +1499,9 @@ public:
   const DWARFSection &getLineSection() const override { return LineSection; }
   StringRef getStringSection() const override { return StringSection; }
   const DWARFSection &getRangeSection() const override { return RangeSection; }
+  const DWARFSection &getRnglistsSection() const override {
+    return RnglistsSection;
+  }
   StringRef getMacinfoSection() const override { return MacinfoSection; }
   StringRef getPubNamesSection() const override { return PubNamesSection; }
   StringRef getPubTypesSection() const override { return PubTypesSection; }
@@ -1485,6 +1522,9 @@ public:
   }
   const DWARFSection &getAppleObjCSection() const override {
     return AppleObjCSection;
+  }
+  const DWARFSection &getDebugNamesSection() const override {
+    return DebugNamesSection;
   }
 
   StringRef getFileName() const override { return FileName; }

@@ -399,6 +399,22 @@ Error lto::backend(Config &C, AddStreamFn AddStream,
   return Error::success();
 }
 
+static void dropDeadSymbols(Module &Mod, const GVSummaryMapTy &DefinedGlobals,
+                            const ModuleSummaryIndex &Index) {
+  auto MaybeDrop = [&](GlobalValue &GV) {
+    if (GlobalValueSummary *GVS = DefinedGlobals.lookup(GV.getGUID()))
+      if (!Index.isGlobalValueLive(GVS))
+        convertToDeclaration(GV);
+  };
+
+  // Process functions and global now.
+  // FIXME: add support for aliases (needs support in convertToDeclaration).
+  for (auto &GV : Mod)
+    MaybeDrop(GV);
+  for (auto &GV : Mod.globals())
+    MaybeDrop(GV);
+}
+
 Error lto::thinBackend(Config &Conf, unsigned Task, AddStreamFn AddStream,
                        Module &Mod, const ModuleSummaryIndex &CombinedIndex,
                        const FunctionImporter::ImportMapTy &ImportList,
@@ -419,6 +435,8 @@ Error lto::thinBackend(Config &Conf, unsigned Task, AddStreamFn AddStream,
     return Error::success();
 
   renameModuleForThinLTO(Mod, CombinedIndex);
+
+  dropDeadSymbols(Mod, DefinedGlobals, CombinedIndex);
 
   thinLTOResolveWeakForLinkerModule(Mod, DefinedGlobals);
 

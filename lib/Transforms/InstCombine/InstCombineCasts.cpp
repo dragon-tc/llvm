@@ -185,8 +185,14 @@ Value *InstCombiner::EvaluateInDifferentType(Value *V, Type *Ty,
   case Instruction::Shl:
   case Instruction::UDiv:
   case Instruction::URem: {
-    Value *LHS = EvaluateInDifferentType(I->getOperand(0), Ty, isSigned);
-    Value *RHS = EvaluateInDifferentType(I->getOperand(1), Ty, isSigned);
+    Value *LHS, *RHS;
+    if (I->getOperand(0) == I->getOperand(1)) {
+      // Don't create an unnecessary value if the operands are repeated.
+      LHS = RHS = EvaluateInDifferentType(I->getOperand(0), Ty, isSigned);
+    } else {
+      LHS = EvaluateInDifferentType(I->getOperand(0), Ty, isSigned);
+      RHS = EvaluateInDifferentType(I->getOperand(1), Ty, isSigned);
+    }
     Res = BinaryOperator::Create((Instruction::BinaryOps)Opc, LHS, RHS);
     break;
   }
@@ -301,6 +307,35 @@ Instruction *InstCombiner::commonCastTransforms(CastInst &CI) {
   return nullptr;
 }
 
+/// Constants and extensions/truncates from the destination type are always
+/// free to be evaluated in that type. This is a helper for canEvaluate*.
+static bool canAlwaysEvaluateInType(Value *V, Type *Ty) {
+  if (isa<Constant>(V))
+    return true;
+  Value *X;
+  if ((match(V, m_ZExtOrSExt(m_Value(X))) || match(V, m_Trunc(m_Value(X)))) &&
+      X->getType() == Ty)
+    return true;
+
+  return false;
+}
+
+/// Filter out values that we can not evaluate in the destination type for free.
+/// This is a helper for canEvaluate*.
+static bool canNotEvaluateInType(Value *V, Type *Ty) {
+  assert(!isa<Constant>(V) && "Constant should already be handled.");
+  if (!isa<Instruction>(V))
+    return true;
+  // We can't extend or shrink something that has multiple uses -- unless those
+  // multiple uses are all in the same instruction -- doing so would require
+  // duplicating the instruction which isn't profitable.
+  if (!V->hasOneUse())
+    if (any_of(V->users(), [&](User *U) { return U != V->user_back(); }))
+      return true;
+
+  return false;
+}
+
 /// Return true if we can evaluate the specified expression tree as type Ty
 /// instead of its larger type, and arrive with the same value.
 /// This is used by code that tries to eliminate truncates.
@@ -314,27 +349,14 @@ Instruction *InstCombiner::commonCastTransforms(CastInst &CI) {
 ///
 static bool canEvaluateTruncated(Value *V, Type *Ty, InstCombiner &IC,
                                  Instruction *CxtI) {
-  // We can always evaluate constants in another type.
-  if (isa<Constant>(V))
+  if (canAlwaysEvaluateInType(V, Ty))
     return true;
+  if (canNotEvaluateInType(V, Ty))
+    return false;
 
-  Instruction *I = dyn_cast<Instruction>(V);
-  if (!I) return false;
-
+  auto *I = cast<Instruction>(V);
   Type *OrigTy = V->getType();
-
-  // If this is an extension from the dest type, we can eliminate it, even if it
-  // has multiple uses.
-  if ((isa<ZExtInst>(I) || isa<SExtInst>(I)) &&
-      I->getOperand(0)->getType() == Ty)
-    return true;
-
-  // We can't extend or shrink something that has multiple uses: doing so would
-  // require duplicating the instruction in general, which isn't profitable.
-  if (!I->hasOneUse()) return false;
-
-  unsigned Opc = I->getOpcode();
-  switch (Opc) {
+  switch (I->getOpcode()) {
   case Instruction::Add:
   case Instruction::Sub:
   case Instruction::Mul:
@@ -930,23 +952,14 @@ Instruction *InstCombiner::transformZExtICmp(ICmpInst *ICI, ZExtInst &CI,
 static bool canEvaluateZExtd(Value *V, Type *Ty, unsigned &BitsToClear,
                              InstCombiner &IC, Instruction *CxtI) {
   BitsToClear = 0;
-  if (isa<Constant>(V))
+  if (canAlwaysEvaluateInType(V, Ty))
     return true;
+  if (canNotEvaluateInType(V, Ty))
+    return false;
 
-  Instruction *I = dyn_cast<Instruction>(V);
-  if (!I) return false;
-
-  // If the input is a truncate from the destination type, we can trivially
-  // eliminate it.
-  if (isa<TruncInst>(I) && I->getOperand(0)->getType() == Ty)
-    return true;
-
-  // We can't extend or shrink something that has multiple uses: doing so would
-  // require duplicating the instruction in general, which isn't profitable.
-  if (!I->hasOneUse()) return false;
-
-  unsigned Opc = I->getOpcode(), Tmp;
-  switch (Opc) {
+  auto *I = cast<Instruction>(V);
+  unsigned Tmp;
+  switch (I->getOpcode()) {
   case Instruction::ZExt:  // zext(zext(x)) -> zext(x).
   case Instruction::SExt:  // zext(sext(x)) -> sext(x).
   case Instruction::Trunc: // zext(trunc(x)) -> trunc(x) or zext(x)
@@ -975,7 +988,7 @@ static bool canEvaluateZExtd(Value *V, Type *Ty, unsigned &BitsToClear,
                                0, CxtI)) {
         // If this is an And instruction and all of the BitsToClear are
         // known to be zero we can reset BitsToClear.
-        if (Opc == Instruction::And)
+        if (I->getOpcode() == Instruction::And)
           BitsToClear = 0;
         return true;
       }
@@ -1268,21 +1281,12 @@ Instruction *InstCombiner::transformSExtICmp(ICmpInst *ICI, Instruction &CI) {
 static bool canEvaluateSExtd(Value *V, Type *Ty) {
   assert(V->getType()->getScalarSizeInBits() < Ty->getScalarSizeInBits() &&
          "Can't sign extend type to a smaller type");
-  // If this is a constant, it can be trivially promoted.
-  if (isa<Constant>(V))
+  if (canAlwaysEvaluateInType(V, Ty))
     return true;
+  if (canNotEvaluateInType(V, Ty))
+    return false;
 
-  Instruction *I = dyn_cast<Instruction>(V);
-  if (!I) return false;
-
-  // If this is a truncate from the dest type, we can trivially eliminate it.
-  if (isa<TruncInst>(I) && I->getOperand(0)->getType() == Ty)
-    return true;
-
-  // We can't extend or shrink something that has multiple uses: doing so would
-  // require duplicating the instruction in general, which isn't profitable.
-  if (!I->hasOneUse()) return false;
-
+  auto *I = cast<Instruction>(V);
   switch (I->getOpcode()) {
   case Instruction::SExt:  // sext(sext(x)) -> sext(x)
   case Instruction::ZExt:  // sext(zext(x)) -> zext(x)

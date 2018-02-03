@@ -1,15 +1,27 @@
 ; SOFT:
-; RUN: llc < %s -mtriple=arm-none-eabi -float-abi=soft     | FileCheck %s --check-prefix=CHECK-SOFT
+; RUN: llc < %s -mtriple=arm-none-eabi -float-abi=soft     | FileCheck %s --check-prefixes=CHECK,CHECK-SOFT
 
 ; SOFTFP:
-; RUN: llc < %s -mtriple=arm-none-eabi -mattr=+vfp3        | FileCheck %s --check-prefix=CHECK-SOFTFP-VFP3
-; RUN: llc < %s -mtriple=arm-none-eabi -mattr=+vfp4        | FileCheck %s --check-prefix=CHECK-SOFTFP-FP16
-; RUN: llc < %s -mtriple=arm-none-eabi -mattr=+fullfp16    | FileCheck %s --check-prefix=CHECK-SOFTFP-FULLFP16
+; RUN: llc < %s -mtriple=arm-none-eabi -mattr=+vfp3        | FileCheck %s --check-prefixes=CHECK,CHECK-SOFTFP-VFP3
+; RUN: llc < %s -mtriple=arm-none-eabi -mattr=+vfp4        | FileCheck %s --check-prefixes=CHECK,CHECK-SOFTFP-FP16
+; RUN: llc < %s -mtriple=arm-none-eabi -mattr=+fullfp16    | FileCheck %s --check-prefixes=CHECK,CHECK-SOFTFP-FULLFP16
 
 ; HARD:
-; RUN: llc < %s -mtriple=arm-none-eabihf -mattr=+vfp3      | FileCheck %s --check-prefix=CHECK-HARDFP-VFP3
-; RUN: llc < %s -mtriple=arm-none-eabihf -mattr=+vfp4      | FileCheck %s --check-prefix=CHECK-HARDFP-FP16
-; RUN: llc < %s -mtriple=arm-none-eabihf -mattr=+fullfp16  | FileCheck %s --check-prefix=CHECK-HARDFP-FULLFP16
+; RUN: llc < %s -mtriple=arm-none-eabihf -mattr=+vfp3      | FileCheck %s --check-prefixes=CHECK,CHECK-HARDFP-VFP3
+; RUN: llc < %s -mtriple=arm-none-eabihf -mattr=+vfp4      | FileCheck %s --check-prefixes=CHECK,CHECK-HARDFP-FP16
+; RUN: llc < %s -mtriple=arm-none-eabihf -mattr=+fullfp16  | FileCheck %s --check-prefixes=CHECK,CHECK-HARDFP-FULLFP16
+
+
+define float @RetValBug(float %A.coerce) local_unnamed_addr {
+entry:
+  ret float undef
+; This expression is optimised away due to the undef value. Check that
+; LowerReturn can handle undef nodes (i.e. nodes which do not have any
+; operands) when FullFP16 is enabled.
+;
+; CHECK-LABEL:            RetValBug:
+; CHECK-HARDFP-FULLFP16:  mov pc, lr
+}
 
 define float @Add(float %a.coerce, float %b.coerce) local_unnamed_addr {
 entry:
@@ -24,6 +36,8 @@ entry:
   %tmp4.0.insert.ext = zext i16 %4 to i32
   %5 = bitcast i32 %tmp4.0.insert.ext to float
   ret float %5
+
+; CHECK-LABEL: Add:
 
 ; CHECK-SOFT:  bl  __aeabi_h2f
 ; CHECK-SOFT:  bl  __aeabi_h2f
@@ -43,14 +57,11 @@ entry:
 ; CHECK-SOFTFP-FP16:  vcvtb.f16.f32 [[S0]], [[S0]]
 ; CHECK-SOFTFP-FP16:  vmov  r0, s0
 
-; CHECK-SOFTFP-FULLFP16:  strh  r1, {{.*}}
-; CHECK-SOFTFP-FULLFP16:  strh  r0, {{.*}}
-; CHECK-SOFTFP-FULLFP16:  vldr.16 [[S0:s[0-9]]], {{.*}}
-; CHECK-SOFTFP-FULLFP16:  vldr.16 [[S2:s[0-9]]], {{.*}}
-; CHECK-SOFTFP-FULLFP16:  vadd.f16  [[S0]], [[S2]], [[S0]]
-; CHECK-SOFTFP-FULLFP16:  vstr.16 [[S2:s[0-9]]],  {{.*}}
-; CHECK-SOFTFP-FULLFP16:  ldrh  r0, {{.*}}
-; CHECK-SOFTFP-FULLFP16:  mov pc, lr
+; CHECK-SOFTFP-FULLFP16:       vmov.f16  [[S0:s[0-9]]], r1
+; CHECK-SOFTFP-FULLFP16:       vmov.f16  [[S2:s[0-9]]], r0
+; CHECK-SOFTFP-FULLFP16:       vadd.f16  [[S0]], [[S2]], [[S0]]
+; CHECK-SOFTFP-FULLFP16-NEXT:  vmov.f16  r0, s0
+; CHECK-SOFTFP-FULLFP16-NEXT:  mov       pc, lr
 
 ; CHECK-HARDFP-VFP3:  vmov r{{.}}, s0
 ; CHECK-HARDFP-VFP3:  vmov{{.*}}, s1
@@ -67,6 +78,4 @@ entry:
 
 ; CHECK-HARDFP-FULLFP16:       vadd.f16  s0, s0, s1
 ; CHECK-HARDFP-FULLFP16-NEXT:  mov pc, lr
-
 }
-

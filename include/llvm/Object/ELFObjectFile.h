@@ -67,6 +67,9 @@ public:
 
   virtual elf_symbol_iterator_range getDynamicSymbolIterators() const = 0;
 
+  /// Returns platform-specific object flags, if any.
+  virtual unsigned getPlatformFlags() const = 0;
+
   elf_symbol_iterator_range symbols() const;
 
   static bool classof(const Binary *v) { return v->isELF(); }
@@ -76,6 +79,8 @@ public:
   SubtargetFeatures getMIPSFeatures() const;
 
   SubtargetFeatures getARMFeatures() const;
+
+  SubtargetFeatures getRISCVFeatures() const;
 
   void setARMSubArch(Triple &TheTriple) const override;
 };
@@ -364,10 +369,7 @@ public:
   StringRef getFileFormatName() const override;
   Triple::ArchType getArch() const override;
 
-  std::error_code getPlatformFlags(unsigned &Result) const override {
-    Result = EF.getHeader()->e_flags;
-    return std::error_code();
-  }
+  unsigned getPlatformFlags() const override { return EF.getHeader()->e_flags; }
 
   std::error_code getBuildAttributes(ARMAttributeParser &Attributes) const override {
     auto SectionsOrErr = EF.sections();
