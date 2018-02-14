@@ -188,8 +188,8 @@ define i1 @and_cmp4(i32 %x, i32 %y) {
 define i1 @and_cmp_const(i32 %x) {
 ; CHECK-LABEL: and_cmp_const:
 ; CHECK:       # %bb.0:
-; CHECK-NEXT:    movl $43, %eax
-; CHECK-NEXT:    andnl %eax, %edi, %eax
+; CHECK-NEXT:    notl %edi
+; CHECK-NEXT:    andl $43, %edi
 ; CHECK-NEXT:    sete %al
 ; CHECK-NEXT:    retq
   %and = and i32 %x, 43
@@ -808,3 +808,30 @@ define i64 @blsr64(i64 %x)   {
   ret i64 %tmp2
 }
 
+; PR35792 - https://bugs.llvm.org/show_bug.cgi?id=35792
+
+define i64 @blsr_disguised_constant(i64 %x) {
+; CHECK-LABEL: blsr_disguised_constant:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    blsrl %edi, %eax
+; CHECK-NEXT:    movzwl %ax, %eax
+; CHECK-NEXT:    retq
+  %a1 = and i64 %x, 65535
+  %a2 = add i64 %x, 65535
+  %r = and i64 %a1, %a2
+  ret i64 %r
+}
+
+; The add here used to get shrunk, but the and did not thus hiding the blsr pattern.
+; We now use the knowledge that upper bits of the shift guarantee the and result has 0s in the upper bits to reduce it too.
+define i64 @blsr_disguised_shrunk_add(i64 %x) {
+; CHECK-LABEL: blsr_disguised_shrunk_add:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    shrq $48, %rdi
+; CHECK-NEXT:    blsrl %edi, %eax
+; CHECK-NEXT:    retq
+  %a = lshr i64 %x, 48
+  %b = add i64 %a, -1
+  %c = and i64 %b, %a
+  ret i64 %c
+}

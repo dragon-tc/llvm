@@ -2104,47 +2104,55 @@ static bool isFusableLoadOpStorePattern(StoreSDNode *StoreNode,
   // the load output chain as an operand. Return InputChain by reference.
   SDValue Chain = StoreNode->getChain();
 
-  bool ChainCheck = false;
   if (Chain == Load.getValue(1)) {
-    ChainCheck = true;
     InputChain = LoadNode->getChain();
-  } else if (Chain.getOpcode() == ISD::TokenFactor) {
-    SmallVector<SDValue, 4> ChainOps;
+    return true;
+  }
+
+  if (Chain.getOpcode() == ISD::TokenFactor) {
+    // Fusing Load-Op-Store requires predecessors of store must also
+    // be predecessors of the load. This addition may cause a loop. We
+    // can check this by doing a search for Load in the new
+    // dependencies. As this can be expensive, heuristically prune
+    // this search by visiting the uses and make sure they all have
+    // smaller node id than the load.
+
+  bool FoundLoad = false;
+  SmallVector<SDValue, 4> ChainOps;
+  SmallVector<const SDNode *, 4> LoopWorklist;
+  SmallPtrSet<const SDNode *, 16> Visited;
     for (unsigned i = 0, e = Chain.getNumOperands(); i != e; ++i) {
       SDValue Op = Chain.getOperand(i);
       if (Op == Load.getValue(1)) {
-        ChainCheck = true;
+        FoundLoad = true;
         // Drop Load, but keep its chain. No cycle check necessary.
         ChainOps.push_back(Load.getOperand(0));
         continue;
       }
-
-      // Make sure using Op as part of the chain would not cause a cycle here.
-      // In theory, we could check whether the chain node is a predecessor of
-      // the load. But that can be very expensive. Instead visit the uses and
-      // make sure they all have smaller node id than the load.
-      int LoadId = LoadNode->getNodeId();
-      for (SDNode::use_iterator UI = Op.getNode()->use_begin(),
-             UE = UI->use_end(); UI != UE; ++UI) {
-        if (UI.getUse().getResNo() != 0)
-          continue;
-        if (UI->getNodeId() > LoadId)
-          return false;
-      }
-
+      LoopWorklist.push_back(Op.getNode());
       ChainOps.push_back(Op);
     }
 
-    if (ChainCheck)
-      // Make a new TokenFactor with all the other input chains except
-      // for the load.
-      InputChain = CurDAG->getNode(ISD::TokenFactor, SDLoc(Chain),
-                                   MVT::Other, ChainOps);
-  }
-  if (!ChainCheck)
-    return false;
+    if (!FoundLoad)
+      return false;
 
-  return true;
+    // If Loop Worklist is not empty. Check if we would make a loop.
+    if (!LoopWorklist.empty()) {
+      const unsigned int Max = 8192;
+      // if Load is predecessor to potentially loop inducing chain
+      // dependencies.
+      if (SDNode::hasPredecessorHelper(Load.getNode(), Visited, LoopWorklist,
+                                       Max, true))
+        return false;
+    }
+
+    // Make a new TokenFactor with all the other input chains except
+    // for the load.
+    InputChain =
+        CurDAG->getNode(ISD::TokenFactor, SDLoc(Chain), MVT::Other, ChainOps);
+    return true;
+  }
+  return false;
 }
 
 // Change a chain of {load; op; store} of the same value into a simple op
@@ -2374,6 +2382,8 @@ bool X86DAGToDAGISel::foldLoadStoreIntoMemOperand(SDNode *Node) {
   MemOp[1] = LoadNode->getMemOperand();
   Result->setMemRefs(MemOp, MemOp + 2);
 
+  // Update Load Chain uses as well.
+  ReplaceUses(SDValue(LoadNode, 1), SDValue(Result, 1));
   ReplaceUses(SDValue(StoreNode, 0), SDValue(Result, 1));
   ReplaceUses(SDValue(StoredVal.getNode(), 1), SDValue(Result, 0));
   CurDAG->RemoveDeadNode(Node);
@@ -2427,44 +2437,12 @@ bool X86DAGToDAGISel::matchBEXTRFromAnd(SDNode *Node) {
   if (Shift + MaskSize > NVT.getSizeInBits())
     return false;
 
-  SDValue New = CurDAG->getTargetConstant(Shift | (MaskSize << 8), dl, NVT);
-  unsigned ROpc = NVT == MVT::i64 ? X86::BEXTRI64ri : X86::BEXTRI32ri;
-  unsigned MOpc = NVT == MVT::i64 ? X86::BEXTRI64mi : X86::BEXTRI32mi;
-
-  // BMI requires the immediate to placed in a register.
-  if (!Subtarget->hasTBM()) {
-    ROpc = NVT == MVT::i64 ? X86::BEXTR64rr : X86::BEXTR32rr;
-    MOpc = NVT == MVT::i64 ? X86::BEXTR64rm : X86::BEXTR32rm;
-    New = SDValue(CurDAG->getMachineNode(X86::MOV32ri, dl, NVT, New), 0);
-    if (NVT == MVT::i64) {
-      New =
-          SDValue(CurDAG->getMachineNode(
-                      TargetOpcode::SUBREG_TO_REG, dl, MVT::i64,
-                      CurDAG->getTargetConstant(0, dl, MVT::i64), New,
-                      CurDAG->getTargetConstant(X86::sub_32bit, dl, MVT::i32)),
-                  0);
-    }
-  }
-
-  MachineSDNode *NewNode;
-  SDValue Input = N0->getOperand(0);
-  SDValue Tmp0, Tmp1, Tmp2, Tmp3, Tmp4;
-  if (tryFoldLoad(Node, N0.getNode(), Input, Tmp0, Tmp1, Tmp2, Tmp3, Tmp4)) {
-    SDValue Ops[] = { Tmp0, Tmp1, Tmp2, Tmp3, Tmp4, New, Input.getOperand(0) };
-    SDVTList VTs = CurDAG->getVTList(NVT, MVT::Other);
-    NewNode = CurDAG->getMachineNode(MOpc, dl, VTs, Ops);
-    // Update the chain.
-    ReplaceUses(Input.getValue(1), SDValue(NewNode, 1));
-    // Record the mem-refs
-    MachineSDNode::mmo_iterator MemOp = MF->allocateMemRefsArray(1);
-    MemOp[0] = cast<LoadSDNode>(Input)->getMemOperand();
-    NewNode->setMemRefs(MemOp, MemOp + 1);
-  } else {
-    NewNode = CurDAG->getMachineNode(ROpc, dl, NVT, Input, New);
-  }
-
-  ReplaceUses(SDValue(Node, 0), SDValue(NewNode, 0));
-  CurDAG->RemoveDeadNode(Node);
+  // Create a BEXTR node and run it through selection.
+  SDValue C = CurDAG->getConstant(Shift | (MaskSize << 8), dl, NVT);
+  SDValue New = CurDAG->getNode(X86ISD::BEXTR, dl, NVT,
+                                N0->getOperand(0), C);
+  ReplaceNode(Node, New.getNode());
+  SelectCode(New.getNode());
   return true;
 }
 
@@ -2486,14 +2464,24 @@ bool X86DAGToDAGISel::shrinkAndImmediate(SDNode *And) {
   if (!And1C)
     return false;
 
-  // Bail out if the mask constant is already negative. It can't shrink more.
+  // Bail out if the mask constant is already negative. It's can't shrink more.
+  // If the upper 32 bits of a 64 bit mask are all zeros, we have special isel
+  // patterns to use a 32-bit and instead of a 64-bit and by relying on the
+  // implicit zeroing of 32 bit ops. So we should check if the lower 32 bits
+  // are negative too.
   APInt MaskVal = And1C->getAPIntValue();
   unsigned MaskLZ = MaskVal.countLeadingZeros();
-  if (!MaskLZ)
+  if (!MaskLZ || (VT == MVT::i64 && MaskLZ == 32))
     return false;
 
+  // Don't extend into the upper 32 bits of a 64 bit mask.
+  if (VT == MVT::i64 && MaskLZ >= 32) {
+    MaskLZ -= 32;
+    MaskVal = MaskVal.trunc(32);
+  }
+
   SDValue And0 = And->getOperand(0);
-  APInt HighZeros = APInt::getHighBitsSet(VT.getSizeInBits(), MaskLZ);
+  APInt HighZeros = APInt::getHighBitsSet(MaskVal.getBitWidth(), MaskLZ);
   APInt NegMaskVal = MaskVal | HighZeros;
 
   // If a negative constant would not allow a smaller encoding, there's no need
@@ -2501,6 +2489,12 @@ bool X86DAGToDAGISel::shrinkAndImmediate(SDNode *And) {
   unsigned MinWidth = NegMaskVal.getMinSignedBits();
   if (MinWidth > 32 || (MinWidth > 8 && MaskVal.getMinSignedBits() <= 32))
     return false;
+
+  // Extend masks if we truncated above.
+  if (VT == MVT::i64 && MaskVal.getBitWidth() < 64) {
+    NegMaskVal = NegMaskVal.zext(64);
+    HighZeros = HighZeros.zext(64);
+  }
 
   // The variable operand must be all zeros in the top bits to allow using the
   // new, negative constant as the mask.
@@ -3038,12 +3032,7 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
     return;
   }
 
-  case X86ISD::CMP:
-  case X86ISD::SUB: {
-    // Sometimes a SUB is used to perform comparison.
-    if (Opcode == X86ISD::SUB && Node->hasAnyUseOfValue(0))
-      // This node is not a CMP.
-      break;
+  case X86ISD::CMP: {
     SDValue N0 = Node->getOperand(0);
     SDValue N1 = Node->getOperand(1);
 
@@ -3054,8 +3043,7 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
     // Look for (X86cmp (and $op, $imm), 0) and see if we can convert it to
     // use a smaller encoding.
     // Look past the truncate if CMP is the only use of it.
-    if ((N0.getOpcode() == ISD::AND ||
-         (N0.getResNo() == 0 && N0.getOpcode() == X86ISD::AND)) &&
+    if (N0.getOpcode() == ISD::AND &&
         N0.getNode()->hasOneUse() &&
         N0.getValueType() != MVT::i8 &&
         X86::isZeroNode(N1)) {
@@ -3106,10 +3094,8 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
 
       // Emit a testl or testw.
       SDNode *NewNode = CurDAG->getMachineNode(Op, dl, MVT::i32, Reg, Imm);
-      // Replace SUB|CMP with TEST, since SUB has two outputs while TEST has
-      // one, do not call ReplaceAllUsesWith.
-      ReplaceUses(SDValue(Node, (Opcode == X86ISD::SUB ? 1 : 0)),
-                  SDValue(NewNode, 0));
+      // Replace CMP with TEST.
+      CurDAG->ReplaceAllUsesWith(Node, NewNode);
       CurDAG->RemoveDeadNode(Node);
       return;
     }

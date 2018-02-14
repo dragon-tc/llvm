@@ -198,8 +198,8 @@ def : WriteRes<WriteID32, [M3UnitC,
                            M3UnitD]>  { let Latency = 12;
                                         let ResourceCycles = [1, 12]; }
 def : WriteRes<WriteID64, [M3UnitC,
-                           M3UnitD]>  { let Latency = 12;
-                                        let ResourceCycles = [1, 12]; }
+                           M3UnitD]>  { let Latency = 21;
+                                        let ResourceCycles = [1, 21]; }
 def : WriteRes<WriteIM32, [M3UnitC]>  { let Latency = 3; }
 def : WriteRes<WriteIM64, [M3UnitC]>  { let Latency = 4;
                                         let ResourceCycles = [2]; }
@@ -287,6 +287,9 @@ def M3WriteNEOND   : SchedWriteRes<[M3UnitNSHF,
 def M3WriteNEONH   : SchedWriteRes<[M3UnitNALU,
                                     M3UnitS]>     { let Latency = 5;
                                                     let NumMicroOps = 2; }
+def M3WriteNEONI   : SchedWriteRes<[M3UnitNSHF,
+                                    M3UnitS]>     { let Latency = 5;
+                                                    let NumMicroOps = 2; }
 def M3WriteNEONV   : SchedWriteRes<[M3UnitFDIV,
                                     M3UnitFDIV]>  { let Latency = 7;
                                                     let NumMicroOps = 1;
@@ -304,7 +307,7 @@ def M3WriteNEONY   : SchedWriteRes<[M3UnitFSQR,
                                                     let NumMicroOps = 1;
                                                     let ResourceCycles = [26]; }
 def M3WriteNEONZ   : SchedWriteRes<[M3UnitNMSC,
-                                    M3UnitNMSC]>  { let Latency = 4;
+                                    M3UnitNMSC]>  { let Latency = 5;
                                                     let NumMicroOps = 2; }
 def M3WriteFADD2   : SchedWriteRes<[M3UnitFADD]>  { let Latency = 2; }
 def M3WriteFCVT2   : SchedWriteRes<[M3UnitFCVT]>  { let Latency = 2; }
@@ -527,8 +530,9 @@ def : InstRW<[M3WriteFCVT4],  (instregex "^[FU](RECP|RSQRT)Ev1")>;
 def : InstRW<[M3WriteNMSC1],  (instregex "^FRECPXv1")>;
 def : InstRW<[M3WriteFMAC4,
               M3ReadFMAC],    (instregex "^F(RECP|RSQRT)S(16|32|64)")>;
-def : InstRW<[M3WriteNALU1],  (instregex "^FMOV[WX][DS](High)?r")>;
-def : InstRW<[M3WriteNALU1],  (instregex "^FMOV[DS][WX](High)?r")>;
+def : InstRW<[M3WriteNALU1],  (instregex "^FMOV[WX][DS]r")>;
+def : InstRW<[M3WriteNALU1],  (instregex "^FMOV[DS][WX]r")>;
+def : InstRW<[M3WriteNEONI],  (instregex "^FMOV(DX|XD)Highr")>;
 
 // FP load instructions.
 def : InstRW<[WriteVLD],    (instregex "^LDR[DSQ]l")>;
@@ -608,7 +612,7 @@ def : InstRW<[M3WriteNEONA],  (instregex "^FADDP")>;
 def : InstRW<[M3WriteNMSC1],  (instregex "^F(AC|CM)(EQ|GE|GT|LE|LT)v[^1]")>;
 def : InstRW<[M3WriteFCVT3],  (instregex "^FCVT(L|N|XN)v")>;
 def : InstRW<[M3WriteFCVT2],  (instregex "^FCVT[AMNPZ][SU]v")>;
-def : InstRW<[M3WriteFCVT3],  (instregex "^[SU]CVTFv")>;
+def : InstRW<[M3WriteFCVT2],  (instregex "^[SU]CVTFv")>;
 def : InstRW<[M3WriteFDIV10], (instrs FDIVv2f32)>;
 def : InstRW<[M3WriteNEONV],  (instrs FDIVv4f32)>;
 def : InstRW<[M3WriteNEONW],  (instrs FDIVv2f64)>;

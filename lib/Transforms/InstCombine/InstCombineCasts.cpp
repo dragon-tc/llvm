@@ -185,14 +185,8 @@ Value *InstCombiner::EvaluateInDifferentType(Value *V, Type *Ty,
   case Instruction::Shl:
   case Instruction::UDiv:
   case Instruction::URem: {
-    Value *LHS, *RHS;
-    if (I->getOperand(0) == I->getOperand(1)) {
-      // Don't create an unnecessary value if the operands are repeated.
-      LHS = RHS = EvaluateInDifferentType(I->getOperand(0), Ty, isSigned);
-    } else {
-      LHS = EvaluateInDifferentType(I->getOperand(0), Ty, isSigned);
-      RHS = EvaluateInDifferentType(I->getOperand(1), Ty, isSigned);
-    }
+    Value *LHS = EvaluateInDifferentType(I->getOperand(0), Ty, isSigned);
+    Value *RHS = EvaluateInDifferentType(I->getOperand(1), Ty, isSigned);
     Res = BinaryOperator::Create((Instruction::BinaryOps)Opc, LHS, RHS);
     break;
   }
@@ -326,12 +320,10 @@ static bool canNotEvaluateInType(Value *V, Type *Ty) {
   assert(!isa<Constant>(V) && "Constant should already be handled.");
   if (!isa<Instruction>(V))
     return true;
-  // We can't extend or shrink something that has multiple uses -- unless those
-  // multiple uses are all in the same instruction -- doing so would require
-  // duplicating the instruction which isn't profitable.
+  // We don't extend or shrink something that has multiple uses --  doing so
+  // would require duplicating the instruction which isn't profitable.
   if (!V->hasOneUse())
-    if (any_of(V->users(), [&](User *U) { return U != V->user_back(); }))
-      return true;
+    return true;
 
   return false;
 }
@@ -1769,7 +1761,7 @@ Instruction *InstCombiner::visitPtrToInt(PtrToIntInst &CI) {
   Type *Ty = CI.getType();
   unsigned AS = CI.getPointerAddressSpace();
 
-  if (Ty->getScalarSizeInBits() == DL.getPointerSizeInBits(AS))
+  if (Ty->getScalarSizeInBits() == DL.getIndexSizeInBits(AS))
     return commonPointerCastTransforms(CI);
 
   Type *PtrTy = DL.getIntPtrType(CI.getContext(), AS);
@@ -2022,13 +2014,13 @@ static Instruction *foldBitCastBitwiseLogic(BitCastInst &BitCast,
       !match(BitCast.getOperand(0), m_OneUse(m_BinOp(BO))) ||
       !BO->isBitwiseLogicOp())
     return nullptr;
-  
+
   // FIXME: This transform is restricted to vector types to avoid backend
   // problems caused by creating potentially illegal operations. If a fix-up is
   // added to handle that situation, we can remove this check.
   if (!DestTy->isVectorTy() || !BO->getType()->isVectorTy())
     return nullptr;
-  
+
   Value *X;
   if (match(BO->getOperand(0), m_OneUse(m_BitCast(m_Value(X)))) &&
       X->getType() == DestTy && !isa<Constant>(X)) {

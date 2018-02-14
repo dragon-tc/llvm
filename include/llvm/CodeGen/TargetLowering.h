@@ -812,7 +812,7 @@ public:
   bool rangeFitsInWord(const APInt &Low, const APInt &High,
                        const DataLayout &DL) const {
     // FIXME: Using the pointer type doesn't seem ideal.
-    uint64_t BW = DL.getPointerSizeInBits();
+    uint64_t BW = DL.getIndexSizeInBits(0u);
     uint64_t Range = (High - Low).getLimitedValue(UINT64_MAX - 1) + 1;
     return Range <= BW;
   }
@@ -2769,10 +2769,6 @@ public:
   /// Return if the N is a constant or constant vector equal to the false value
   /// from getBooleanContents().
   bool isConstFalseVal(const SDNode *N) const;
-
-  /// Return a constant of type VT that contains a true value that respects
-  /// getBooleanContents()
-  SDValue getConstTrueVal(SelectionDAG &DAG, EVT VT, const SDLoc &DL) const;
 
   /// Return if \p N is a True value when extended to \p VT.
   bool isExtendedTrueVal(const ConstantSDNode *N, EVT VT, bool Signed) const;
