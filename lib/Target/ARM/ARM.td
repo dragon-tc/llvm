@@ -1046,4 +1046,5 @@ def ARM : Target {
   let AssemblyWriters = [ARMAsmWriter];
   let AssemblyParsers = [ARMAsmParser];
   let AssemblyParserVariants = [ARMAsmParserVariant];
+  let AllowRegisterRenaming = 1;
 }
