@@ -7832,7 +7832,7 @@ SDValue DAGCombiner::visitZERO_EXTEND(SDNode *N) {
 
     // Try to mask before the extension to avoid having to generate a larger mask,
     // possibly over several sub-vectors.
-    if (SrcVT.bitsLT(VT)) {
+    if (SrcVT.bitsLT(VT) && VT.isVector()) {
       if (!LegalOperations || (TLI.isOperationLegal(ISD::AND, SrcVT) &&
                                TLI.isOperationLegal(ISD::ZERO_EXTEND, VT))) {
         SDValue Op = N0.getOperand(0);
@@ -12911,6 +12911,7 @@ bool DAGCombiner::MergeStoresOfConstantsOrVecElts(
       StoreSDNode *St  = cast<StoreSDNode>(StoreNodes[Idx].MemNode);
 
       SDValue Val = St->getValue();
+      Val = peekThroughBitcast(Val);
       StoreInt <<= ElementSizeBits;
       if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Val)) {
         StoreInt |= C->getAPIntValue()

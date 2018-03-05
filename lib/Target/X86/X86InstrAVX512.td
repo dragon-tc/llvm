@@ -2601,7 +2601,7 @@ multiclass avx512_scalar_fpclass<bits<8> opc, string OpcodeStr, SDNode OpNode,
                       (ins _.KRCWM:$mask, _.RC:$src1, i32u8imm:$src2),
                       OpcodeStr##_.Suffix#
                       "\t{$src2, $src1, $dst {${mask}}|$dst {${mask}}, $src1, $src2}",
-                      [(set _.KRC:$dst,(or _.KRCWM:$mask,
+                      [(set _.KRC:$dst,(and _.KRCWM:$mask,
                                       (OpNode (_.VT _.RC:$src1),
                                       (i32 imm:$src2))))], itins.rr>,
                       EVEX_K, Sched<[itins.Sched]>;
@@ -2617,7 +2617,7 @@ multiclass avx512_scalar_fpclass<bits<8> opc, string OpcodeStr, SDNode OpNode,
                     (ins _.KRCWM:$mask, _.IntScalarMemOp:$src1, i32u8imm:$src2),
                     OpcodeStr##_.Suffix##
                     "\t{$src2, $src1, $dst {${mask}}|$dst {${mask}}, $src1, $src2}",
-                    [(set _.KRC:$dst,(or _.KRCWM:$mask,
+                    [(set _.KRC:$dst,(and _.KRCWM:$mask,
                         (OpNode _.ScalarIntMemCPat:$src1,
                             (i32 imm:$src2))))], itins.rm>,
                     EVEX_K, Sched<[itins.Sched.Folded, ReadAfterLd]>;
@@ -2641,7 +2641,7 @@ multiclass avx512_vector_fpclass<bits<8> opc, string OpcodeStr, SDNode OpNode,
                       (ins _.KRCWM:$mask, _.RC:$src1, i32u8imm:$src2),
                       OpcodeStr##_.Suffix#
                       "\t{$src2, $src1, $dst {${mask}}|$dst {${mask}}, $src1, $src2}",
-                      [(set _.KRC:$dst,(or _.KRCWM:$mask,
+                      [(set _.KRC:$dst,(and _.KRCWM:$mask,
                                        (OpNode (_.VT _.RC:$src1),
                                        (i32 imm:$src2))))], itins.rr>,
                       EVEX_K, Sched<[itins.Sched]>;
@@ -2657,7 +2657,7 @@ multiclass avx512_vector_fpclass<bits<8> opc, string OpcodeStr, SDNode OpNode,
                     (ins _.KRCWM:$mask, _.MemOp:$src1, i32u8imm:$src2),
                     OpcodeStr##_.Suffix##mem#
                     "\t{$src2, $src1, $dst {${mask}}|$dst {${mask}}, $src1, $src2}",
-                    [(set _.KRC:$dst, (or _.KRCWM:$mask, (OpNode
+                    [(set _.KRC:$dst, (and _.KRCWM:$mask, (OpNode
                                   (_.VT (bitconvert (_.LdFrag addr:$src1))),
                                   (i32 imm:$src2))))], itins.rm>,
                     EVEX_K, Sched<[itins.Sched.Folded, ReadAfterLd]>;
@@ -2676,7 +2676,7 @@ multiclass avx512_vector_fpclass<bits<8> opc, string OpcodeStr, SDNode OpNode,
                     OpcodeStr##_.Suffix##broadcast##"\t{$src2, ${src1}"##
                           _.BroadcastStr##", $dst {${mask}}|$dst {${mask}}, ${src1}"##
                                                    _.BroadcastStr##", $src2}",
-                    [(set _.KRC:$dst,(or _.KRCWM:$mask, (OpNode
+                    [(set _.KRC:$dst,(and _.KRCWM:$mask, (OpNode
                                      (_.VT (X86VBroadcast
                                            (_.ScalarLdFrag addr:$src1))),
                                      (i32 imm:$src2))))], itins.rm>,
@@ -2809,47 +2809,18 @@ def : Pat<(i64 (bitconvert (v64i1 VK64:$src))),
 
 // Load/store kreg
 let Predicates = [HasDQI] in {
-  def : Pat<(store VK4:$src, addr:$dst),
-            (KMOVBmk addr:$dst, (COPY_TO_REGCLASS VK4:$src, VK8))>;
-  def : Pat<(store VK2:$src, addr:$dst),
-            (KMOVBmk addr:$dst, (COPY_TO_REGCLASS VK2:$src, VK8))>;
   def : Pat<(store VK1:$src, addr:$dst),
             (KMOVBmk addr:$dst, (COPY_TO_REGCLASS VK1:$src, VK8))>;
 
+  def : Pat<(v1i1 (load addr:$src)),
+            (COPY_TO_REGCLASS (KMOVBkm addr:$src), VK1)>;
   def : Pat<(v2i1 (load addr:$src)),
             (COPY_TO_REGCLASS (KMOVBkm addr:$src), VK2)>;
   def : Pat<(v4i1 (load addr:$src)),
             (COPY_TO_REGCLASS (KMOVBkm addr:$src), VK4)>;
 }
-let Predicates = [HasAVX512, NoDQI] in {
-  def : Pat<(store VK1:$src, addr:$dst),
-            (MOV8mr addr:$dst,
-             (i8 (EXTRACT_SUBREG (i32 (COPY_TO_REGCLASS VK1:$src, GR32)),
-              sub_8bit)))>;
-  def : Pat<(store VK2:$src, addr:$dst),
-            (MOV8mr addr:$dst,
-             (i8 (EXTRACT_SUBREG (i32 (COPY_TO_REGCLASS VK2:$src, GR32)),
-              sub_8bit)))>;
-  def : Pat<(store VK4:$src, addr:$dst),
-            (MOV8mr addr:$dst,
-             (i8 (EXTRACT_SUBREG (i32 (COPY_TO_REGCLASS VK4:$src, GR32)),
-              sub_8bit)))>;
-  def : Pat<(store VK8:$src, addr:$dst),
-            (MOV8mr addr:$dst,
-             (i8 (EXTRACT_SUBREG (i32 (COPY_TO_REGCLASS VK8:$src, GR32)),
-              sub_8bit)))>;
-
-  def : Pat<(v8i1 (load addr:$src)),
-            (COPY_TO_REGCLASS (MOVZX32rm8 addr:$src), VK8)>;
-  def : Pat<(v2i1 (load addr:$src)),
-            (COPY_TO_REGCLASS (MOVZX32rm8 addr:$src), VK2)>;
-  def : Pat<(v4i1 (load addr:$src)),
-            (COPY_TO_REGCLASS (MOVZX32rm8 addr:$src), VK4)>;
-}
 
 let Predicates = [HasAVX512] in {
-  def : Pat<(v1i1 (load addr:$src)),
-            (COPY_TO_REGCLASS (MOVZX32rm8 addr:$src), VK1)>;
   def : Pat<(v8i1 (bitconvert (i8 (load addr:$src)))),
             (COPY_TO_REGCLASS (MOVZX32rm8 addr:$src), VK8)>;
 }
@@ -2858,9 +2829,6 @@ let Predicates = [HasAVX512] in {
   multiclass operation_gpr_mask_copy_lowering<RegisterClass maskRC, ValueType maskVT> {
     def : Pat<(maskVT (scalar_to_vector GR32:$src)),
               (COPY_TO_REGCLASS GR32:$src, maskRC)>;
-
-    def : Pat<(i32 (X86kextract maskRC:$src, (iPTR 0))),
-              (COPY_TO_REGCLASS maskRC:$src, GR32)>;
 
     def : Pat<(maskVT (scalar_to_vector GR8:$src)),
               (COPY_TO_REGCLASS (INSERT_SUBREG (i32 (IMPLICIT_DEF)), GR8:$src, sub_8bit), maskRC)>;

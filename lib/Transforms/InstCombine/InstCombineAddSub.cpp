@@ -964,7 +964,7 @@ Instruction *InstCombiner::foldAddWithConstant(BinaryOperator &Add) {
   if (!match(Op1, m_Constant(Op1C)))
     return nullptr;
 
-  if (Instruction *NV = foldOpWithConstantIntoOperand(Add))
+  if (Instruction *NV = foldBinOpIntoSelectOrPhi(Add))
     return NV;
 
   Value *X;
@@ -1304,9 +1304,8 @@ Instruction *InstCombiner::visitFAdd(BinaryOperator &I) {
                                   SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
 
-  if (isa<Constant>(RHS))
-    if (Instruction *FoldedFAdd = foldOpWithConstantIntoOperand(I))
-      return FoldedFAdd;
+  if (Instruction *FoldedFAdd = foldBinOpIntoSelectOrPhi(I))
+    return FoldedFAdd;
 
   // -A + B  -->  B - A
   if (Value *LHSV = dyn_castFNegVal(LHS))
@@ -1511,6 +1510,11 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
   // Replace (-1 - A) with (~A).
   if (match(Op0, m_AllOnes()))
     return BinaryOperator::CreateNot(Op1);
+
+  // (~X) - (~Y) --> Y - X
+  Value *X, *Y;
+  if (match(Op0, m_Not(m_Value(X))) && match(Op1, m_Not(m_Value(Y))))
+    return BinaryOperator::CreateSub(Y, X);
 
   if (Constant *C = dyn_cast<Constant>(Op0)) {
     Value *X;
