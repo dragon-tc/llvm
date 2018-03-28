@@ -19,10 +19,10 @@ class ARMAsmBackendDarwin : public ARMAsmBackend {
   const MCRegisterInfo &MRI;
 public:
   const MachO::CPUSubTypeARM Subtype;
-  ARMAsmBackendDarwin(const Target &T, const MCSubtargetInfo &STI,
+  ARMAsmBackendDarwin(const Target &T, const Triple &TT,
                       const MCRegisterInfo &MRI, MachO::CPUSubTypeARM st)
-      : ARMAsmBackend(T, STI, /* IsLittleEndian */ true), MRI(MRI),
-        Subtype(st) {}
+      : ARMAsmBackend(T, TT, /* IsLittleEndian */ true), MRI(MRI), Subtype(st) {
+  }
 
   std::unique_ptr<MCObjectWriter>
   createObjectWriter(raw_pwrite_stream &OS) const override {
