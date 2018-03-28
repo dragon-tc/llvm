@@ -46,6 +46,11 @@ def  WriteIMulH : SchedWrite;       // Integer multiplication, high part.
 defm WriteIDiv : X86SchedWritePair; // Integer division.
 def  WriteLEA  : SchedWrite;        // LEA instructions can't fold loads.
 
+defm WriteBitScan : X86SchedWritePair; // Bit scan forward/reverse.
+defm WritePOPCNT : X86SchedWritePair; // Bit population count.
+defm WriteLZCNT : X86SchedWritePair; // Leading zero count.
+defm WriteTZCNT : X86SchedWritePair; // Trailing zero count.
+
 // Integer shifts and rotates.
 defm WriteShift : X86SchedWritePair;
 
@@ -100,10 +105,18 @@ defm WriteMPSAD : X86SchedWritePair; // Vector MPSAD.
 // These are often used on both floating point and integer vectors.
 defm WriteVecLogic : X86SchedWritePair; // Vector and/or/xor.
 
+// MOVMSK operations.
+def WriteFMOVMSK : SchedWrite;
+def WriteVecMOVMSK : SchedWrite;
+def WriteMMXMOVMSK : SchedWrite;
+
 // Conversion between integer and float.
 defm WriteCvtF2I : X86SchedWritePair; // Float -> Integer.
 defm WriteCvtI2F : X86SchedWritePair; // Integer -> Float.
 defm WriteCvtF2F : X86SchedWritePair; // Float -> Float size conversion.
+
+// CRC32 instruction.
+defm WriteCRC32 : X86SchedWritePair;
 
 // Strings instructions.
 // Packed Compare Implicit Length Strings, Return Mask

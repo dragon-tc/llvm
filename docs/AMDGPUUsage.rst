@@ -64,9 +64,7 @@ specify the target triple:
      ============ ==============================================================
      Environment  Description
      ============ ==============================================================
-     *<empty>*    Defaults to ``opencl``.
-     ``opencl``   OpenCL compute kernel (see :ref:`amdgpu-opencl`).
-     ``hcc``      AMD HC language compute kernel (see :ref:`amdgpu-hcc`).
+     *<empty>*    Default.
      ============ ==============================================================
 
 .. _amdgpu-processors:
@@ -911,6 +909,34 @@ This section provides code conventions used when the target triple OS is
 ``amdhsa`` (see :ref:`amdgpu-target-triples`).
 
 .. _amdgpu-amdhsa-hsa-code-object-metadata:
+
+Code Object Target Identification
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The AMDHSA OS uses the following syntax to specify the code object
+target as a single string:
+
+  ``<Architecture>-<Vendor>-<OS>-<Environment>-<Processor><Target Features>``
+
+Where:
+
+  - ``<Architecture>``, ``<Vendor>``, ``<OS>`` and ``<Environment>``
+    are the same as the *Target Triple* (see
+    :ref:`amdgpu-target-triples`).
+
+  - ``<Processor>`` is the same as the *Processor* (see
+    :ref:`amdgpu-processors`).
+
+  - ``<Target Features>`` is a list of the enabled *Target Features*
+    (see :ref:`amdgpu-target-features`), each prefixed by a plus, that
+    apply to *Processor*. The list must be in the same order as listed
+    in the table :ref:`amdgpu-target-feature-table`. Note that *Target
+    Features* must be included in the list if they are enabled even if
+    that is the default for *Processor*.
+
+For example:
+
+  ``"amdgcn-amd-amdhsa--gfx902+xnack"``
 
 Code Object Metadata
 ~~~~~~~~~~~~~~~~~~~~
@@ -3787,34 +3813,40 @@ Source Languages
 OpenCL
 ------
 
-When generating code for the OpenCL language the target triple environment
-should be ``opencl`` or ``amdgizcl`` (see :ref:`amdgpu-target-triples`).
-
 When the language is OpenCL the following differences occur:
 
 1. The OpenCL memory model is used (see :ref:`amdgpu-amdhsa-memory-model`).
-2. The AMDGPU backend adds additional arguments to the kernel.
+2. The AMDGPU backend appends additional arguments to the kernel's explicit
+   arguments for the AMDHSA OS (see
+   :ref:`opencl-kernel-implicit-arguments-appended-for-amdhsa-os-table`).
 3. Additional metadata is generated
-   (:ref:`amdgpu-amdhsa-hsa-code-object-metadata`).
+   (see :ref:`amdgpu-amdhsa-hsa-code-object-metadata`).
 
-.. TODO
-   Specify what affect this has. Hidden arguments added. Additional metadata
-   generated.
+  .. table:: OpenCL kernel implicit arguments appended for AMDHSA OS
+     :name: opencl-kernel-implicit-arguments-appended-for-amdhsa-os-table
+
+     ======== ==== ========= ===========================================
+     Position Byte Byte      Description
+              Size Alignment
+     ======== ==== ========= ===========================================
+     1        8    8         OpenCL Global Offset X
+     2        8    8         OpenCL Global Offset Y
+     3        8    8         OpenCL Global Offset Z
+     4        8    8         OpenCL address of printf buffer
+     5        8    8         OpenCL address of virtual queue used by
+                             enqueue_kernel.
+     6        8    8         OpenCL address of AqlWrap struct used by
+                             enqueue_kernel.
+     ======== ==== ========= ===========================================
 
 .. _amdgpu-hcc:
 
 HCC
 ---
 
-When generating code for the OpenCL language the target triple environment
-should be ``hcc`` (see :ref:`amdgpu-target-triples`).
-
-When the language is OpenCL the following differences occur:
+When the language is HCC the following differences occur:
 
 1. The HSA memory model is used (see :ref:`amdgpu-amdhsa-memory-model`).
-
-.. TODO
-   Specify what affect this has.
 
 Assembler
 ---------
