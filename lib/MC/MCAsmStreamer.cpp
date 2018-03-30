@@ -1081,10 +1081,12 @@ void MCAsmStreamer::EmitFileDirective(StringRef Filename) {
   EmitEOL();
 }
 
-void printDwarfFileDirective(unsigned FileNo, StringRef Directory,
-                             StringRef Filename, MD5::MD5Result *Checksum,
-                             Optional<StringRef> Source, bool UseDwarfDirectory,
-                             raw_svector_ostream &OS) {
+static void printDwarfFileDirective(unsigned FileNo, StringRef Directory,
+                                    StringRef Filename,
+                                    MD5::MD5Result *Checksum,
+                                    Optional<StringRef> Source,
+                                    bool UseDwarfDirectory,
+                                    raw_svector_ostream &OS) {
   SmallString<128> FullPathName;
 
   if (!UseDwarfDirectory && !Directory.empty()) {
@@ -1148,6 +1150,9 @@ void MCAsmStreamer::emitDwarfFile0Directive(StringRef Directory,
                                             Optional<StringRef> Source,
                                             unsigned CUID) {
   assert(CUID == 0);
+  // .file 0 is new for DWARF v5.
+  if (getContext().getDwarfVersion() < 5)
+    return;
 
   SmallString<128> Str;
   raw_svector_ostream OS1(Str);
