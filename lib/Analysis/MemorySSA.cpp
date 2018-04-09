@@ -1338,10 +1338,10 @@ void MemorySSA::placePHINodes(
   SmallVector<BasicBlock *, 32> IDFBlocks;
   IDFs.calculate(IDFBlocks);
 
-  std::sort(IDFBlocks.begin(), IDFBlocks.end(),
-            [&BBNumbers](const BasicBlock *A, const BasicBlock *B) {
-              return BBNumbers.lookup(A) < BBNumbers.lookup(B);
-            });
+  llvm::sort(IDFBlocks.begin(), IDFBlocks.end(),
+             [&BBNumbers](const BasicBlock *A, const BasicBlock *B) {
+               return BBNumbers.lookup(A) < BBNumbers.lookup(B);
+             });
 
   // Now place MemoryPhi nodes.
   for (auto &BB : IDFBlocks)
@@ -1466,7 +1466,7 @@ void MemorySSA::insertIntoListsBefore(MemoryAccess *What, const BasicBlock *BB,
     auto *Defs = getOrCreateDefsList(BB);
     // If we got asked to insert at the end, we have an easy job, just shove it
     // at the end. If we got asked to insert before an existing def, we also get
-    // an terator. If we got asked to insert before a use, we have to hunt for
+    // an iterator. If we got asked to insert before a use, we have to hunt for
     // the next def.
     if (WasEnd) {
       Defs->push_back(*What);
@@ -1485,7 +1485,7 @@ void MemorySSA::insertIntoListsBefore(MemoryAccess *What, const BasicBlock *BB,
   BlockNumberingValid.erase(BB);
 }
 
-// Move What before Where in the IR.  The end result is taht What will belong to
+// Move What before Where in the IR.  The end result is that What will belong to
 // the right lists and have the right Block set, but will not otherwise be
 // correct. It will not have the right defining access, and if it is a def,
 // things below it will not properly be updated.
