@@ -336,7 +336,7 @@ namespace llvm {
       CMPM_RND,
 
       // Arithmetic operations with FLAGS results.
-      ADD, SUB, ADC, SBB, SMUL,
+      ADD, SUB, ADC, SBB, SMUL, UMUL,
       INC, DEC, OR, XOR, AND,
 
       // Bit field extract.
@@ -344,12 +344,6 @@ namespace llvm {
 
       // Zero High Bits Starting with Specified Bit Position.
       BZHI,
-
-      // LOW, HI, FLAGS = umul LHS, RHS.
-      UMUL,
-
-      // 8-bit SMUL/UMUL - AX, FLAGS = smul8/umul8 AL, RHS.
-      SMUL8, UMUL8,
 
       // X86-specific multiply by immediate.
       MUL_IMM,
@@ -1362,6 +1356,13 @@ namespace llvm {
 
     /// Convert a comparison if required by the subtarget.
     SDValue ConvertCmpIfNecessary(SDValue Cmp, SelectionDAG &DAG) const;
+
+    /// Emit flags for the given setcc condition and operands. Also returns the
+    /// corresponding X86 condition code constant in X86CC.
+    SDValue emitFlagsForSetcc(SDValue Op0, SDValue Op1,
+                              ISD::CondCode CC, const SDLoc &dl,
+                              SelectionDAG &DAG,
+                              SDValue &X86CC) const;
 
     /// Check if replacement of SQRT with RSQRT should be disabled.
     bool isFsqrtCheap(SDValue Operand, SelectionDAG &DAG) const override;
