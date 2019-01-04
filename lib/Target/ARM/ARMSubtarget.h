@@ -420,7 +420,7 @@ protected:
   bool UseSjLjEH = false;
 
   /// Has speculation barrier
-  bool HasSpecCtrl = false;
+  bool HasSB = false;
 
   /// Implicitly convert an instruction to a different one if its immediates
   /// cannot be encoded. For example, ADD r0, r1, #FFFFFFFF -> SUB r0, r1, #1.
@@ -631,7 +631,7 @@ public:
   bool hasDSP() const { return HasDSP; }
   bool useNaClTrap() const { return UseNaClTrap; }
   bool useSjLjEH() const { return UseSjLjEH; }
-  bool hasSpecCtrl() const { return HasSpecCtrl; }
+  bool hasSB() const { return HasSB; }
   bool genLongCalls() const { return GenLongCalls; }
   bool genExecuteOnly() const { return GenExecuteOnly; }
 
