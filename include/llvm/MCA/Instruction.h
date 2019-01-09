@@ -28,6 +28,7 @@
 #include <memory>
 
 namespace llvm {
+
 namespace mca {
 
 constexpr int UNKNOWN_CYCLES = -512;
@@ -337,12 +338,21 @@ struct InstrDesc {
   bool BeginGroup;
   bool EndGroup;
 
+  // True if all buffered resources are in-order, and there is at least one
+  // buffer which is a dispatch hazard (BufferSize = 0).
+  bool MustIssueImmediately;
+
   // A zero latency instruction doesn't consume any scheduler resources.
   bool isZeroLatency() const { return !MaxLatency && Resources.empty(); }
 
   InstrDesc() = default;
   InstrDesc(const InstrDesc &Other) = delete;
   InstrDesc &operator=(const InstrDesc &Other) = delete;
+
+#ifndef NDEBUG
+  // Original instruction name for debugging purposes.
+  StringRef Name;
+#endif
 };
 
 /// Base class for instructions consumed by the simulation pipeline.

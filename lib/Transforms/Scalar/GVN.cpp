@@ -437,7 +437,7 @@ uint32_t GVN::ValueTable::lookupOrAddCall(CallInst *C) {
 
     // Non-local case.
     const MemoryDependenceResults::NonLocalDepInfo &deps =
-      MD->getNonLocalCallDependency(CallSite(C));
+        MD->getNonLocalCallDependency(C);
     // FIXME: Move the checking logic to MemDep!
     CallInst* cdep = nullptr;
 
@@ -2079,10 +2079,9 @@ bool GVN::processBlock(BasicBlock *BB) {
       salvageDebugInfo(*I);
       if (MD) MD->removeInstruction(I);
       LLVM_DEBUG(verifyRemoved(I));
+      ICF->removeInstruction(I);
       I->eraseFromParent();
     }
-
-    ICF->invalidateBlock(BB);
     InstrsToErase.clear();
 
     if (AtStart)
@@ -2301,7 +2300,7 @@ bool GVN::performScalarPRE(Instruction *CurInst) {
   LLVM_DEBUG(verifyRemoved(CurInst));
   // FIXME: Intended to be markInstructionForDeletion(CurInst), but it causes
   // some assertion failures.
-  ICF->invalidateBlock(CurrentBlock);
+  ICF->removeInstruction(CurInst);
   CurInst->eraseFromParent();
   ++NumGVNInstr;
 

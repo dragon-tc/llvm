@@ -1011,8 +1011,7 @@ static bool CheckBaseRegAndIndexRegAndScale(unsigned BaseReg, unsigned IndexReg,
   // and then only in non-64-bit modes.
   if (X86MCRegisterClasses[X86::GR16RegClassID].contains(BaseReg) &&
       (Is64BitMode || (BaseReg != X86::BX && BaseReg != X86::BP &&
-                       BaseReg != X86::SI && BaseReg != X86::DI)) &&
-      BaseReg != X86::DX) {
+                       BaseReg != X86::SI && BaseReg != X86::DI))) {
     ErrMsg = "invalid 16-bit base register";
     return true;
   }
@@ -2239,6 +2238,14 @@ std::unique_ptr<X86Operand> X86AsmParser::ParseMemOperand(unsigned SegReg,
   SMLoc MemEnd = Parser.getTok().getEndLoc();
   if (parseToken(AsmToken::RParen, "unexpected token in memory operand"))
     return nullptr;
+
+  // This is a terrible hack to handle "out[s]?[bwl]? %al, (%dx)" ->
+  // "outb %al, %dx".  Out doesn't take a memory form, but this is a widely
+  // documented form in various unofficial manuals, so a lot of code uses it.
+  if (BaseReg == X86::DX && IndexReg == 0 && Scale == 1 &&
+      SegReg == 0 && isa<MCConstantExpr>(Disp) &&
+      cast<MCConstantExpr>(Disp)->getValue() == 0)
+    return X86Operand::CreateDXReg(BaseLoc, BaseLoc);
 
   StringRef ErrMsg;
   if (CheckBaseRegAndIndexRegAndScale(BaseReg, IndexReg, Scale, is64BitMode(),

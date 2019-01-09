@@ -742,13 +742,13 @@ bool llvm::hoistRegion(DomTreeNode *N, AliasAnalysis *AA, LoopInfo *LI,
         auto One = llvm::ConstantFP::get(Divisor->getType(), 1.0);
         auto ReciprocalDivisor = BinaryOperator::CreateFDiv(One, Divisor);
         ReciprocalDivisor->setFastMathFlags(I.getFastMathFlags());
-        SafetyInfo->insertInstructionTo(I.getParent());
+        SafetyInfo->insertInstructionTo(ReciprocalDivisor, I.getParent());
         ReciprocalDivisor->insertBefore(&I);
 
         auto Product =
             BinaryOperator::CreateFMul(I.getOperand(0), ReciprocalDivisor);
         Product->setFastMathFlags(I.getFastMathFlags());
-        SafetyInfo->insertInstructionTo(I.getParent());
+        SafetyInfo->insertInstructionTo(Product, I.getParent());
         Product->insertAfter(&I);
         I.replaceAllUsesWith(Product);
         eraseInstruction(I, *SafetyInfo, CurAST);
@@ -809,14 +809,15 @@ bool llvm::hoistRegion(DomTreeNode *N, AliasAnalysis *AA, LoopInfo *LI,
                         [&](Use &U) { return DT->dominates(I, U); })) {
         BasicBlock *Dominator =
             DT->getNode(I->getParent())->getIDom()->getBlock();
-        LLVM_DEBUG(dbgs() << "LICM rehoisting to " << Dominator->getName()
-                          << ": " << *I << "\n");
-        if (!HoistPoint || HoistPoint->getParent() != Dominator) {
+        if (!HoistPoint || !DT->dominates(HoistPoint->getParent(), Dominator)) {
           if (HoistPoint)
             assert(DT->dominates(Dominator, HoistPoint->getParent()) &&
                    "New hoist point expected to dominate old hoist point");
           HoistPoint = Dominator->getTerminator();
         }
+        LLVM_DEBUG(dbgs() << "LICM rehoisting to "
+                          << HoistPoint->getParent()->getName()
+                          << ": " << *I << "\n");
         moveInstructionBefore(*I, *HoistPoint, *SafetyInfo);
         HoistPoint = I;
         Changed = true;
@@ -1188,7 +1189,7 @@ static void eraseInstruction(Instruction &I, ICFLoopSafetyInfo &SafetyInfo,
 static void moveInstructionBefore(Instruction &I, Instruction &Dest,
                                   ICFLoopSafetyInfo &SafetyInfo) {
   SafetyInfo.removeInstruction(&I);
-  SafetyInfo.insertInstructionTo(Dest.getParent());
+  SafetyInfo.insertInstructionTo(&I, Dest.getParent());
   I.moveBefore(&Dest);
 }
 

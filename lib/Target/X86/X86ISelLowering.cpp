@@ -540,6 +540,10 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
       // Use ANDPD and ORPD to simulate FCOPYSIGN.
       setOperationAction(ISD::FCOPYSIGN, VT, Custom);
 
+      // These might be better off as horizontal vector ops.
+      setOperationAction(ISD::FADD, VT, Custom);
+      setOperationAction(ISD::FSUB, VT, Custom);
+
       // We don't support sin/cos/fmod
       setOperationAction(ISD::FSIN   , VT, Expand);
       setOperationAction(ISD::FCOS   , VT, Expand);
@@ -1526,6 +1530,13 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
       setOperationAction(ISD::BITCAST, MVT::v32i16, Custom);
       setOperationAction(ISD::BITCAST, MVT::v64i8,  Custom);
     }
+
+    if (Subtarget.hasVBMI2()) {
+      for (auto VT : { MVT::v16i32, MVT::v8i64 }) {
+        setOperationAction(ISD::FSHL, VT, Custom);
+        setOperationAction(ISD::FSHR, VT, Custom);
+      }
+    }
   }// has  AVX-512
 
   // This block controls legalization for operations that don't have
@@ -1701,6 +1712,11 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
       for (auto VT : { MVT::v64i8, MVT::v32i16 })
         setOperationAction(ISD::CTPOP, VT, Legal);
     }
+
+    if (Subtarget.hasVBMI2()) {
+      setOperationAction(ISD::FSHL, MVT::v32i16, Custom);
+      setOperationAction(ISD::FSHR, MVT::v32i16, Custom);
+    }
   }
 
   if (!Subtarget.useSoftFloat() && Subtarget.hasBWI()) {
@@ -1746,6 +1762,15 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     if (Subtarget.hasBWI()) {
       setTruncStoreAction(MVT::v16i16,  MVT::v16i8, Legal);
       setTruncStoreAction(MVT::v8i16,   MVT::v8i8,  Legal);
+    }
+
+    if (Subtarget.hasVBMI2()) {
+      // TODO: Make these legal even without VLX?
+      for (auto VT : { MVT::v8i16,  MVT::v4i32, MVT::v2i64,
+                       MVT::v16i16, MVT::v8i32, MVT::v4i64 }) {
+        setOperationAction(ISD::FSHL, VT, Custom);
+        setOperationAction(ISD::FSHR, VT, Custom);
+      }
     }
   }
 
@@ -17097,20 +17122,39 @@ static SDValue LowerFunnelShift(SDValue Op, const X86Subtarget &Subtarget,
   MVT VT = Op.getSimpleValueType();
   assert((Op.getOpcode() == ISD::FSHL || Op.getOpcode() == ISD::FSHR) &&
          "Unexpected funnel shift opcode!");
-  assert((VT == MVT::i16 || VT == MVT::i32 || VT == MVT::i64) &&
-         "Unexpected funnel shift type!");
 
   SDLoc DL(Op);
   SDValue Op0 = Op.getOperand(0);
   SDValue Op1 = Op.getOperand(1);
   SDValue Amt = Op.getOperand(2);
 
+  bool IsFSHR = Op.getOpcode() == ISD::FSHR;
+
+  if (VT.isVector()) {
+    assert(Subtarget.hasVBMI2() && "Expected VBMI2");
+
+    if (IsFSHR)
+      std::swap(Op0, Op1);
+
+    APInt APIntShiftAmt;
+    if (isConstantSplat(Amt, APIntShiftAmt)) {
+      uint64_t ShiftAmt = APIntShiftAmt.getZExtValue();
+      return DAG.getNode(IsFSHR ? X86ISD::VSHRD : X86ISD::VSHLD, DL, VT,
+                         Op0, Op1, DAG.getConstant(ShiftAmt, DL, MVT::i8));
+    }
+
+    return DAG.getNode(IsFSHR ? X86ISD::VSHRDV : X86ISD::VSHLDV, DL, VT,
+                       Op0, Op1, Amt);
+  }
+
+  assert((VT == MVT::i16 || VT == MVT::i32 || VT == MVT::i64) &&
+         "Unexpected funnel shift type!");
+
   // Expand slow SHLD/SHRD cases if we are not optimizing for size.
   bool OptForSize = DAG.getMachineFunction().getFunction().optForSize();
   if (!OptForSize && Subtarget.isSHLDSlow())
     return SDValue();
 
-  bool IsFSHR = Op.getOpcode() == ISD::FSHR;
   if (IsFSHR)
     std::swap(Op0, Op1);
 
@@ -17945,9 +17989,10 @@ static SDValue truncateVectorWithPACK(unsigned Opcode, EVT DstVT, SDValue In,
                                       const X86Subtarget &Subtarget) {
   assert((Opcode == X86ISD::PACKSS || Opcode == X86ISD::PACKUS) &&
          "Unexpected PACK opcode");
+  assert(DstVT.isVector() && "VT not a vector?");
 
   // Requires SSE2 but AVX512 has fast vector truncate.
-  if (!Subtarget.hasSSE2() || Subtarget.hasAVX512() || !DstVT.isVector())
+  if (!Subtarget.hasSSE2())
     return SDValue();
 
   EVT SrcVT = In.getValueType();
@@ -18333,6 +18378,63 @@ static bool shouldUseHorizontalOp(bool IsSingleSource, SelectionDAG &DAG,
   bool IsOptimizingSize = DAG.getMachineFunction().getFunction().optForSize();
   bool HasFastHOps = Subtarget.hasFastHorizontalOps();
   return !IsSingleSource || IsOptimizingSize || HasFastHOps;
+}
+
+/// Depending on uarch and/or optimizing for size, we might prefer to use a
+/// vector operation in place of the typical scalar operation.
+static SDValue lowerFaddFsub(SDValue Op, SelectionDAG &DAG,
+                             const X86Subtarget &Subtarget) {
+  MVT VT = Op.getSimpleValueType();
+  assert((VT == MVT::f32 || VT == MVT::f64) && "Only expecting float/double");
+
+  // If both operands have other uses, this is probably not profitable.
+  // Horizontal FP add/sub were added with SSE3.
+  SDValue LHS = Op.getOperand(0);
+  SDValue RHS = Op.getOperand(1);
+  if ((!LHS.hasOneUse() && !RHS.hasOneUse()) || !Subtarget.hasSSE3())
+    return Op;
+
+  if (LHS.getOpcode() != ISD::EXTRACT_VECTOR_ELT ||
+      RHS.getOpcode() != ISD::EXTRACT_VECTOR_ELT ||
+      LHS.getOperand(0) != RHS.getOperand(0))
+    return Op;
+
+  if (!isa<ConstantSDNode>(LHS.getOperand(1)) ||
+      !isa<ConstantSDNode>(RHS.getOperand(1)) ||
+      !shouldUseHorizontalOp(true, DAG, Subtarget))
+    return Op;
+
+  // Allow commuted 'hadd' ops.
+  // TODO: Allow commuted fsub by negating the result of FHSUB?
+  // TODO: This can be extended to handle other adjacent extract pairs.
+  auto HOpcode = Op.getOpcode() == ISD::FADD ? X86ISD::FHADD : X86ISD::FHSUB;
+  unsigned LExtIndex = LHS.getConstantOperandVal(1);
+  unsigned RExtIndex = RHS.getConstantOperandVal(1);
+  if (LExtIndex == 1 && RExtIndex == 0 && HOpcode == X86ISD::FHADD)
+    std::swap(LExtIndex, RExtIndex);
+  if (LExtIndex != 0 || RExtIndex != 1)
+    return Op;
+
+  SDValue X = LHS.getOperand(0);
+  EVT VecVT = X.getValueType();
+  unsigned BitWidth = VecVT.getSizeInBits();
+  assert((BitWidth == 128 || BitWidth == 256 || BitWidth == 512) &&
+         "Not expecting illegal vector widths here");
+
+  // Creating a 256-bit horizontal op would be wasteful, and there is no 512-bit
+  // equivalent, so extract the 256/512-bit source op to 128-bit.
+  // This is free: ymm/zmm -> xmm.
+  SDLoc DL(Op);
+  if (BitWidth == 256 || BitWidth == 512)
+    X = extract128BitVector(X, 0, DAG, DL);
+
+  // fadd (extractelt (X, 0), extractelt (X, 1)) --> extractelt (hadd X, X), 0
+  // fadd (extractelt (X, 1), extractelt (X, 0)) --> extractelt (hadd X, X), 0
+  // fsub (extractelt (X, 0), extractelt (X, 1)) --> extractelt (hsub X, X), 0
+  // The extract of element 0 is free: the scalar result is element 0.
+  SDValue HOp = DAG.getNode(HOpcode, DL, X.getValueType(), X, X);
+  return DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, VT, HOp,
+                     DAG.getIntPtrConstant(0, DL));
 }
 
 /// The only differences between FABS and FNEG are the mask and the logic op.
@@ -22146,14 +22248,16 @@ static SDValue getGatherNode(unsigned Opc, SDValue Op, SelectionDAG &DAG,
                               SDValue Src, SDValue Mask, SDValue Base,
                               SDValue Index, SDValue ScaleOp, SDValue Chain,
                               const X86Subtarget &Subtarget) {
+  MVT VT = Op.getSimpleValueType();
   SDLoc dl(Op);
   auto *C = dyn_cast<ConstantSDNode>(ScaleOp);
   // Scale must be constant.
   if (!C)
     return SDValue();
   SDValue Scale = DAG.getTargetConstant(C->getZExtValue(), dl, MVT::i8);
-  MVT MaskVT = MVT::getVectorVT(MVT::i1,
-                             Index.getSimpleValueType().getVectorNumElements());
+  unsigned MinElts = std::min(Index.getSimpleValueType().getVectorNumElements(),
+                              VT.getVectorNumElements());
+  MVT MaskVT = MVT::getVectorVT(MVT::i1, MinElts);
 
   SDValue VMask = getMaskNode(Mask, MaskVT, Subtarget, DAG, dl);
   SDVTList VTs = DAG.getVTList(Op.getValueType(), MaskVT, MVT::Other);
@@ -22182,8 +22286,9 @@ static SDValue getScatterNode(unsigned Opc, SDValue Op, SelectionDAG &DAG,
   SDValue Scale = DAG.getTargetConstant(C->getZExtValue(), dl, MVT::i8);
   SDValue Disp = DAG.getTargetConstant(0, dl, MVT::i32);
   SDValue Segment = DAG.getRegister(0, MVT::i32);
-  MVT MaskVT = MVT::getVectorVT(MVT::i1,
-                             Index.getSimpleValueType().getVectorNumElements());
+  unsigned MinElts = std::min(Index.getSimpleValueType().getVectorNumElements(),
+                              Src.getSimpleValueType().getVectorNumElements());
+  MVT MaskVT = MVT::getVectorVT(MVT::i1, MinElts);
 
   SDValue VMask = getMaskNode(Mask, MaskVT, Subtarget, DAG, dl);
   SDVTList VTs = DAG.getVTList(MaskVT, MVT::Other);
@@ -26015,6 +26120,8 @@ SDValue X86TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::FP_EXTEND:          return LowerFP_EXTEND(Op, DAG);
   case ISD::LOAD:               return LowerLoad(Op, Subtarget, DAG);
   case ISD::STORE:              return LowerStore(Op, Subtarget, DAG);
+  case ISD::FADD:
+  case ISD::FSUB:               return lowerFaddFsub(Op, DAG, Subtarget);
   case ISD::FABS:
   case ISD::FNEG:               return LowerFABSorFNEG(Op, DAG);
   case ISD::FCOPYSIGN:          return LowerFCOPYSIGN(Op, DAG);
@@ -32403,15 +32510,38 @@ bool X86TargetLowering::SimplifyDemandedBitsForTargetNode(
     break;
   }
   case X86ISD::VSHLI: {
-    if (auto *ShiftImm = dyn_cast<ConstantSDNode>(Op.getOperand(1))) {
+    SDValue Op0 = Op.getOperand(0);
+    SDValue Op1 = Op.getOperand(1);
+
+    if (auto *ShiftImm = dyn_cast<ConstantSDNode>(Op1)) {
       if (ShiftImm->getAPIntValue().uge(BitWidth))
         break;
 
       unsigned ShAmt = ShiftImm->getZExtValue();
       APInt DemandedMask = OriginalDemandedBits.lshr(ShAmt);
 
-      if (SimplifyDemandedBits(Op.getOperand(0), DemandedMask,
-                               OriginalDemandedElts, Known, TLO, Depth + 1))
+      // If this is ((X >>u C1) << ShAmt), see if we can simplify this into a
+      // single shift.  We can do this if the bottom bits (which are shifted
+      // out) are never demanded.
+      if (Op0.getOpcode() == X86ISD::VSRLI &&
+          OriginalDemandedBits.countTrailingZeros() >= ShAmt) {
+        if (auto *Shift2Imm = dyn_cast<ConstantSDNode>(Op0.getOperand(1))) {
+          if (Shift2Imm->getAPIntValue().ult(BitWidth)) {
+            int Diff = ShAmt - Shift2Imm->getZExtValue();
+            if (Diff == 0)
+              return TLO.CombineTo(Op, Op0.getOperand(0));
+
+            unsigned NewOpc = Diff < 0 ? X86ISD::VSRLI : X86ISD::VSHLI;
+            SDValue NewShift = TLO.DAG.getNode(
+                NewOpc, SDLoc(Op), VT, Op0.getOperand(0),
+                TLO.DAG.getConstant(std::abs(Diff), SDLoc(Op), MVT::i8));
+            return TLO.CombineTo(Op, NewShift);
+          }
+        }
+      }
+
+      if (SimplifyDemandedBits(Op0, DemandedMask, OriginalDemandedElts, Known,
+                               TLO, Depth + 1))
         return true;
 
       assert(!Known.hasConflict() && "Bits known to be one AND zero?");
@@ -32650,9 +32780,18 @@ static SDValue combineBitcastvxi1(SelectionDAG &DAG, SDValue BitCast,
   if (!VT.isScalarInteger() || !VecVT.isSimple())
     return SDValue();
 
+  // If the input is a truncate from v16i8 or v32i8 go ahead and use a
+  // movmskb even with avx512. This will be better than truncating to vXi1 and
+  // using a kmov. This can especially help KNL if the input is a v16i8/v32i8
+  // vpcmpeqb/vpcmpgtb.
+  bool IsTruncated = N0.getOpcode() == ISD::TRUNCATE && N0.hasOneUse() &&
+                     (N0.getOperand(0).getValueType() == MVT::v16i8 ||
+                      N0.getOperand(0).getValueType() == MVT::v32i8 ||
+                      N0.getOperand(0).getValueType() == MVT::v64i8);
+
   // With AVX512 vxi1 types are legal and we prefer using k-regs.
   // MOVMSK is supported in SSE2 or later.
-  if (Subtarget.hasAVX512() || !Subtarget.hasSSE2())
+  if (!Subtarget.hasSSE2() || (Subtarget.hasAVX512() && !IsTruncated))
     return SDValue();
 
   // There are MOVMSK flavors for types v16i8, v32i8, v4f32, v8f32, v4f64 and
@@ -32704,12 +32843,30 @@ static SDValue combineBitcastvxi1(SelectionDAG &DAG, SDValue BitCast,
   case MVT::v32i1:
     SExtVT = MVT::v32i8;
     break;
+  case MVT::v64i1:
+    // If we have AVX512F, but not AVX512BW and the input is truncated from
+    // v64i8 checked earlier. Then split the input and make two pmovmskbs.
+    if (Subtarget.hasAVX512() && !Subtarget.hasBWI()) {
+      SExtVT = MVT::v64i8;
+      break;
+    }
+    return SDValue();
   };
 
   SDLoc DL(BitCast);
   SDValue V = DAG.getNode(ISD::SIGN_EXTEND, DL, SExtVT, N0);
 
-  if (SExtVT == MVT::v16i8 || SExtVT == MVT::v32i8) {
+  if (SExtVT == MVT::v64i8) {
+    SDValue Lo, Hi;
+    std::tie(Lo, Hi) = DAG.SplitVector(V, DL);
+    Lo = DAG.getNode(X86ISD::MOVMSK, DL, MVT::i32, Lo);
+    Lo = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i64, Lo);
+    Hi = DAG.getNode(X86ISD::MOVMSK, DL, MVT::i32, Hi);
+    Hi = DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i64, Hi);
+    Hi = DAG.getNode(ISD::SHL, DL, MVT::i64, Hi,
+                     DAG.getConstant(32, DL, MVT::i8));
+    V = DAG.getNode(ISD::OR, DL, MVT::i64, Lo, Hi);
+  } else if (SExtVT == MVT::v16i8 || SExtVT == MVT::v32i8) {
     V = getPMOVMSKB(DL, V, DAG, Subtarget);
   } else {
     if (SExtVT == MVT::v8i16)
@@ -36813,6 +36970,7 @@ static SDValue combineTruncateWithSat(SDValue In, EVT VT, const SDLoc &DL,
       return DAG.getNode(X86ISD::VTRUNCUS, DL, VT, USatVal);
   }
   if (VT.isVector() && isPowerOf2_32(VT.getVectorNumElements()) &&
+      !Subtarget.hasAVX512() &&
       (SVT == MVT::i8 || SVT == MVT::i16) &&
       (InSVT == MVT::i16 || InSVT == MVT::i32)) {
     if (auto USatVal = detectSSatPattern(In, VT, true)) {
