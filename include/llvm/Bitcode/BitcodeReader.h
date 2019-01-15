@@ -50,7 +50,6 @@ class Module;
   struct BitcodeLTOInfo {
     bool IsThinLTO;
     bool HasSummary;
-    bool EnableSplitLTOUnit;
   };
 
   /// Represents a module in a bitcode file.

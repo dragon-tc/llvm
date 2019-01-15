@@ -461,11 +461,7 @@ ModuleSummaryIndex llvm::buildModuleSummaryIndex(
     std::function<BlockFrequencyInfo *(const Function &F)> GetBFICallback,
     ProfileSummaryInfo *PSI) {
   assert(PSI);
-  bool EnableSplitLTOUnit = false;
-  if (auto *MD = mdconst::extract_or_null<ConstantInt>(
-          M.getModuleFlag("EnableSplitLTOUnit")))
-    EnableSplitLTOUnit = MD->getZExtValue();
-  ModuleSummaryIndex Index(/*HaveGVs=*/true, EnableSplitLTOUnit);
+  ModuleSummaryIndex Index(/*HaveGVs=*/true);
 
   // Identify the local values in the llvm.used and llvm.compiler.used sets,
   // which should not be exported as they would then require renaming and

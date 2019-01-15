@@ -417,18 +417,8 @@ void splitAndWriteThinLTOBitcode(
   }
 }
 
-// Returns whether this module needs to be split because splitting is
-// enabled and it uses type metadata.
+// Returns whether this module needs to be split because it uses type metadata.
 bool requiresSplit(Module &M) {
-  // First check if the LTO Unit splitting has been enabled.
-  bool EnableSplitLTOUnit = false;
-  if (auto *MD = mdconst::extract_or_null<ConstantInt>(
-          M.getModuleFlag("EnableSplitLTOUnit")))
-    EnableSplitLTOUnit = MD->getZExtValue();
-  if (!EnableSplitLTOUnit)
-    return false;
-
-  // Module only needs to be split if it contains type metadata.
   for (auto &GO : M.global_objects()) {
     if (GO.hasMetadata(LLVMContext::MD_type))
       return true;
@@ -440,7 +430,7 @@ bool requiresSplit(Module &M) {
 void writeThinLTOBitcode(raw_ostream &OS, raw_ostream *ThinLinkOS,
                          function_ref<AAResults &(Function &)> AARGetter,
                          Module &M, const ModuleSummaryIndex *Index) {
-  // Split module if splitting is enabled and it contains any type metadata.
+  // See if this module has any type metadata. If so, we need to split it.
   if (requiresSplit(M))
     return splitAndWriteThinLTOBitcode(OS, ThinLinkOS, AARGetter, M);
 
