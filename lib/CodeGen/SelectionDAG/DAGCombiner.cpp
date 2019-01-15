@@ -293,6 +293,8 @@ namespace {
     SDValue visitADD(SDNode *N);
     SDValue visitADDLike(SDValue N0, SDValue N1, SDNode *LocReference);
     SDValue visitSUB(SDNode *N);
+    SDValue visitADDSAT(SDNode *N);
+    SDValue visitSUBSAT(SDNode *N);
     SDValue visitADDC(SDNode *N);
     SDValue visitUADDO(SDNode *N);
     SDValue visitUADDOLike(SDValue N0, SDValue N1, SDNode *N);
@@ -1486,6 +1488,10 @@ SDValue DAGCombiner::visit(SDNode *N) {
   case ISD::MERGE_VALUES:       return visitMERGE_VALUES(N);
   case ISD::ADD:                return visitADD(N);
   case ISD::SUB:                return visitSUB(N);
+  case ISD::SADDSAT:
+  case ISD::UADDSAT:            return visitADDSAT(N);
+  case ISD::SSUBSAT:
+  case ISD::USUBSAT:            return visitSUBSAT(N);
   case ISD::ADDC:               return visitADDC(N);
   case ISD::UADDO:              return visitUADDO(N);
   case ISD::SUBC:               return visitSUBC(N);
@@ -2170,6 +2176,49 @@ SDValue DAGCombiner::visitADD(SDNode *N) {
   return SDValue();
 }
 
+SDValue DAGCombiner::visitADDSAT(SDNode *N) {
+  unsigned Opcode = N->getOpcode();
+  SDValue N0 = N->getOperand(0);
+  SDValue N1 = N->getOperand(1);
+  EVT VT = N0.getValueType();
+  SDLoc DL(N);
+
+  // fold vector ops
+  if (VT.isVector()) {
+    // TODO SimplifyVBinOp
+
+    // fold (add_sat x, 0) -> x, vector edition
+    if (ISD::isBuildVectorAllZeros(N1.getNode()))
+      return N0;
+    if (ISD::isBuildVectorAllZeros(N0.getNode()))
+      return N1;
+  }
+
+  // fold (add_sat x, undef) -> -1
+  if (N0.isUndef() || N1.isUndef())
+    return DAG.getAllOnesConstant(DL, VT);
+
+  if (DAG.isConstantIntBuildVectorOrConstantInt(N0)) {
+    // canonicalize constant to RHS
+    if (!DAG.isConstantIntBuildVectorOrConstantInt(N1))
+      return DAG.getNode(Opcode, DL, VT, N1, N0);
+    // fold (add_sat c1, c2) -> c3
+    return DAG.FoldConstantArithmetic(Opcode, DL, VT, N0.getNode(),
+                                      N1.getNode());
+  }
+
+  // fold (add_sat x, 0) -> x
+  if (isNullConstant(N1))
+    return N0;
+
+  // If it cannot overflow, transform into an add.
+  if (Opcode == ISD::UADDSAT)
+    if (DAG.computeOverflowKind(N0, N1) == SelectionDAG::OFK_Never)
+      return DAG.getNode(ISD::ADD, DL, VT, N0, N1);
+
+  return SDValue();
+}
+
 static SDValue getAsCarry(const TargetLowering &TLI, SDValue V) {
   bool Masked = false;
 
@@ -2728,6 +2777,43 @@ SDValue DAGCombiner::visitSUB(SDNode *N) {
       return DAG.getNode(ISD::ADD, DL, VT, N0, SRA);
     }
   }
+
+  return SDValue();
+}
+
+SDValue DAGCombiner::visitSUBSAT(SDNode *N) {
+  SDValue N0 = N->getOperand(0);
+  SDValue N1 = N->getOperand(1);
+  EVT VT = N0.getValueType();
+  SDLoc DL(N);
+
+  // fold vector ops
+  if (VT.isVector()) {
+    // TODO SimplifyVBinOp
+
+    // fold (sub_sat x, 0) -> x, vector edition
+    if (ISD::isBuildVectorAllZeros(N1.getNode()))
+      return N0;
+  }
+
+  // fold (sub_sat x, undef) -> 0
+  if (N0.isUndef() || N1.isUndef())
+    return DAG.getConstant(0, DL, VT);
+
+  // fold (sub_sat x, x) -> 0
+  if (N0 == N1)
+    return DAG.getConstant(0, DL, VT);
+
+  if (DAG.isConstantIntBuildVectorOrConstantInt(N0) &&
+      DAG.isConstantIntBuildVectorOrConstantInt(N1)) {
+    // fold (sub_sat c1, c2) -> c3
+    return DAG.FoldConstantArithmetic(N->getOpcode(), DL, VT, N0.getNode(),
+                                      N1.getNode());
+  }
+
+  // fold (sub_sat x, 0) -> x
+  if (isNullConstant(N1))
+    return N0;
 
   return SDValue();
 }
@@ -16913,9 +16999,9 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
   //    Vi if possible
   // Only operand 0 is checked as 'concat' assumes all inputs of the same
   // type.
-  if (V->getOpcode() == ISD::CONCAT_VECTORS &&
+  if (V.getOpcode() == ISD::CONCAT_VECTORS &&
       isa<ConstantSDNode>(N->getOperand(1)) &&
-      V->getOperand(0).getValueType() == NVT) {
+      V.getOperand(0).getValueType() == NVT) {
     unsigned Idx = N->getConstantOperandVal(1);
     unsigned NumElems = NVT.getVectorNumElements();
     assert((Idx % NumElems) == 0 &&
@@ -16926,9 +17012,9 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
   V = peekThroughBitcasts(V);
 
   // If the input is a build vector. Try to make a smaller build vector.
-  if (V->getOpcode() == ISD::BUILD_VECTOR) {
+  if (V.getOpcode() == ISD::BUILD_VECTOR) {
     if (auto *Idx = dyn_cast<ConstantSDNode>(N->getOperand(1))) {
-      EVT InVT = V->getValueType(0);
+      EVT InVT = V.getValueType();
       unsigned ExtractSize = NVT.getSizeInBits();
       unsigned EltSize = InVT.getScalarSizeInBits();
       // Only do this if we won't split any elements.
@@ -16961,16 +17047,16 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
     }
   }
 
-  if (V->getOpcode() == ISD::INSERT_SUBVECTOR) {
+  if (V.getOpcode() == ISD::INSERT_SUBVECTOR) {
     // Handle only simple case where vector being inserted and vector
     // being extracted are of same size.
-    EVT SmallVT = V->getOperand(1).getValueType();
+    EVT SmallVT = V.getOperand(1).getValueType();
     if (!NVT.bitsEq(SmallVT))
       return SDValue();
 
     // Only handle cases where both indexes are constants.
-    ConstantSDNode *ExtIdx = dyn_cast<ConstantSDNode>(N->getOperand(1));
-    ConstantSDNode *InsIdx = dyn_cast<ConstantSDNode>(V->getOperand(2));
+    auto *ExtIdx = dyn_cast<ConstantSDNode>(N->getOperand(1));
+    auto *InsIdx = dyn_cast<ConstantSDNode>(V.getOperand(2));
 
     if (InsIdx && ExtIdx) {
       // Combine:
@@ -16980,11 +17066,11 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
       //    otherwise => (extract_subvec V1, ExtIdx)
       if (InsIdx->getZExtValue() * SmallVT.getScalarSizeInBits() ==
           ExtIdx->getZExtValue() * NVT.getScalarSizeInBits())
-        return DAG.getBitcast(NVT, V->getOperand(1));
+        return DAG.getBitcast(NVT, V.getOperand(1));
       return DAG.getNode(
           ISD::EXTRACT_SUBVECTOR, SDLoc(N), NVT,
-          DAG.getBitcast(N->getOperand(0).getValueType(), V->getOperand(0)),
-          N->getOperand(1));
+          DAG.getBitcast(N->getOperand(0).getValueType(), V.getOperand(0)),
+                         N->getOperand(1));
     }
   }
 
@@ -17837,6 +17923,14 @@ SDValue DAGCombiner::visitINSERT_SUBVECTOR(SDNode *N) {
       N0.getOperand(2) == N2)
     return DAG.getNode(ISD::INSERT_SUBVECTOR, SDLoc(N), VT, N0.getOperand(0),
                        N1, N2);
+
+  // Eliminate an intermediate insert into an undef vector:
+  // insert_subvector undef, (insert_subvector undef, X, 0), N2 -->
+  // insert_subvector undef, X, N2
+  if (N0.isUndef() && N1.getOpcode() == ISD::INSERT_SUBVECTOR &&
+      N1.getOperand(0).isUndef() && isNullConstant(N1.getOperand(2)))
+    return DAG.getNode(ISD::INSERT_SUBVECTOR, SDLoc(N), VT, N0,
+                       N1.getOperand(1), N2);
 
   if (!isa<ConstantSDNode>(N2))
     return SDValue();

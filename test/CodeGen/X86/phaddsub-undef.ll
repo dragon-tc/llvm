@@ -43,44 +43,60 @@ define <8 x i32> @test14_undef(<8 x i32> %a, <8 x i32> %b) {
 
 ; integer horizontal adds instead of two scalar adds followed by vector inserts.
 define <8 x i32> @test15_undef(<8 x i32> %a, <8 x i32> %b) {
-; SSE-LABEL: test15_undef:
-; SSE:       # %bb.0:
-; SSE-NEXT:    movd %xmm0, %eax
-; SSE-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[1,1,2,3]
-; SSE-NEXT:    movd %xmm0, %ecx
-; SSE-NEXT:    addl %eax, %ecx
-; SSE-NEXT:    movd %xmm3, %eax
-; SSE-NEXT:    pshufd {{.*#+}} xmm0 = xmm3[1,1,2,3]
-; SSE-NEXT:    movd %xmm0, %edx
-; SSE-NEXT:    addl %eax, %edx
-; SSE-NEXT:    movd %ecx, %xmm0
-; SSE-NEXT:    movd %edx, %xmm1
-; SSE-NEXT:    pshufd {{.*#+}} xmm1 = xmm1[0,1,0,1]
-; SSE-NEXT:    retq
+; SSE-SLOW-LABEL: test15_undef:
+; SSE-SLOW:       # %bb.0:
+; SSE-SLOW-NEXT:    movd %xmm0, %eax
+; SSE-SLOW-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[1,1,2,3]
+; SSE-SLOW-NEXT:    movd %xmm0, %ecx
+; SSE-SLOW-NEXT:    addl %eax, %ecx
+; SSE-SLOW-NEXT:    movd %xmm3, %eax
+; SSE-SLOW-NEXT:    pshufd {{.*#+}} xmm0 = xmm3[1,1,2,3]
+; SSE-SLOW-NEXT:    movd %xmm0, %edx
+; SSE-SLOW-NEXT:    addl %eax, %edx
+; SSE-SLOW-NEXT:    movd %ecx, %xmm0
+; SSE-SLOW-NEXT:    movd %edx, %xmm1
+; SSE-SLOW-NEXT:    pshufd {{.*#+}} xmm1 = xmm1[0,1,0,1]
+; SSE-SLOW-NEXT:    retq
 ;
-; AVX1-LABEL: test15_undef:
-; AVX1:       # %bb.0:
-; AVX1-NEXT:    vmovd %xmm0, %eax
-; AVX1-NEXT:    vpextrd $1, %xmm0, %ecx
-; AVX1-NEXT:    addl %eax, %ecx
-; AVX1-NEXT:    vextractf128 $1, %ymm1, %xmm0
-; AVX1-NEXT:    vmovd %xmm0, %eax
-; AVX1-NEXT:    vpextrd $1, %xmm0, %edx
-; AVX1-NEXT:    addl %eax, %edx
-; AVX1-NEXT:    vmovd %ecx, %xmm0
-; AVX1-NEXT:    vmovd %edx, %xmm1
-; AVX1-NEXT:    vpshufd {{.*#+}} xmm1 = xmm1[0,1,0,1]
-; AVX1-NEXT:    vinsertf128 $1, %xmm1, %ymm0, %ymm0
-; AVX1-NEXT:    retq
+; SSE-FAST-LABEL: test15_undef:
+; SSE-FAST:       # %bb.0:
+; SSE-FAST-NEXT:    phaddd %xmm0, %xmm0
+; SSE-FAST-NEXT:    phaddd %xmm3, %xmm3
+; SSE-FAST-NEXT:    pshufd {{.*#+}} xmm1 = xmm3[0,1,0,1]
+; SSE-FAST-NEXT:    retq
+;
+; AVX1-SLOW-LABEL: test15_undef:
+; AVX1-SLOW:       # %bb.0:
+; AVX1-SLOW-NEXT:    vmovd %xmm0, %eax
+; AVX1-SLOW-NEXT:    vpextrd $1, %xmm0, %ecx
+; AVX1-SLOW-NEXT:    addl %eax, %ecx
+; AVX1-SLOW-NEXT:    vextractf128 $1, %ymm1, %xmm0
+; AVX1-SLOW-NEXT:    vmovd %xmm0, %eax
+; AVX1-SLOW-NEXT:    vpextrd $1, %xmm0, %edx
+; AVX1-SLOW-NEXT:    addl %eax, %edx
+; AVX1-SLOW-NEXT:    vmovd %ecx, %xmm0
+; AVX1-SLOW-NEXT:    vmovd %edx, %xmm1
+; AVX1-SLOW-NEXT:    vpshufd {{.*#+}} xmm1 = xmm1[0,1,0,1]
+; AVX1-SLOW-NEXT:    vinsertf128 $1, %xmm1, %ymm0, %ymm0
+; AVX1-SLOW-NEXT:    retq
+;
+; AVX1-FAST-LABEL: test15_undef:
+; AVX1-FAST:       # %bb.0:
+; AVX1-FAST-NEXT:    vphaddd %xmm0, %xmm0, %xmm0
+; AVX1-FAST-NEXT:    vextractf128 $1, %ymm1, %xmm1
+; AVX1-FAST-NEXT:    vphaddd %xmm1, %xmm1, %xmm1
+; AVX1-FAST-NEXT:    vpshufd {{.*#+}} xmm1 = xmm1[0,1,0,1]
+; AVX1-FAST-NEXT:    vinsertf128 $1, %xmm1, %ymm0, %ymm0
+; AVX1-FAST-NEXT:    retq
 ;
 ; AVX2-LABEL: test15_undef:
 ; AVX2:       # %bb.0:
-; AVX2-NEXT:    vphaddd %ymm0, %ymm0, %ymm0
+; AVX2-NEXT:    vphaddd %ymm1, %ymm0, %ymm0
 ; AVX2-NEXT:    retq
 ;
 ; AVX512-LABEL: test15_undef:
 ; AVX512:       # %bb.0:
-; AVX512-NEXT:    vphaddd %ymm0, %ymm0, %ymm0
+; AVX512-NEXT:    vphaddd %ymm1, %ymm0, %ymm0
 ; AVX512-NEXT:    retq
   %vecext = extractelement <8 x i32> %a, i32 0
   %vecext1 = extractelement <8 x i32> %a, i32 1
@@ -101,16 +117,20 @@ define <8 x i32> @PR40243_alt(<8 x i32> %a, <8 x i32> %b) {
 ;
 ; AVX1-LABEL: PR40243_alt:
 ; AVX1:       # %bb.0:
+; AVX1-NEXT:    vextractf128 $1, %ymm1, %xmm1
+; AVX1-NEXT:    vextractf128 $1, %ymm0, %xmm0
+; AVX1-NEXT:    vphaddd %xmm1, %xmm0, %xmm0
+; AVX1-NEXT:    vinsertf128 $1, %xmm0, %ymm0, %ymm0
 ; AVX1-NEXT:    retq
 ;
 ; AVX2-LABEL: PR40243_alt:
 ; AVX2:       # %bb.0:
-; AVX2-NEXT:    vphaddd %ymm0, %ymm0, %ymm0
+; AVX2-NEXT:    vphaddd %ymm1, %ymm0, %ymm0
 ; AVX2-NEXT:    retq
 ;
 ; AVX512-LABEL: PR40243_alt:
 ; AVX512:       # %bb.0:
-; AVX512-NEXT:    vphaddd %ymm0, %ymm0, %ymm0
+; AVX512-NEXT:    vphaddd %ymm1, %ymm0, %ymm0
 ; AVX512-NEXT:    retq
   %a4 = extractelement <8 x i32> %a, i32 4
   %a5 = extractelement <8 x i32> %a, i32 5
@@ -172,7 +192,7 @@ define <16 x i32> @test16_v16i32_undef(<16 x i32> %a, <16 x i32> %b) {
 ;
 ; AVX512-LABEL: test16_v16i32_undef:
 ; AVX512:       # %bb.0:
-; AVX512-NEXT:    vphaddd %xmm0, %xmm0, %xmm0
+; AVX512-NEXT:    vphaddd %ymm0, %ymm0, %ymm0
 ; AVX512-NEXT:    retq
   %vecext = extractelement <16 x i32> %a, i32 0
   %vecext1 = extractelement <16 x i32> %a, i32 1
@@ -248,7 +268,7 @@ define <16 x i32> @test17_v16i32_undef(<16 x i32> %a, <16 x i32> %b) {
 ; AVX512-LABEL: test17_v16i32_undef:
 ; AVX512:       # %bb.0:
 ; AVX512-NEXT:    vextracti128 $1, %ymm0, %xmm1
-; AVX512-NEXT:    vphaddd %xmm1, %xmm0, %xmm0
+; AVX512-NEXT:    vphaddd %ymm1, %ymm0, %ymm0
 ; AVX512-NEXT:    retq
   %vecext = extractelement <16 x i32> %a, i32 0
   %vecext1 = extractelement <16 x i32> %a, i32 1

@@ -333,36 +333,38 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::FCOPYSIGN, MVT::f16, Promote);
 
   setOperationAction(ISD::FREM,    MVT::f16,   Promote);
-  setOperationAction(ISD::FREM,    MVT::v4f16, Promote);
-  setOperationAction(ISD::FREM,    MVT::v8f16, Promote);
+  setOperationAction(ISD::FREM,    MVT::v4f16, Expand);
+  setOperationAction(ISD::FREM,    MVT::v8f16, Expand);
   setOperationAction(ISD::FPOW,    MVT::f16,   Promote);
-  setOperationAction(ISD::FPOW,    MVT::v4f16, Promote);
-  setOperationAction(ISD::FPOW,    MVT::v8f16, Promote);
+  setOperationAction(ISD::FPOW,    MVT::v4f16, Expand);
+  setOperationAction(ISD::FPOW,    MVT::v8f16, Expand);
   setOperationAction(ISD::FPOWI,   MVT::f16,   Promote);
+  setOperationAction(ISD::FPOWI,   MVT::v4f16, Expand);
+  setOperationAction(ISD::FPOWI,   MVT::v8f16, Expand);
   setOperationAction(ISD::FCOS,    MVT::f16,   Promote);
-  setOperationAction(ISD::FCOS,    MVT::v4f16, Promote);
-  setOperationAction(ISD::FCOS,    MVT::v8f16, Promote);
+  setOperationAction(ISD::FCOS,    MVT::v4f16, Expand);
+  setOperationAction(ISD::FCOS,    MVT::v8f16, Expand);
   setOperationAction(ISD::FSIN,    MVT::f16,   Promote);
-  setOperationAction(ISD::FSIN,    MVT::v4f16, Promote);
-  setOperationAction(ISD::FSIN,    MVT::v8f16, Promote);
+  setOperationAction(ISD::FSIN,    MVT::v4f16, Expand);
+  setOperationAction(ISD::FSIN,    MVT::v8f16, Expand);
   setOperationAction(ISD::FSINCOS, MVT::f16,   Promote);
-  setOperationAction(ISD::FSINCOS, MVT::v4f16, Promote);
-  setOperationAction(ISD::FSINCOS, MVT::v8f16, Promote);
+  setOperationAction(ISD::FSINCOS, MVT::v4f16, Expand);
+  setOperationAction(ISD::FSINCOS, MVT::v8f16, Expand);
   setOperationAction(ISD::FEXP,    MVT::f16,   Promote);
-  setOperationAction(ISD::FEXP,    MVT::v4f16, Promote);
-  setOperationAction(ISD::FEXP,    MVT::v8f16, Promote);
+  setOperationAction(ISD::FEXP,    MVT::v4f16, Expand);
+  setOperationAction(ISD::FEXP,    MVT::v8f16, Expand);
   setOperationAction(ISD::FEXP2,   MVT::f16,   Promote);
-  setOperationAction(ISD::FEXP2,   MVT::v4f16, Promote);
-  setOperationAction(ISD::FEXP2,   MVT::v8f16, Promote);
+  setOperationAction(ISD::FEXP2,   MVT::v4f16, Expand);
+  setOperationAction(ISD::FEXP2,   MVT::v8f16, Expand);
   setOperationAction(ISD::FLOG,    MVT::f16,   Promote);
-  setOperationAction(ISD::FLOG,    MVT::v4f16, Promote);
-  setOperationAction(ISD::FLOG,    MVT::v8f16, Promote);
+  setOperationAction(ISD::FLOG,    MVT::v4f16, Expand);
+  setOperationAction(ISD::FLOG,    MVT::v8f16, Expand);
   setOperationAction(ISD::FLOG2,   MVT::f16,   Promote);
-  setOperationAction(ISD::FLOG2,   MVT::v4f16, Promote);
-  setOperationAction(ISD::FLOG2,   MVT::v8f16, Promote);
+  setOperationAction(ISD::FLOG2,   MVT::v4f16, Expand);
+  setOperationAction(ISD::FLOG2,   MVT::v8f16, Expand);
   setOperationAction(ISD::FLOG10,  MVT::f16,   Promote);
-  setOperationAction(ISD::FLOG10,  MVT::v4f16, Promote);
-  setOperationAction(ISD::FLOG10,  MVT::v8f16, Promote);
+  setOperationAction(ISD::FLOG10,  MVT::v4f16, Expand);
+  setOperationAction(ISD::FLOG10,  MVT::v8f16, Expand);
 
   if (!Subtarget->hasFullFP16()) {
     setOperationAction(ISD::SELECT,      MVT::f16,  Promote);
@@ -2716,9 +2718,19 @@ SDValue AArch64TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     EVT PtrVT = getPointerTy(DAG.getDataLayout());
     return DAG.getNode(AArch64ISD::THREAD_POINTER, dl, PtrVT);
   }
-  case Intrinsic::aarch64_neon_abs:
-    return DAG.getNode(ISD::ABS, dl, Op.getValueType(),
-                       Op.getOperand(1));
+  case Intrinsic::aarch64_neon_abs: {
+    EVT Ty = Op.getValueType();
+    if (Ty == MVT::i64) {
+      SDValue Result = DAG.getNode(ISD::BITCAST, dl, MVT::v1i64,
+                                   Op.getOperand(1));
+      Result = DAG.getNode(ISD::ABS, dl, MVT::v1i64, Result);
+      return DAG.getNode(ISD::BITCAST, dl, MVT::i64, Result);
+    } else if (Ty.isVector() && Ty.isInteger() && isTypeLegal(Ty)) {
+      return DAG.getNode(ISD::ABS, dl, Ty, Op.getOperand(1));
+    } else {
+      report_fatal_error("Unexpected type for AArch64 NEON intrinic");
+    }
+  }
   case Intrinsic::aarch64_neon_smax:
     return DAG.getNode(ISD::SMAX, dl, Op.getValueType(),
                        Op.getOperand(1), Op.getOperand(2));
