@@ -1,9 +1,8 @@
 //===- ELFObjcopy.cpp -----------------------------------------------------===//
 //
-//                      The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -499,17 +498,21 @@ static void handleArgs(const CopyConfig &Config, Object &Obj,
 
   if (!Config.AddSection.empty()) {
     for (const auto &Flag : Config.AddSection) {
-      auto SecPair = Flag.split("=");
-      auto SecName = SecPair.first;
-      auto File = SecPair.second;
-      auto BufOrErr = MemoryBuffer::getFile(File);
+      std::pair<StringRef, StringRef> SecPair = Flag.split("=");
+      StringRef SecName = SecPair.first;
+      StringRef File = SecPair.second;
+      ErrorOr<std::unique_ptr<MemoryBuffer>> BufOrErr =
+          MemoryBuffer::getFile(File);
       if (!BufOrErr)
         reportError(File, BufOrErr.getError());
-      auto Buf = std::move(*BufOrErr);
-      auto BufPtr = reinterpret_cast<const uint8_t *>(Buf->getBufferStart());
-      auto BufSize = Buf->getBufferSize();
-      Obj.addSection<OwnedDataSection>(SecName,
-                                       ArrayRef<uint8_t>(BufPtr, BufSize));
+      std::unique_ptr<MemoryBuffer> Buf = std::move(*BufOrErr);
+      ArrayRef<uint8_t> Data(
+          reinterpret_cast<const uint8_t *>(Buf->getBufferStart()),
+          Buf->getBufferSize());
+      OwnedDataSection &NewSection =
+          Obj.addSection<OwnedDataSection>(SecName, Data);
+      if (SecName.startswith(".note") && SecName != ".note.GNU-stack")
+        NewSection.Type = SHT_NOTE;
     }
   }
 

@@ -1,9 +1,8 @@
 //===- SampleProfile.cpp - Incorporate sample profiles into the IR --------===//
 //
-//                      The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -218,6 +217,7 @@ protected:
   const FunctionSamples *findCalleeFunctionSamples(const Instruction &I) const;
   std::vector<const FunctionSamples *>
   findIndirectCallFunctionSamples(const Instruction &I, uint64_t &Sum) const;
+  mutable DenseMap<const DILocation *, const FunctionSamples *> DILocation2SampleMap;
   const FunctionSamples *findFunctionSamples(const Instruction &I) const;
   bool inlineCallInstruction(Instruction *I);
   bool inlineHotFunctions(Function &F,
@@ -719,12 +719,14 @@ SampleProfileLoader::findIndirectCallFunctionSamples(
 /// \returns the FunctionSamples pointer to the inlined instance.
 const FunctionSamples *
 SampleProfileLoader::findFunctionSamples(const Instruction &Inst) const {
-  SmallVector<std::pair<LineLocation, StringRef>, 10> S;
   const DILocation *DIL = Inst.getDebugLoc();
   if (!DIL)
     return Samples;
 
-  return Samples->findFunctionSamples(DIL);
+  auto it = DILocation2SampleMap.try_emplace(DIL,nullptr);
+  if (it.second)
+    it.first->second = Samples->findFunctionSamples(DIL);
+  return it.first->second;
 }
 
 bool SampleProfileLoader::inlineCallInstruction(Instruction *I) {
@@ -1610,6 +1612,8 @@ bool SampleProfileLoaderLegacyPass::runOnModule(Module &M) {
 }
 
 bool SampleProfileLoader::runOnFunction(Function &F, ModuleAnalysisManager *AM) {
+  
+  DILocation2SampleMap.clear();
   // By default the entry count is initialized to -1, which will be treated
   // conservatively by getEntryCount as the same as unknown (None). This is
   // to avoid newly added code to be treated as cold. If we have samples

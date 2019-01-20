@@ -1,9 +1,8 @@
 //===- AArch64AsmPrinter.cpp - AArch64 LLVM assembly writer ---------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -694,6 +693,34 @@ void AArch64AsmPrinter::EmitInstruction(const MachineInstr *MI) {
   switch (MI->getOpcode()) {
   default:
     break;
+    case AArch64::MOVMCSym: {
+    unsigned DestReg = MI->getOperand(0).getReg();
+    const MachineOperand &MO_Sym = MI->getOperand(1);
+    MachineOperand Hi_MOSym(MO_Sym), Lo_MOSym(MO_Sym);
+    MCOperand Hi_MCSym, Lo_MCSym;
+
+    Hi_MOSym.setTargetFlags(AArch64II::MO_G1 | AArch64II::MO_S);
+    Lo_MOSym.setTargetFlags(AArch64II::MO_G0 | AArch64II::MO_NC);
+
+    MCInstLowering.lowerOperand(Hi_MOSym, Hi_MCSym);
+    MCInstLowering.lowerOperand(Lo_MOSym, Lo_MCSym);
+
+    MCInst MovZ;
+    MovZ.setOpcode(AArch64::MOVZXi);
+    MovZ.addOperand(MCOperand::createReg(DestReg));
+    MovZ.addOperand(Hi_MCSym);
+    MovZ.addOperand(MCOperand::createImm(16));
+    EmitToStreamer(*OutStreamer, MovZ);
+
+    MCInst MovK;
+    MovK.setOpcode(AArch64::MOVKXi);
+    MovK.addOperand(MCOperand::createReg(DestReg));
+    MovK.addOperand(MCOperand::createReg(DestReg));
+    MovK.addOperand(Lo_MCSym);
+    MovK.addOperand(MCOperand::createImm(0));
+    EmitToStreamer(*OutStreamer, MovK);
+    return;
+  }
   case AArch64::MOVIv2d_ns:
     // If the target has <rdar://problem/16473581>, lower this
     // instruction to movi.16b instead.

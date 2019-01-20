@@ -1,9 +1,8 @@
 //===- IntrinsicsAMDGPU.td - Defines AMDGPU intrinsics -----*- tablegen -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -391,6 +390,24 @@ class AMDGPULDSF32Intrin<string clang_builtin> :
     llvm_i1_ty], // isVolatile
     [IntrArgMemOnly, NoCapture<0>]
 >;
+
+class AMDGPUDSOrderedIntrinsic : Intrinsic<
+  [llvm_i32_ty],
+  // M0 = {hi16:address, lo16:waveID}. Allow passing M0 as a pointer, so that
+  // the bit packing can be optimized at the IR level.
+  [LLVMQualPointerType<llvm_i32_ty, 2>, // IntToPtr(M0)
+   llvm_i32_ty, // value to add or swap
+   llvm_i32_ty, // ordering
+   llvm_i32_ty, // scope
+   llvm_i1_ty,  // isVolatile
+   llvm_i32_ty, // ordered count index (OA index), also added to the address
+   llvm_i1_ty,  // wave release, usually set to 1
+   llvm_i1_ty], // wave done, set to 1 for the last ordered instruction
+  [NoCapture<0>]
+>;
+
+def int_amdgcn_ds_ordered_add : AMDGPUDSOrderedIntrinsic;
+def int_amdgcn_ds_ordered_swap : AMDGPUDSOrderedIntrinsic;
 
 def int_amdgcn_ds_fadd : AMDGPULDSF32Intrin<"__builtin_amdgcn_ds_faddf">;
 def int_amdgcn_ds_fmin : AMDGPULDSF32Intrin<"__builtin_amdgcn_ds_fminf">;

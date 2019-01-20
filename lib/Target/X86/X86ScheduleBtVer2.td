@@ -1,9 +1,8 @@
 //=- X86ScheduleBtVer2.td - X86 BtVer2 (Jaguar) Scheduling ---*- tablegen -*-=//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -173,6 +172,8 @@ multiclass JWriteResYMMPair<X86FoldableSchedWrite SchedRW,
     let NumMicroOps = !add(UOps, LoadUOps);
   }
 }
+
+// Instructions that have local forwarding disabled have an extra +1cy latency.
 
 // A folded store needs a cycle on the SAGU for the store data,
 // most RMW instructions don't need an extra uop.
@@ -575,10 +576,10 @@ defm : JWriteResFpuPair<WriteAESDecEnc,   [JFPU01, JVALU, JFPU0, JVIMUL], 3, [1,
 // Horizontal add/sub  instructions.
 ////////////////////////////////////////////////////////////////////////////////
 
-defm : JWriteResFpuPair<WriteFHAdd,         [JFPU0, JFPA], 3>;
-defm : JWriteResYMMPair<WriteFHAddY,        [JFPU0, JFPA], 3, [2,2], 2>;
-defm : JWriteResFpuPair<WritePHAdd,       [JFPU01, JVALU], 1>;
-defm : JWriteResFpuPair<WritePHAddX,      [JFPU01, JVALU], 1>;
+defm : JWriteResFpuPair<WriteFHAdd,         [JFPU0, JFPA], 4>;            // +1cy latency.
+defm : JWriteResYMMPair<WriteFHAddY,        [JFPU0, JFPA], 4, [2,2], 2>;  // +1cy latency.
+defm : JWriteResFpuPair<WritePHAdd,         [JFPU01, JVALU], 2>;          // +1cy latency.
+defm : JWriteResFpuPair<WritePHAddX,        [JFPU01, JVALU], 2>;          // +1cy latency.
 defm : X86WriteResPairUnsupported<WritePHAddY>;
 
 ////////////////////////////////////////////////////////////////////////////////

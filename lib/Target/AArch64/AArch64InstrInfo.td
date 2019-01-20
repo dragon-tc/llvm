@@ -1,9 +1,8 @@
 //=- AArch64InstrInfo.td - Describe the AArch64 Instructions -*- tablegen -*-=//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -132,6 +131,10 @@ def UseAlternateSExtLoadCVTF32
 def UseNegativeImmediates
     : Predicate<"false">, AssemblerPredicate<"!FeatureNoNegativeImmediates",
                                              "NegativeImmediates">;
+
+def AArch64LocalRecover : SDNode<"ISD::LOCAL_RECOVER",
+                                  SDTypeProfile<1, 1, [SDTCisSameAs<0, 1>,
+                                                       SDTCisInt<1>]>>;
 
 
 //===----------------------------------------------------------------------===//
@@ -6800,6 +6803,9 @@ def : Pat<(AArch64tcret tglobaladdr:$dst, (i32 timm:$FPDiff)),
           (TCRETURNdi texternalsym:$dst, imm:$FPDiff)>;
 def : Pat<(AArch64tcret texternalsym:$dst, (i32 timm:$FPDiff)),
           (TCRETURNdi texternalsym:$dst, imm:$FPDiff)>;
+
+def MOVMCSym : Pseudo<(outs GPR64:$dst), (ins i64imm:$sym), []>, Sched<[]>;
+def : Pat<(i64 (AArch64LocalRecover mcsym:$sym)), (MOVMCSym mcsym:$sym)>;
 
 include "AArch64InstrAtomics.td"
 include "AArch64SVEInstrInfo.td"

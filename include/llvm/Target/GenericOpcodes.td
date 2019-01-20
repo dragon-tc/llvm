@@ -1,9 +1,8 @@
 //===-- GenericOpcodes.td - Opcodes used with GlobalISel ---*- tablegen -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -689,7 +688,9 @@ def G_MERGE_VALUES : GenericInstruction {
   let hasSideEffects = 0;
 }
 
-/// Create a vector from multiple scalar registers.
+/// Create a vector from multiple scalar registers. No implicit
+/// conversion is performed (i.e. the result element type must be the
+/// same as all source operands)
 def G_BUILD_VECTOR : GenericInstruction {
   let OutOperandList = (outs type0:$dst);
   let InOperandList = (ins type1:$src0, variable_ops);

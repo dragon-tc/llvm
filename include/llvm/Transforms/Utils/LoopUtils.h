@@ -1,9 +1,8 @@
 //===- llvm/Transforms/Utils/LoopUtils.h - Loop utilities -------*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -79,7 +78,8 @@ bool formLCSSAForInstructions(SmallVectorImpl<Instruction *> &Worklist,
 ///
 /// Looks at all instructions in the loop which have uses outside of the
 /// current loop. For each, an LCSSA PHI node is inserted and the uses outside
-/// the loop are rewritten to use this node.
+/// the loop are rewritten to use this node. Sub-loops must be in LCSSA form
+/// already.
 ///
 /// LoopInfo and DominatorTree are required and preserved.
 ///
@@ -322,6 +322,23 @@ Value *createTargetReduction(IRBuilder<> &B, const TargetTransformInfo *TTI,
 /// when intersecting.
 /// Flag set: NSW, NUW, exact, and all of fast-math.
 void propagateIRFlags(Value *I, ArrayRef<Value *> VL, Value *OpValue = nullptr);
+
+/// Returns true if we can prove that \p S is defined and always negative in
+/// loop \p L.
+bool isKnownNegativeInLoop(const SCEV *S, const Loop *L, ScalarEvolution &SE);
+
+/// Returns true if we can prove that \p S is defined and always non-negative in
+/// loop \p L.
+bool isKnownNonNegativeInLoop(const SCEV *S, const Loop *L,
+                              ScalarEvolution &SE);
+
+/// Returns true if \p S is defined and never is equal to signed/unsigned max.
+bool cannotBeMaxInLoop(const SCEV *S, const Loop *L, ScalarEvolution &SE,
+                       bool Signed);
+
+/// Returns true if \p S is defined and never is equal to signed/unsigned min.
+bool cannotBeMinInLoop(const SCEV *S, const Loop *L, ScalarEvolution &SE,
+                       bool Signed);
 
 } // end namespace llvm
 

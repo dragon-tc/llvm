@@ -8,11 +8,8 @@ group("default") {
     "//lld/test",
     "//llvm/test",
   ]
-
-  if (android_ndk_path != "") {
-    # FIXME: This should be a dependency of a test target instead of being
-    # depended on from here.
-    deps += [ "//llvm/tools/llvm-symbolizer(//llvm/utils/gn/build/toolchain:stage2_android_aarch64)" ]
+  if (current_os == "linux" || current_os == "android") {
+    deps += [ "//compiler-rt/test/hwasan" ]
   }
 
   testonly = true

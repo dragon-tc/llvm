@@ -1,9 +1,8 @@
 //===- SIInstrInfo.cpp - SI Instruction Information  ----------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -14,7 +13,6 @@
 
 #include "SIInstrInfo.h"
 #include "AMDGPU.h"
-#include "AMDGPUIntrinsicInfo.h"
 #include "AMDGPUSubtarget.h"
 #include "GCNHazardRecognizer.h"
 #include "SIDefines.h"
@@ -2390,6 +2388,16 @@ bool SIInstrInfo::isSchedulingBoundary(const MachineInstr &MI,
          changesVGPRIndexingMode(MI);
 }
 
+bool SIInstrInfo::isAlwaysGDS(uint16_t Opcode) const {
+  return Opcode == AMDGPU::DS_ORDERED_COUNT ||
+         Opcode == AMDGPU::DS_GWS_INIT ||
+         Opcode == AMDGPU::DS_GWS_SEMA_V ||
+         Opcode == AMDGPU::DS_GWS_SEMA_BR ||
+         Opcode == AMDGPU::DS_GWS_SEMA_P ||
+         Opcode == AMDGPU::DS_GWS_SEMA_RELEASE_ALL ||
+         Opcode == AMDGPU::DS_GWS_BARRIER;
+}
+
 bool SIInstrInfo::hasUnwantedEffectsWhenEXECEmpty(const MachineInstr &MI) const {
   unsigned Opcode = MI.getOpcode();
 
@@ -2403,7 +2411,8 @@ bool SIInstrInfo::hasUnwantedEffectsWhenEXECEmpty(const MachineInstr &MI) const 
   //       EXEC = 0, but checking for that case here seems not worth it
   //       given the typical code patterns.
   if (Opcode == AMDGPU::S_SENDMSG || Opcode == AMDGPU::S_SENDMSGHALT ||
-      Opcode == AMDGPU::EXP || Opcode == AMDGPU::EXP_DONE)
+      Opcode == AMDGPU::EXP || Opcode == AMDGPU::EXP_DONE ||
+      Opcode == AMDGPU::DS_ORDERED_COUNT)
     return true;
 
   if (MI.isInlineAsm())

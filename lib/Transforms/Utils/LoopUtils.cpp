@@ -1,9 +1,8 @@
 //===-- LoopUtils.cpp - Loop Utility functions -------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -927,4 +926,40 @@ void llvm::propagateIRFlags(Value *I, ArrayRef<Value *> VL, Value *OpValue) {
     if (OpValue == nullptr || Opcode == Instr->getOpcode())
       VecOp->andIRFlags(V);
   }
+}
+
+bool llvm::isKnownNegativeInLoop(const SCEV *S, const Loop *L,
+                                 ScalarEvolution &SE) {
+  const SCEV *Zero = SE.getZero(S->getType());
+  return SE.isAvailableAtLoopEntry(S, L) &&
+         SE.isLoopEntryGuardedByCond(L, ICmpInst::ICMP_SLT, S, Zero);
+}
+
+bool llvm::isKnownNonNegativeInLoop(const SCEV *S, const Loop *L,
+                                    ScalarEvolution &SE) {
+  const SCEV *Zero = SE.getZero(S->getType());
+  return SE.isAvailableAtLoopEntry(S, L) &&
+         SE.isLoopEntryGuardedByCond(L, ICmpInst::ICMP_SGE, S, Zero);
+}
+
+bool llvm::cannotBeMinInLoop(const SCEV *S, const Loop *L, ScalarEvolution &SE,
+                             bool Signed) {
+  unsigned BitWidth = cast<IntegerType>(S->getType())->getBitWidth();
+  APInt Min = Signed ? APInt::getSignedMinValue(BitWidth) :
+    APInt::getMinValue(BitWidth);
+  auto Predicate = Signed ? ICmpInst::ICMP_SGT : ICmpInst::ICMP_UGT;
+  return SE.isAvailableAtLoopEntry(S, L) &&
+         SE.isLoopEntryGuardedByCond(L, Predicate, S,
+                                     SE.getConstant(Min));
+}
+
+bool llvm::cannotBeMaxInLoop(const SCEV *S, const Loop *L, ScalarEvolution &SE,
+                             bool Signed) {
+  unsigned BitWidth = cast<IntegerType>(S->getType())->getBitWidth();
+  APInt Max = Signed ? APInt::getSignedMaxValue(BitWidth) :
+    APInt::getMaxValue(BitWidth);
+  auto Predicate = Signed ? ICmpInst::ICMP_SLT : ICmpInst::ICMP_ULT;
+  return SE.isAvailableAtLoopEntry(S, L) &&
+         SE.isLoopEntryGuardedByCond(L, Predicate, S,
+                                     SE.getConstant(Max));
 }

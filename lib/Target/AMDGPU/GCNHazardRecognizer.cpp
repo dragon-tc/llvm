@@ -1,9 +1,8 @@
 //===-- GCNHazardRecognizers.cpp - GCN Hazard Recognizer Impls ------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -88,14 +87,28 @@ static bool isSMovRel(unsigned Opcode) {
   }
 }
 
-static bool isSendMsgTraceDataOrGDS(const MachineInstr &MI) {
+static bool isSendMsgTraceDataOrGDS(const SIInstrInfo &TII,
+                                    const MachineInstr &MI) {
+  if (TII.isAlwaysGDS(MI.getOpcode()))
+    return true;
+
   switch (MI.getOpcode()) {
   case AMDGPU::S_SENDMSG:
   case AMDGPU::S_SENDMSGHALT:
   case AMDGPU::S_TTRACEDATA:
     return true;
+  // These DS opcodes don't support GDS.
+  case AMDGPU::DS_NOP:
+  case AMDGPU::DS_PERMUTE_B32:
+  case AMDGPU::DS_BPERMUTE_B32:
+    return false;
   default:
-    // TODO: GDS
+    if (TII.isDS(MI.getOpcode())) {
+      int GDS = AMDGPU::getNamedOperandIdx(MI.getOpcode(),
+                                           AMDGPU::OpName::gds);
+      if (MI.getOperand(GDS).getImm())
+        return true;
+    }
     return false;
   }
 }
@@ -145,7 +158,7 @@ GCNHazardRecognizer::getHazardType(SUnit *SU, int Stalls) {
       checkReadM0Hazards(MI) > 0)
     return NoopHazard;
 
-  if (ST.hasReadM0SendMsgHazard() && isSendMsgTraceDataOrGDS(*MI) &&
+  if (ST.hasReadM0SendMsgHazard() && isSendMsgTraceDataOrGDS(TII, *MI) &&
       checkReadM0Hazards(MI) > 0)
     return NoopHazard;
 
@@ -199,7 +212,7 @@ unsigned GCNHazardRecognizer::PreEmitNoops(MachineInstr *MI) {
                                            isSMovRel(MI->getOpcode())))
     return std::max(WaitStates, checkReadM0Hazards(MI));
 
-  if (ST.hasReadM0SendMsgHazard() && isSendMsgTraceDataOrGDS(*MI))
+  if (ST.hasReadM0SendMsgHazard() && isSendMsgTraceDataOrGDS(TII, *MI))
     return std::max(WaitStates, checkReadM0Hazards(MI));
 
   return WaitStates;

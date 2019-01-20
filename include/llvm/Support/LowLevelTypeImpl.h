@@ -1,9 +1,8 @@
 //== llvm/Support/LowLevelTypeImpl.h --------------------------- -*- C++ -*-==//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -147,6 +146,7 @@ public:
   bool operator!=(const LLT &RHS) const { return !(*this == RHS); }
 
   friend struct DenseMapInfo<LLT>;
+  friend class GISelInstProfileBuilder;
 
 private:
   /// LLT is packed into 64 bits as follows:
@@ -231,6 +231,11 @@ private:
             maskAndShift(AddressSpace, PointerVectorAddressSpaceFieldInfo);
     }
   }
+
+  uint64_t getUniqueRAWLLTData() const {
+    return ((uint64_t)RawData) << 2 | ((uint64_t)IsPointer) << 1 |
+           ((uint64_t)IsVector);
+  }
 };
 
 inline raw_ostream& operator<<(raw_ostream &OS, const LLT &Ty) {
@@ -250,8 +255,7 @@ template<> struct DenseMapInfo<LLT> {
     return Invalid;
   }
   static inline unsigned getHashValue(const LLT &Ty) {
-    uint64_t Val = ((uint64_t)Ty.RawData) << 2 | ((uint64_t)Ty.IsPointer) << 1 |
-                   ((uint64_t)Ty.IsVector);
+    uint64_t Val = Ty.getUniqueRAWLLTData();
     return DenseMapInfo<uint64_t>::getHashValue(Val);
   }
   static bool isEqual(const LLT &LHS, const LLT &RHS) {

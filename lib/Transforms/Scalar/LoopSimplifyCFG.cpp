@@ -1,9 +1,8 @@
 //===--------- LoopSimplifyCFG.cpp - Loop CFG Simplification Pass ---------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -42,7 +41,7 @@ using namespace llvm;
 #define DEBUG_TYPE "loop-simplifycfg"
 
 static cl::opt<bool> EnableTermFolding("enable-loop-simplifycfg-term-folding",
-                                       cl::init(false));
+                                       cl::init(true));
 
 STATISTIC(NumTerminatorsFolded,
           "Number of terminators folded to unconditional branches");
@@ -379,6 +378,15 @@ private:
           StillReachable->addChildLoop(&L);
         else
           LI.addTopLevelLoop(&L);
+
+        // Some values from loops in [OuterLoop, StillReachable) could be used
+        // in the current loop. Now it is not their child anymore, so such uses
+        // require LCSSA Phis.
+        Loop *FixLCSSALoop = OuterLoop;
+        while (FixLCSSALoop->getParentLoop() != StillReachable)
+          FixLCSSALoop = FixLCSSALoop->getParentLoop();
+        assert(FixLCSSALoop && "Should be a loop!");
+        formLCSSARecursively(*FixLCSSALoop, DT, &LI, &SE);
       }
     }
   }
@@ -402,9 +410,10 @@ private:
         LI.erase(LI.getLoopFor(BB));
       }
       LI.removeBlock(BB);
-      DeleteDeadBlock(BB, &DTU);
-      ++NumLoopBlocksDeleted;
     }
+
+    DeleteDeadBlocks(DeadLoopBlocks, &DTU);
+    NumLoopBlocksDeleted += DeadLoopBlocks.size();
   }
 
   /// Constant-fold terminators of blocks acculumated in FoldCandidates into the
