@@ -74,9 +74,6 @@ public:
   }
 };
 
-template <> struct isPodLike<IdentifyingPassPtr> {
-  static const bool value = true;
-};
 
 /// Target-Independent Code Generator Pass Configuration Options.
 ///
@@ -317,6 +314,10 @@ public:
   /// uses the fallback path. In other words, it will emit a diagnostic
   /// when GlobalISel failed and isGlobalISelAbortEnabled is false.
   virtual bool reportDiagnosticWhenGlobalISelFallback() const;
+
+  /// Check whether continuous CSE should be enabled in GISel passes.
+  /// By default, it's enabled for non O0 levels.
+  virtual bool isGISelCSEEnabled() const;
 
 protected:
   // Helper to verify the analysis is really immutable.

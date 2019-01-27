@@ -56,6 +56,26 @@ LegalityPredicate LegalityPredicates::isScalar(unsigned TypeIdx) {
   };
 }
 
+LegalityPredicate LegalityPredicates::isVector(unsigned TypeIdx) {
+  return [=](const LegalityQuery &Query) {
+    return Query.Types[TypeIdx].isVector();
+  };
+}
+
+LegalityPredicate LegalityPredicates::isPointer(unsigned TypeIdx) {
+  return [=](const LegalityQuery &Query) {
+    return Query.Types[TypeIdx].isPointer();
+  };
+}
+
+LegalityPredicate LegalityPredicates::isPointer(unsigned TypeIdx,
+                                                unsigned AddrSpace) {
+  return [=](const LegalityQuery &Query) {
+    LLT Ty = Query.Types[TypeIdx];
+    return Ty.isPointer() && Ty.getAddressSpace() == AddrSpace;
+  };
+}
+
 LegalityPredicate LegalityPredicates::narrowerThan(unsigned TypeIdx,
                                                    unsigned Size) {
   return [=](const LegalityQuery &Query) {
