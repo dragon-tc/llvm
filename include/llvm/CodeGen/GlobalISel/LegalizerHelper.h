@@ -157,6 +157,12 @@ private:
   LegalizeResult fewerElementsVectorBasic(MachineInstr &MI, unsigned TypeIdx,
                                           LLT NarrowTy);
 
+  /// Legalize a instruction with a vector type where each operand may have a
+  /// different element type. All type indexes must have the same number of
+  /// elements.
+  LegalizeResult fewerElementsVectorMultiEltType(MachineInstr &MI,
+                                                 unsigned TypeIdx, LLT NarrowTy);
+
   LegalizeResult fewerElementsVectorCasts(MachineInstr &MI, unsigned TypeIdx,
                                           LLT NarrowTy);
 
@@ -167,9 +173,15 @@ private:
   fewerElementsVectorSelect(MachineInstr &MI, unsigned TypeIdx, LLT NarrowTy);
 
   LegalizeResult
-  fewerElementsVectorLoadStore(MachineInstr &MI, unsigned TypeIdx, LLT NarrowTy);
+  reduceLoadStoreWidth(MachineInstr &MI, unsigned TypeIdx, LLT NarrowTy);
 
+  LegalizeResult narrowScalarShiftByConstant(MachineInstr &MI, const APInt &Amt,
+                                             LLT HalfTy, LLT ShiftAmtTy);
+
+  LegalizeResult narrowScalarShift(MachineInstr &MI, unsigned TypeIdx, LLT Ty);
   LegalizeResult narrowScalarMul(MachineInstr &MI, unsigned TypeIdx, LLT Ty);
+
+  LegalizeResult narrowScalarSelect(MachineInstr &MI, unsigned TypeIdx, LLT Ty);
 
   LegalizeResult lowerBitCount(MachineInstr &MI, unsigned TypeIdx, LLT Ty);
 
