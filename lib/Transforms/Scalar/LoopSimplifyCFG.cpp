@@ -41,7 +41,7 @@ using namespace llvm;
 #define DEBUG_TYPE "loop-simplifycfg"
 
 static cl::opt<bool> EnableTermFolding("enable-loop-simplifycfg-term-folding",
-                                       cl::init(false));
+                                       cl::init(true));
 
 STATISTIC(NumTerminatorsFolded,
           "Number of terminators folded to unconditional branches");
@@ -79,6 +79,36 @@ static BasicBlock *getOnlyLiveSuccessor(BasicBlock *BB) {
   return nullptr;
 }
 
+/// Removes \p BB from all loops from [FirstLoop, LastLoop) in parent chain.
+static void removeBlockFromLoops(BasicBlock *BB, Loop *FirstLoop,
+                                 Loop *LastLoop = nullptr) {
+  assert((!LastLoop || LastLoop->contains(FirstLoop->getHeader())) &&
+         "First loop is supposed to be inside of last loop!");
+  assert(FirstLoop->contains(BB) && "Must be a loop block!");
+  for (Loop *Current = FirstLoop; Current != LastLoop;
+       Current = Current->getParentLoop())
+    Current->removeBlockFromLoop(BB);
+}
+
+/// Find innermost loop that contains at least one block from \p BBs and
+/// contains the header of loop \p L.
+static Loop *getInnermostLoopFor(SmallPtrSetImpl<BasicBlock *> &BBs,
+                                 Loop &L, LoopInfo &LI) {
+  Loop *Innermost = nullptr;
+  for (BasicBlock *BB : BBs) {
+    Loop *BBL = LI.getLoopFor(BB);
+    while (BBL && !BBL->contains(L.getHeader()))
+      BBL = BBL->getParentLoop();
+    if (BBL == &L)
+      BBL = BBL->getParentLoop();
+    if (!BBL)
+      continue;
+    if (!Innermost || BBL->getLoopDepth() > Innermost->getLoopDepth())
+      Innermost = BBL;
+  }
+  return Innermost;
+}
+
 namespace {
 /// Helper class that can turn branches and switches with constant conditions
 /// into unconditional branches.
@@ -89,6 +119,7 @@ private:
   DominatorTree &DT;
   ScalarEvolution &SE;
   MemorySSAUpdater *MSSAU;
+  LoopBlocksDFS DFS;
   DomTreeUpdater DTU;
   SmallVector<DominatorTree::UpdateType, 16> DTUpdates;
 
@@ -176,7 +207,6 @@ private:
   /// Fill all information about status of blocks and exits of the current loop
   /// if constant folding of all branches will be done.
   void analyze() {
-    LoopBlocksDFS DFS(&L);
     DFS.perform(&LI);
     assert(DFS.isComplete() && "DFS is expected to be finished");
 
@@ -358,25 +388,15 @@ private:
       // the current loop. We need to fix loop info accordingly. For this, we
       // find the most nested loop that still contains L and remove L from all
       // loops that are inside of it.
-      Loop *StillReachable = nullptr;
-      for (BasicBlock *BB : LiveExitBlocks) {
-        Loop *BBL = LI.getLoopFor(BB);
-        if (BBL && BBL->contains(L.getHeader()))
-          if (!StillReachable ||
-              BBL->getLoopDepth() > StillReachable->getLoopDepth())
-            StillReachable = BBL;
-      }
+      Loop *StillReachable = getInnermostLoopFor(LiveExitBlocks, L, LI);
 
       // Okay, our loop is no longer in the outer loop (and maybe not in some of
       // its parents as well). Make the fixup.
       if (StillReachable != OuterLoop) {
         LI.changeLoopFor(NewPreheader, StillReachable);
-        for (Loop *NotContaining = OuterLoop; NotContaining != StillReachable;
-             NotContaining = NotContaining->getParentLoop()) {
-          NotContaining->removeBlockFromLoop(NewPreheader);
-          for (auto *BB : L.blocks())
-            NotContaining->removeBlockFromLoop(BB);
-        }
+        removeBlockFromLoops(NewPreheader, OuterLoop, StillReachable);
+        for (auto *BB : L.blocks())
+          removeBlockFromLoops(BB, OuterLoop, StillReachable);
         OuterLoop->removeChildLoop(&L);
         if (StillReachable)
           StillReachable->addChildLoop(&L);
@@ -406,23 +426,40 @@ private:
                                                      DeadLoopBlocks.end());
       MSSAU->removeBlocks(DeadLoopBlocksSet);
     }
+
+    // The function LI.erase has some invariants that need to be preserved when
+    // it tries to remove a loop which is not the top-level loop. In particular,
+    // it requires loop's preheader to be strictly in loop's parent. We cannot
+    // just remove blocks one by one, because after removal of preheader we may
+    // break this invariant for the dead loop. So we detatch and erase all dead
+    // loops beforehand.
+    for (auto *BB : DeadLoopBlocks)
+      if (LI.isLoopHeader(BB)) {
+        assert(LI.getLoopFor(BB) != &L && "Attempt to remove current loop!");
+        Loop *DL = LI.getLoopFor(BB);
+        if (DL->getParentLoop()) {
+          for (auto *PL = DL->getParentLoop(); PL; PL = PL->getParentLoop())
+            for (auto *BB : DL->getBlocks())
+              PL->removeBlockFromLoop(BB);
+          DL->getParentLoop()->removeChildLoop(DL);
+          LI.addTopLevelLoop(DL);
+        }
+        LI.erase(DL);
+      }
+
     for (auto *BB : DeadLoopBlocks) {
       assert(BB != L.getHeader() &&
              "Header of the current loop cannot be dead!");
       LLVM_DEBUG(dbgs() << "Deleting dead loop block " << BB->getName()
                         << "\n");
-      if (LI.isLoopHeader(BB)) {
-        assert(LI.getLoopFor(BB) != &L && "Attempt to remove current loop!");
-        LI.erase(LI.getLoopFor(BB));
-      }
       LI.removeBlock(BB);
     }
 
-    DetatchDeadBlocks(DeadLoopBlocks, &DTUpdates);
+    DetatchDeadBlocks(DeadLoopBlocks, &DTUpdates, /*KeepOneInputPHIs*/true);
     DTU.applyUpdates(DTUpdates);
     DTUpdates.clear();
     for (auto *BB : DeadLoopBlocks)
-      BB->eraseFromParent();
+      DTU.deleteBB(BB);
 
     NumLoopBlocksDeleted += DeadLoopBlocks.size();
   }
@@ -481,7 +518,7 @@ public:
   ConstantTerminatorFoldingImpl(Loop &L, LoopInfo &LI, DominatorTree &DT,
                                 ScalarEvolution &SE,
                                 MemorySSAUpdater *MSSAU)
-      : L(L), LI(LI), DT(DT), SE(SE), MSSAU(MSSAU),
+      : L(L), LI(LI), DT(DT), SE(SE), MSSAU(MSSAU), DFS(&L),
         DTU(DT, DomTreeUpdater::UpdateStrategy::Eager) {}
   bool run() {
     assert(L.getLoopLatch() && "Should be single latch!");

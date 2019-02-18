@@ -93,23 +93,15 @@ if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_CURRENT_SOURCE_DIR})
     set(LLVM_ENABLE_LIBCXX ON CACHE BOOL "")
   endif()
 
-  set(SAFE_CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS})
-  set(SAFE_CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES})
-
   include(CheckLibraryExists)
   include(CheckCCompilerFlag)
 
-  check_library_exists(c fopen "" LLVM_HAS_C_LIB)
-  check_c_compiler_flag(-nodefaultlibs LLVM_HAS_NODEFAULTLIBS_FLAG)
-  if(LLVM_HAS_NODEFAULTLIBS_FLAG)
-    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -nodefaultlibs")
-    if(LLVM_HAS_C_LIB)
-      list(APPEND CMAKE_REQUIRED_LIBRARIES c)
-    endif()
-  endif()
+  # We don't have libc++ (yet).
+  set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -nostdlib++")
 
   # Avoid checking whether the compiler is working.
   set(LLVM_COMPILER_CHECKED ON)
+
   # Enable warnings, otherwise -w gets added to the cflags by HandleLLVMOptions
   # resulting in unjustified successes by check_cxx_compiler_flag.
   set(LLVM_ENABLE_WARNINGS ON)
@@ -119,8 +111,8 @@ if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_CURRENT_SOURCE_DIR})
   include(HandleLLVMOptions)
   include(FindPythonInterp)
 
-  set(CMAKE_REQUIRED_FLAGS ${SAFE_CMAKE_REQUIRED_FLAGS})
-  set(CMAKE_REQUIRED_LIBRARIES ${SAFE_CMAKE_REQUIRED_LIBRARIES})
+  # Remove the -nostdlib++ option we've added earlier.
+  string(REPLACE "-nostdlib++" "" CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
 
   # This can be used to detect whether we're in the runtimes build.
   set(RUNTIMES_BUILD ON)
@@ -397,11 +389,9 @@ else() # if this is included from LLVM's CMake
     endforeach()
 
     foreach(component ${LLVM_RUNTIME_DISTRIBUTION_COMPONENTS})
-      if(NOT "${target_name}:${target_name}-${component}" IN_LIST extra_targets)
-        list(APPEND ${name}_extra_targets
-          "${target_name}:${target_name}-${component}"
-          "${target_name}:${target_name}-install-${component}")
-      endif()
+      set(${component}-${name} ${component})
+      set(install-${component}-${name} ${component})
+      list(APPEND ${name}_extra_targets ${component}-${name} install-${component}-${name})
     endforeach()
 
     if(LLVM_INCLUDE_TESTS)
